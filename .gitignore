@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+pnpm-debug.log*
+
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.claude
+coverage/
+
+# Logs
+logs
+*.log
+
+# OS generated files
+Thumbs.db
+.DS_Store
+

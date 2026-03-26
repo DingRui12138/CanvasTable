@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hidden Column Test</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
+      .table-container { background: #fff; border-radius: 8px; height: 400px; overflow: hidden; margin-bottom: 20px; }
+      .controls { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+      button { padding: 8px 16px; border: 1px solid #d9d9d9; border-radius: 4px; background: #fff; cursor: pointer; }
+      button:hover { border-color: #1890ff; color: #1890ff; }
+      #debug { margin-top: 10px; padding: 10px; background: #fff; border-radius: 8px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+      .debug-item { margin: 4px 0; padding: 4px; background: #f9f9f9; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Hidden Column Test</h1>
+    <div class="controls">
+      <button id="showB">显示 B 列</button>
+      <button id="hideB">隐藏 B 列</button>
+      <button id="showC">显示 C 列</button>
+      <button id="hideC">隐藏 C 列</button>
+      <button id="logLayout">打印布局信息</button>
+      <button id="clearDebug">清除日志</button>
+    </div>
+    <div id="table-container" class="table-container"></div>
+    <div id="debug"></div>
+
+    <script type="module">
+      import { CanvasTable } from "../src";
+
+      // 列配置：B 列默认隐藏
+      const columns = [
+        { key: 'a', title: 'A', width: 100 },
+        { key: 'b', title: 'B (默认隐藏)', width: 100, hidden: true },
+        { key: 'c', title: 'C', width: 100 },
+        { key: 'd', title: 'D', width: 100 },
+      ];
+
+      const data = {
+        rows: [
+          { id: 'row-0', data: { a: 'A1', b: 'B1', c: 'C1', d: 'D1' } },
+          { id: 'row-1', data: { a: 'A2', b: 'B2', c: 'C2', d: 'D2' } },
+          { id: 'row-2', data: { a: 'A3', b: 'B3', c: 'C3', d: 'D3' } },
+        ],
+      };
+
+      function log(message) {
+        const debug = document.getElementById('debug');
+        const item = document.createElement('div');
+        item.className = 'debug-item';
+        item.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        debug.appendChild(item);
+        debug.scrollTop = debug.scrollHeight;
+        console.log(message);
+      }
+
+      const container = document.getElementById('table-container');
+      const table = new CanvasTable(container, {
+        data,
+        columns,
+        selection: { mode: 'cell', multi: true },
+      });
+
+      window.table = table;
+
+      table.on('columnHide', (key) => {
+        log(`Column hidden: ${key}`);
+      });
+
+      table.on('columnShow', (key) => {
+        log(`Column shown: ${key}`);
+      });
+
+      document.getElementById('showB').addEventListener('click', () => {
+        log('Calling showColumn("b")...');
+        table.showColumn('b');
+        setTimeout(() => {
+          const layout = table.getLayoutInfo();
+          log(`Layout after show: totalWidth=${layout.totalWidth}, columnWidths=[${layout.columnWidths.join(', ')}]`);
+        }, 100);
+      });
+
+      document.getElementById('hideB').addEventListener('click', () => {
+        log('Calling hideColumn("b")...');
+        table.hideColumn('b');
+      });
+
+      document.getElementById('showC').addEventListener('click', () => {
+        log('Calling showColumn("c")...');
+        table.showColumn('c');
+      });
+
+      document.getElementById('hideC').addEventListener('click', () => {
+        log('Calling hideColumn("c")...');
+        table.hideColumn('c');
+      });
+
+      document.getElementById('logLayout').addEventListener('click', () => {
+        const layout = table.getLayoutInfo();
+        const cols = table.getColumns();
+        log('=== Layout Info ===');
+        log(`totalWidth: ${layout.totalWidth}, headerHeight: ${layout.headerHeight}`);
+        log(`columnWidths: [${layout.columnWidths.join(', ')}]`);
+        log('Columns:');
+        cols.forEach((c, i) => {
+          log(`  [${i}] ${c.key}: hidden=${c.hidden}, width=${c.width}, fixed=${c.fixed}`);
+        });
+      });
+
+      document.getElementById('clearDebug').addEventListener('click', () => {
+        document.getElementById('debug').innerHTML = '';
+      });
+
+      // 初始日志
+      log('Hidden column test page loaded.');
+      columns.forEach(c => {
+        log(`Column ${c.key}: hidden=${c.hidden}, width=${c.width}`);
+      });
+
+      // 延迟打印初始布局
+      setTimeout(() => {
+        const layout = table.getLayoutInfo();
+        log(`Initial layout: totalWidth=${layout.totalWidth}, columnWidths=[${layout.columnWidths.join(', ')}]`);
+      }, 500);
+    </script>
+  </body>
+</html>

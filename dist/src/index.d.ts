@@ -1,0 +1,10 @@
+export { CanvasTable, default } from './CanvasTable';
+export * from './types';
+export * from './theme';
+export * from './utils';
+export { DataManager } from './core/DataManager';
+export { LayoutManager } from './core/LayoutManager';
+export { Renderer } from './core/Renderer';
+export { InteractionManager } from './core/InteractionManager';
+export { EventEmitter } from './core/EventEmitter';
+//# sourceMappingURL=index.d.ts.map

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Canvas Table Example</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f5f5f5;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin-bottom: 20px;
+        color: #333;
+      }
+
+      .controls {
+        margin-bottom: 20px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        padding: 8px 16px;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      button:hover {
+        border-color: #1890ff;
+        color: #1890ff;
+      }
+
+      .table-container {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        height: 600px;
+        overflow: hidden;
+      }
+
+      .info {
+        margin-top: 20px;
+        padding: 15px;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .info h3 {
+        margin-bottom: 10px;
+      }
+
+      .info p {
+        color: #666;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Canvas Table - 渲染示例</h1>
+
+      <div class="controls">
+        <button id="load1k">加载 1,000 行</button>
+        <button id="load10k">加载 10,000 行</button>
+        <button id="load100k">加载 100,000 行</button>
+        <button id="load1m">加载 1,000,000 行</button>
+        <button id="loadComplex">加载复杂列</button>
+        <button id="load1000Cols">加载 1000 列</button>
+        <button id="loadMerged">加载合并单元格</button>
+        <button id="loadHierarchical">加载层级数据</button>
+        <button id="clearSort">清除排序</button>
+        <button id="clearFilter">清除筛选</button>
+        <button id="exportCsv">导出 CSV</button>
+        <button id="toggleTheme">
+          切换主题
+          <span id="currentTheme" style="margin-left: 10px; color: #666"
+            >(current:auto)</span
+          >
+        </button>
+        <button id="showHiddenColumn">显示暗号列</button>
+        <button id="hideAgeColumn">隐藏年龄列</button>
+      </div>
+
+      <div id="table-container" class="table-container"></div>
+
+      <div class="info">
+        <h3>功能说明</h3>
+        <p>
+          <strong>列类型：</strong
+          >文本、数字、日期、复选框、单选框、开关、按钮、标签、下拉选择、输入框、自定义渲染<br />
+          <strong>排序：</strong
+          >点击表头进行升序/降序切换，Shift+点击进行多列排序<br />
+          <strong>筛选：</strong>支持列筛选功能<br />
+          <strong>选择：</strong
+          >支持单元格、行、列选择，Shift+点击范围选择，Ctrl/Cmd+点击多选<br />
+          <strong>编辑：</strong
+          >双击单元格进入编辑模式，支持文本、数字、日期、下拉等类型编辑<br />
+          <strong>固定列：</strong>支持左固定、右固定列<br />
+          <strong>多级表头：</strong>支持嵌套列分组<br />
+          <strong>合并单元格：</strong>支持行合并、列合并<br />
+          <strong>层级数据：</strong>支持树形结构展示<br />
+          <strong>右键菜单：</strong>删除行、上方插入行、下方插入行<br />
+          <strong>主题：</strong>支持亮色、暗色、自动三种主题模式<br />
+          <strong>导出：</strong>支持导出 CSV 格式<br />
+          <strong>水印：</strong>支持自定义水印<br />
+          <strong>性能：</strong>虚拟滚动支持百万级数据流畅渲染<br />
+          <strong>导航：</strong>方向键导航，Enter 编辑，Escape 取消<br />
+          <strong>快捷键：</strong>Ctrl/Cmd+A 全选，Ctrl/Cmd+C 复制
+        </p>
+      </div>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Canvas Table Edit Test Page</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
+      .table-container { background: #fff; border-radius: 8px; height: 400px; overflow: hidden; }
+      #debug { margin-top: 10px; padding: 10px; background: #fff; border-radius: 8px; font-family: monospace; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="table-container" class="table-container"></div>
+    <div id="debug"></div>
+
+    <script type="module">
+      import { CanvasTable } from "../src";
+
+      // 全局变量用于测试验证
+      window.__testEvents = [];
+      window.__getRows = null;
+      window.__getColumns = null;
+
+      // 简单的列配置 - 每列宽度明确
+      const columns = [
+        { key: 'id', title: 'ID', width: 50, type: 'number' },
+        { key: 'name', title: 'Name', width: 100, editable: true },  // 可编辑文本列
+        { key: 'checkbox', title: 'Active', width: 60, type: 'checkbox' },
+        { key: 'switch', title: 'Enabled', width: 60, type: 'switch' },
+        { key: 'age', title: 'Age', width: 50, editable: true },  // 可编辑数字列
+      ];
+
+      // 行数据
+      const data = {
+        rows: [
+          { id: 'row-0', data: { id: 1, name: 'Alice', checkbox: true, switch: true, age: 25 } },
+          { id: 'row-1', data: { id: 2, name: 'Bob', checkbox: false, switch: false, age: 30 } },
+          { id: 'row-2', data: { id: 3, name: 'Charlie', checkbox: true, switch: true, age: 35 } },
+        ],
+      };
+
+      function logEvent(type, detail) {
+        const event = { type, detail, timestamp: Date.now() };
+        window.__testEvents.push(event);
+        console.log('[Event]', type, detail);
+        document.getElementById('debug').innerHTML += `<div>${type}: ${JSON.stringify(detail)}</div>`;
+      }
+
+      const container = document.getElementById('table-container');
+      const table = new CanvasTable(container, {
+        data,
+        columns,  // columns 是必需属性
+        selection: { mode: 'cell', multi: true },
+        editing: { enabled: true, mode: 'dblclick' },
+      });
+
+      window.__getRows = () => data.rows;
+      window.__getColumns = () => columns;
+
+      // 监听编辑事件
+      table.on('editStart', (cellInfo, config) => {
+        logEvent('editStart', { key: cellInfo.column.key, rowIndex: cellInfo.rowIndex });
+      });
+
+      table.on('editEnd', (cellInfo, value) => {
+        logEvent('editEnd', { key: cellInfo.column.key, value, rowData: { ...cellInfo.row.data } });
+      });
+
+      table.on('checkboxChange', (cellInfo, checked) => {
+        logEvent('checkboxChange', { checked, rowData: { ...cellInfo.row.data } });
+      });
+
+      table.on('switchChange', (cellInfo, checked) => {
+        logEvent('switchChange', { checked, rowData: { ...cellInfo.row.data } });
+      });
+
+      console.log('Test page loaded.');
+      console.log('Columns:', columns.map(c => `${c.key}(${c.width})`).join(', '));
+      console.log('Expected coordinates for name column (row 0): x=50-150, y=36-68');
+    </script>
+  </body>
+</html>
