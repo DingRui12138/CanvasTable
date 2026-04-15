@@ -1,0 +1,95 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]: 创建数据
+    - generic [ref=e5]: 渲染耗时
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - heading "Canvas Table" [level=1] [ref=e8]
+      - generic [ref=e9]: Performance Demo
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - generic [ref=e12]: Data
+        - button "1K rows" [ref=e13] [cursor=pointer]
+        - button "10K rows" [ref=e14] [cursor=pointer]
+        - button "100K rows" [ref=e15] [cursor=pointer]
+        - button "1M rows" [ref=e16] [cursor=pointer]
+      - generic [ref=e17]:
+        - generic [ref=e18]: Layout
+        - button "Complex" [ref=e19] [cursor=pointer]
+        - button "1000 cols" [ref=e20] [cursor=pointer]
+        - button "Merged" [ref=e21] [cursor=pointer]
+        - button "Hierarchical" [ref=e22] [cursor=pointer]
+        - button "Lazy Load" [ref=e23] [cursor=pointer]
+      - generic [ref=e24]:
+        - generic [ref=e25]: Actions
+        - button "Clear sort" [ref=e26] [cursor=pointer]
+        - button "Clear filter" [ref=e27] [cursor=pointer]
+        - button "Export CSV" [ref=e28] [cursor=pointer]
+      - generic [ref=e29]:
+        - generic [ref=e30]: Theme
+        - button "Toggle (auto)" [ref=e31] [cursor=pointer]
+        - button "Show hidden" [ref=e32] [cursor=pointer]
+        - button "Hide age" [ref=e33] [cursor=pointer]
+      - generic [ref=e34]:
+        - generic [ref=e35]: Debug
+        - button "Performance Monitor" [ref=e36] [cursor=pointer]
+        - 'button "Cache: OFF" [ref=e37] [cursor=pointer]'
+        - 'button "Image Queue: OFF" [ref=e38] [cursor=pointer]'
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - img [ref=e45]
+        - heading "Features Overview" [level=3] [ref=e48]
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - strong [ref=e51]: 列类型
+          - generic [ref=e52]: 文本、数字、日期、复选框、单选框、开关、按钮、标签、下拉、输入框、自定义
+        - generic [ref=e53]:
+          - strong [ref=e54]: 排序
+          - generic [ref=e55]: 点击表头升降序切换，Shift+点击多列排序
+        - generic [ref=e56]:
+          - strong [ref=e57]: 筛选
+          - generic [ref=e58]: 支持列筛选功能
+        - generic [ref=e59]:
+          - strong [ref=e60]: 选择
+          - generic [ref=e61]: 单元格、行、列选择，Shift范围选择，Ctrl多选
+        - generic [ref=e62]:
+          - strong [ref=e63]: 编辑
+          - generic [ref=e64]: 双击进入编辑，支持文本、数字、日期、下拉
+        - generic [ref=e65]:
+          - strong [ref=e66]: 固定列
+          - generic [ref=e67]: 左固定、右固定列支持
+        - generic [ref=e68]:
+          - strong [ref=e69]: 多级表头
+          - generic [ref=e70]: 嵌套列分组
+        - generic [ref=e71]:
+          - strong [ref=e72]: 合并单元格
+          - generic [ref=e73]: 行合并、列合并
+        - generic [ref=e74]:
+          - strong [ref=e75]: 层级数据
+          - generic [ref=e76]: 树形结构展示
+        - generic [ref=e77]:
+          - strong [ref=e78]: 右键菜单
+          - generic [ref=e79]: 删除行、上方插入、下方插入
+        - generic [ref=e80]:
+          - strong [ref=e81]: 主题
+          - generic [ref=e82]: 亮色、暗色、自动三种模式
+        - generic [ref=e83]:
+          - strong [ref=e84]: 导出
+          - generic [ref=e85]: CSV 格式导出
+        - generic [ref=e86]:
+          - strong [ref=e87]: 水印
+          - generic [ref=e88]: 自定义水印支持
+        - generic [ref=e89]:
+          - strong [ref=e90]: 性能
+          - generic [ref=e91]: 虚拟滚动，百万级数据流畅渲染
+        - generic [ref=e92]:
+          - strong [ref=e93]: 导航
+          - generic [ref=e94]: 方向键导航，Enter编辑，Escape取消
+        - generic [ref=e95]:
+          - strong [ref=e96]: 快捷键
+          - generic [ref=e97]: Ctrl+A 全选，Ctrl+C 复制
+  - generic: "FPS: 60"
+```

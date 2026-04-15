@@ -1,7 +1,6 @@
 import {
   Row,
   Column,
-  TableData,
   SortConfig,
   FilterConfig,
   DataManagerState,
@@ -10,6 +9,7 @@ import {
   HistoryOptions,
 } from "../types";
 import { generateId, isPromise, getCellDisplayText, getColumnField } from "../utils";
+import { RowVersionManager } from "./RenderCache";
 
 const DEFAULT_MAX_ACTIONS = 200;
 
@@ -32,31 +32,40 @@ export class DataManager {
   /** 历史记录配置 */
   private historyOptions: HistoryOptions;
 
+  /** 行版本管理器（用于渲染缓存） */
+  private rowVersionManager: RowVersionManager = new RowVersionManager();
+
   constructor(_rowKey?: string, historyOptions?: HistoryOptions) {
     this.historyOptions = {
       maxActions: historyOptions?.maxActions ?? DEFAULT_MAX_ACTIONS,
     };
   }
 
-  async loadData(data: TableData | Promise<TableData> | (() => Promise<TableData>)): Promise<void> {
+  /**
+   * 获取行版本管理器
+   */
+  getRowVersionManager(): RowVersionManager {
+    return this.rowVersionManager;
+  }
+
+  async loadRows(rows: Row[] | Promise<Row[]> | (() => Promise<Row[]>)): Promise<void> {
     this.state.loading = true;
     this.state.error = null;
     this.state.filters = [];
     this.state.sort = [];
 
     try {
-      let tableData: TableData;
+      let tableRows: Row[];
 
-      if (typeof data === "function") {
-        tableData = await data();
-      } else if (isPromise<TableData>(data)) {
-        tableData = await data;
+      if (typeof rows === "function") {
+        tableRows = await rows();
+      } else if (isPromise<Row[]>(rows)) {
+        tableRows = await rows;
       } else {
-        tableData = data;
+        tableRows = rows;
       }
 
-      this.state.rows = this.processRows(tableData.rows);
-      this.state.columns = tableData.columns;
+      this.state.rows = this.processRows(tableRows);
       // 加载新数据时清空历史记录和重做记录
       this.historyStack = [];
       this.redoStack = [];
@@ -89,6 +98,11 @@ export class DataManager {
 
   setColumns(columns: Column[]): void {
     this.state.columns = columns;
+  }
+
+  setRows(rows: Row[]): void {
+    this.state.rows = this.processRows(rows);
+    this.applyFiltersAndSort();
   }
 
   getColumns(): Column[] {
@@ -365,11 +379,63 @@ export class DataManager {
     const strValue = String(value ?? "").toLowerCase();
     const strFilterValue = String(filterValue ?? "").toLowerCase();
 
+    // 处理新的筛选模式
     if (filter.operator === "in") {
       if (Array.isArray(filterValue)) {
+        // 如果单元格值是数组（如 tags 列），检查是否有任何元素匹配
+        if (Array.isArray(value)) {
+          // 对于 tags 数组，需要特殊处理
+          // 检查数组中是否有对象 { text, color } 或原始值匹配
+          return value.some((item) => {
+            if (typeof item === "object" && item !== null && "text" in item) {
+              // tags 格式: { text: "Tag1", color: "red" }
+              return filterValue.some((v) => String(v) === String((item as { text: string }).text));
+            }
+            return filterValue.some((v) => String(v) === String(item));
+          });
+        }
         return filterValue.some((v) => String(v) === String(value));
       }
       return false;
+    }
+
+    // 范围筛选 (number, progress)
+    if (filter.operator === "between" && typeof filterValue === "object" && filterValue !== null) {
+      const range = filterValue as { min?: number; max?: number };
+      const numValue = Number(value);
+      if (isNaN(numValue)) return false;
+
+      const { min, max } = range;
+      if (min !== undefined && max !== undefined) {
+        return numValue >= min && numValue <= max;
+      } else if (min !== undefined) {
+        return numValue >= min;
+      } else if (max !== undefined) {
+        return numValue <= max;
+      }
+      return true;
+    }
+
+    // 日期范围筛选
+    if (
+      filter.operator === "dateRange" &&
+      typeof filterValue === "object" &&
+      filterValue !== null
+    ) {
+      const dateRange = filterValue as { start?: Date | null; end?: Date | null };
+      const dateValue = value instanceof Date ? value : new Date(String(value));
+
+      if (isNaN(dateValue.getTime())) return false;
+
+      const { start, end } = dateRange;
+      if (start && end) {
+        return dateValue >= start && dateValue <= end;
+      } else if (start) {
+        return dateValue >= start;
+      } else if (end) {
+        return dateValue <= end;
+      }
+      return true;
     }
 
     switch (filter.operator) {
@@ -399,12 +465,6 @@ export class DataManager {
       case "lte":
       case "<=":
         return Number(value) <= Number(filterValue);
-      case "between":
-        if (Array.isArray(filterValue) && filterValue.length === 2) {
-          const numValue = Number(value);
-          return numValue >= Number(filterValue[0]) && numValue <= Number(filterValue[1]);
-        }
-        return false;
       case "notIn":
         if (Array.isArray(filterValue)) {
           return !filterValue.some((v) => String(v) === String(value));
@@ -477,9 +537,40 @@ export class DataManager {
         return new Date(a as string).getTime() - new Date(b as string).getTime();
       case "boolean":
         return Number(a) - Number(b);
-      default:
+      default: {
+        // Try to extract numeric values from strings (e.g., "8%", "79%", "$100", "50px")
+        const aNum = this.extractNumber(a);
+        const bNum = this.extractNumber(b);
+
+        // If both can be parsed as numbers, compare numerically
+        if (aNum !== null && bNum !== null) {
+          return aNum - bNum;
+        }
+
+        // Fallback to string comparison
         return String(a).localeCompare(String(b));
+      }
     }
+  }
+
+  /**
+   * Extract numeric value from a value
+   * Handles: numbers, strings with numbers (e.g., "8%", "79%", "$100", "1,234.56")
+   * Returns null if not a valid number
+   */
+  private extractNumber(value: unknown): number | null {
+    if (typeof value === "number") return value;
+    if (typeof value !== "string") return null;
+
+    // Remove common prefixes/suffixes: $, %, px, em, etc.
+    // Handle comma-separated thousands: 1,234.56
+    const cleaned = value
+      .replace(/^[^\d.-]+/, "") // Remove leading non-numeric chars (e.g., $, €)
+      .replace(/[^\d.-]+$/, "") // Remove trailing non-numeric chars (e.g., %, px)
+      .replace(/,/g, ""); // Remove thousand separators
+
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
   }
 
   updateCell(rowIndex: number, columnKey: string, value: unknown, field?: string): Change {
@@ -523,6 +614,9 @@ export class DataManager {
     }
     const oldValue = row.data[dataField];
     row.data[dataField] = convertedValue;
+
+    // 更新行版本（用于渲染缓存失效）
+    this.rowVersionManager.incrementVersion(row);
 
     // 记录到历史栈
     this.recordAction({
@@ -580,6 +674,11 @@ export class DataManager {
         oldValue: change.oldValue,
         newValue: change.newValue,
       });
+    }
+
+    // 更新行版本（用于渲染缓存失效）
+    if (changes.length > 0) {
+      this.rowVersionManager.incrementVersion(row);
     }
 
     const stateRow = this.findStateRow(row.id);
@@ -931,6 +1030,20 @@ export class DataManager {
    * 清空历史记录和重做记录
    */
   clearHistory(): void {
+    this.historyStack = [];
+    this.redoStack = [];
+  }
+
+  /**
+   * 销毁实例，清理所有状态
+   */
+  destroy(): void {
+    this.state.rows = [];
+    this.state.filteredRows = [];
+    this.state.sortedRows = [];
+    this.state.columns = [];
+    this.state.filters = [];
+    this.state.sort = [];
     this.historyStack = [];
     this.redoStack = [];
   }

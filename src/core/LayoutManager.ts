@@ -188,6 +188,40 @@ export class LayoutManager {
     return { ...this.layoutInfo };
   }
 
+  /**
+   * 只更新列相关的布局（用于列重排、列交换等操作）
+   * 避免遍历所有行，提升大数据量时的性能
+   */
+  calculateColumnLayoutOnly(columns: Column[]): LayoutInfo {
+    // 判断是否有左侧固定列
+    const checkLeftFixed = (cols: Column[]): boolean => {
+      for (const col of cols) {
+        if (col.fixed === "left") return true;
+        if (col.children && checkLeftFixed(col.children)) return true;
+      }
+      return false;
+    };
+    const hasLeftFixed = checkLeftFixed(columns);
+
+    // 如果启用行号列，创建并插入到第一列
+    if (this.showRowNumbers) {
+      const rowNumberColumn = this.createRowNumberColumn(hasLeftFixed);
+      this.columns = [rowNumberColumn, ...columns];
+    } else {
+      this.columns = columns;
+    }
+
+    // 只计算列相关布局，不重新计算行布局
+    this.calculateHeaderLayout(this.columns);
+    this.layoutInfo.headerHeight = this.theme.row.headerHeight * this.headerDepth;
+    this.calculateColumnLayout(this.columns);
+
+    this.layoutInfo.totalWidth = this.calculateTotalWidth();
+    // totalHeight 不变，因为行没有变化
+
+    return { ...this.layoutInfo };
+  }
+
   private calculateHeaderLayout(columns: Column[]): void {
     this.headerCells = [];
     this.leafColumns = [];
@@ -493,25 +527,18 @@ export class LayoutManager {
   }
 
   private calculateRowLayout(rows: Row[]): void {
-    this.rowHeights = [];
-    this.rowOffsets = [];
+    const rowCount = rows.length;
+    const rowHeight = this.theme.row.height;
 
-    let offset = this.layoutInfo.headerHeight;
+    // 优化：当前使用统一行高，使用公式计算偏移量
+    // 如果将来需要支持可变行高，需要恢复遍历计算
+    this.rowHeights = Array.from({ length: rowCount }, () => rowHeight);
+    this.rowOffsets = Array.from({ length: rowCount });
 
-    const processRows = (rowList: Row[]): void => {
-      for (const row of rowList) {
-        const height = this.getRowHeight(row);
-        this.rowHeights.push(height);
-        this.rowOffsets.push(offset);
-        offset += height;
+    for (let i = 0; i < rowCount; i++) {
+      this.rowOffsets[i] = this.layoutInfo.headerHeight + i * rowHeight;
+    }
 
-        if (row.children && row.expanded) {
-          processRows(row.children);
-        }
-      }
-    };
-
-    processRows(rows);
     this.layoutInfo.rowOffsets = [...this.rowOffsets];
   }
 

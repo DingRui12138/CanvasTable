@@ -48,8 +48,6 @@ export const TableEvents = {
   // 编辑事件
   EDIT_START: "editStart",
   EDIT_END: "editEnd",
-  DATE_EDIT_START: "dateEditStart",
-  DATE_EDIT_END: "dateEditEnd",
 
   // 撤销事件
   UNDO: "undo",
@@ -61,9 +59,16 @@ export const TableEvents = {
   DROPDOWN_HOVER: "dropdownHover",
   FILTER_DROPDOWN_OPEN: "filterDropdownOpen",
   FILTER_DROPDOWN_CLOSE: "filterDropdownClose",
+  FILTER_DROPDOWN_CONFIRM: "filterDropdownConfirm",
+  FILTER_DROPDOWN_CHANGE: "filterDropdownChange",
+  FILTER_DROPDOWN_RESET: "filterDropdownReset",
   DATE_DROPDOWN_OPEN: "dateDropdownOpen",
   DATE_DROPDOWN_CLOSE: "dateDropdownClose",
   DATE_DROPDOWN_HOVER: "dateDropdownHover",
+  COLOR_DROPDOWN_OPEN: "colorDropdownOpen",
+  COLOR_DROPDOWN_CLOSE: "colorDropdownClose",
+  COLOR_DROPDOWN_HOVER: "colorDropdownHover",
+  BUTTONS_DROPDOWN_CLOSE: "buttonsDropdownClose",
 
   // 右键菜单事件
   CONTEXT_MENU_OPEN: "contextMenuOpen",
@@ -89,6 +94,8 @@ export const TableEvents = {
   TAGS_CHANGE: "tagsChange",
   DATE_SELECT: "dateSelect",
   PROGRESS_CHANGE: "progressChange",
+  RATING_CHANGE: "ratingChange",
+  COLOR_CHANGE: "colorChange",
 
   // 图片事件
   IMAGE_CLICK: "imageClick",
@@ -100,6 +107,9 @@ export const TableEvents = {
   IMAGE_EDITOR_HOVER: "imageEditorHover",
   IMAGE_UPLOAD: "imageUpload",
   IMAGE_DELETE: "imageDelete",
+
+  // 懒加载事件
+  LOAD_MORE: "loadMore",
 } as const;
 
 export type TableEventType = (typeof TableEvents)[keyof typeof TableEvents];

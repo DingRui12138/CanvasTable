@@ -36,8 +36,14 @@ import {
   ContextMenuState,
   HeaderContextMenuState,
   ImageConfig,
+  RatingConfig,
+  ColorPickerConfig,
+  ColorPickerDropdownState,
+  ImageLoadConfig,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
+import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
+import { ImageLoadQueue } from "./ImageLoadQueue";
 import {
   truncateText,
   getDevicePixelRatio,
@@ -64,11 +70,32 @@ export class Renderer {
   private hoveredPlaceholderColumnIndex: number = -1;
   private isDestroyed = false;
 
-  // 图片缓存 (LRU 策略，最大 200 张图片)
-  private imageCache: LRUCache<string, HTMLImageElement> = new LRUCache(200);
-  private loadingImages: Set<string> = new Set();
-  private failedImages: Set<string> = new Set();
-  private imageLoadCallbacks: Map<string, Array<() => void>> = new Map();
+  // 图片加载队列（延迟加载 + 请求取消）
+  private imageLoadQueue: ImageLoadQueue;
+
+  /** 当前帧收集的可见图片 URL */
+  private frameVisibleUrls: Set<string> = new Set();
+
+  // 颜色计算缓存
+  private colorRangeCache: Map<string, { value: number; color: string }[]> = new Map();
+  private hexToRgbCache: Map<string, { r: number; g: number; b: number }> = new Map();
+
+  // 文本宽度缓存（用于按钮等需要测量文本宽度的场景）
+  private textWidthCache: Map<string, number> = new Map();
+  private textWidthCacheKey: string = ""; // 当前字体配置的 key
+
+  // 性能监控
+  private performanceEnabled: boolean = false;
+  private performanceStats: Map<string, { totalTime: number; count: number; maxTime: number }> =
+    new Map();
+  private frameStartTime: number = 0;
+  private frameCount: number = 0;
+  private lastReportTime: number = 0;
+
+  // 当前帧统计
+  private currentFrameStats: Map<string, { totalTime: number; count: number }> = new Map();
+  // 上一帧统计（用于报告）
+  private lastFrameStats: Map<string, { totalTime: number; count: number }> = new Map();
 
   // 懒加载相关
   private currentVisibleRange: VisibleRange | null = null;
@@ -77,6 +104,14 @@ export class Renderer {
   private currentHoveredCell: CellPosition | null = null;
   private currentHoveredImageIndex: number = -1;
   private currentHoveredButtonIndex: number = -1;
+
+  // 渲染缓存相关
+  private renderCache: RenderCache | null = null;
+  private rowIdManager: RowIdManager = new RowIdManager();
+  private columnIdManager: ColumnIdManager = new ColumnIdManager();
+
+  // 图片加载完成后的渲染触发回调
+  private onImageLoaded: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, theme: TableTheme, layoutManager: LayoutManager) {
     this.canvas = canvas;
@@ -87,6 +122,9 @@ export class Renderer {
 
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCtx = this.getContext(this.offscreenCanvas);
+
+    // 初始化图片加载队列（使用默认配置）
+    this.imageLoadQueue = new ImageLoadQueue();
   }
 
   private getContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -106,12 +144,50 @@ export class Renderer {
     this.theme = theme;
   }
 
+  /**
+   * 设置图片加载配置
+   */
+  setImageLoadConfig(config: ImageLoadConfig): void {
+    this.imageLoadQueue = new ImageLoadQueue({
+      maxConcurrent: config.maxConcurrent ?? 6,
+      maxCacheSize: config.maxCacheSize ?? 200,
+    });
+  }
+
   setWatermarkConfig(config: WatermarkConfig | null): void {
     this.watermarkConfig = config;
   }
 
   setExpandColumnKey(key: string | null): void {
     this.expandColumnKey = key;
+  }
+
+  /**
+   * 设置渲染缓存
+   */
+  setRenderCache(renderCache: RenderCache): void {
+    this.renderCache = renderCache;
+  }
+
+  /**
+   * 设置图片加载完成后的渲染触发回调
+   */
+  setOnImageLoaded(callback: (() => void) | null): void {
+    this.onImageLoaded = callback;
+  }
+
+  /**
+   * 获取行 ID 管理器
+   */
+  getRowIdManager(): RowIdManager {
+    return this.rowIdManager;
+  }
+
+  /**
+   * 获取列 ID 管理器
+   */
+  getColumnIdManager(): ColumnIdManager {
+    return this.columnIdManager;
   }
 
   resize(width: number, height: number): void {
@@ -178,13 +254,15 @@ export class Renderer {
     this.currentHoveredImageIndex = options.hoveredImageIndex ?? -1;
     this.currentHoveredButtonIndex = options.hoveredButtonIndex ?? -1;
 
+    // 开始性能监控帧
+    this.beginFrame();
+
     // 保存可视区域信息用于图片懒加载
     this.currentVisibleRange = visibleRange;
     this.currentScrollTop = scrollTop;
     this.rowHeight = this.theme.row.height;
 
     const { startRow, endRow } = visibleRange;
-    const layoutInfo = this.layoutManager.getLayoutInfo();
     const viewportWidth = this.canvas.width / this.dpr;
     const viewportHeight = this.canvas.height / this.dpr;
 
@@ -320,6 +398,9 @@ export class Renderer {
 
     this.ctx.restore();
 
+    // 提交当前帧可见图片集合，取消不可见图片的加载请求
+    this.commitVisibleImages();
+
     this.dirtyRegions = [];
   }
 
@@ -332,7 +413,7 @@ export class Renderer {
     scrollLeft: number,
     hoveredHeaderColumnKey?: string,
     _dragColumnIndex?: number,
-    columnReorderState?: {
+    _columnReorderState?: {
       dragColumnIndex: number;
       dragColumnKey: string;
       dragStartX: number;
@@ -413,6 +494,9 @@ export class Renderer {
         columnIndex,
       );
     }
+
+    // 结束性能监控帧
+    this.endFrame();
 
     this.ctx.restore();
   }
@@ -779,9 +863,9 @@ export class Renderer {
 
     this.ctx.save();
 
-    let totalFixedWidth = 0;
+    let _totalFixedWidth = 0;
     for (const colIndex of fixedColumnIndices) {
-      totalFixedWidth += this.layoutManager.getColumnWidthByIndex(colIndex);
+      _totalFixedWidth += this.layoutManager.getColumnWidthByIndex(colIndex);
     }
 
     const renderedMerges = new Set<string>();
@@ -939,7 +1023,7 @@ export class Renderer {
     sortConfig: SortConfig[],
     filterConfig: FilterConfig[],
     hoveredHeaderColumnKey?: string,
-    columnReorderState?: {
+    _columnReorderState?: {
       dragColumnIndex: number;
       dragColumnKey: string;
       dragStartX: number;
@@ -954,26 +1038,26 @@ export class Renderer {
 
     this.ctx.save();
 
-    let totalFixedWidth = 0;
+    let _totalFixedWidth = 0;
     for (const colIndex of fixedColumnIndices) {
-      totalFixedWidth += this.layoutManager.getColumnWidthByIndex(colIndex);
+      _totalFixedWidth += this.layoutManager.getColumnWidthByIndex(colIndex);
     }
 
     this.ctx.fillStyle = this.theme.colors.headerBackground;
-    this.ctx.fillRect(startX, 0, totalFixedWidth, headerHeight);
+    this.ctx.fillRect(startX, 0, _totalFixedWidth, headerHeight);
 
     this.ctx.strokeStyle = this.theme.colors.cellBorder;
     this.ctx.lineWidth = this.theme.border.width;
     this.ctx.beginPath();
     this.ctx.moveTo(startX, headerHeight);
-    this.ctx.lineTo(startX + totalFixedWidth, headerHeight);
+    this.ctx.lineTo(startX + _totalFixedWidth, headerHeight);
     this.ctx.stroke();
 
     const isRightFixed =
       fixedColumnIndices.length > 0 &&
       this.layoutManager.getLeafColumn(fixedColumnIndices[0]!)?.fixed === "right";
 
-    const offsetX = isRightFixed ? startX - (layoutInfo.totalWidth - totalFixedWidth) : 0;
+    const offsetX = isRightFixed ? startX - (layoutInfo.totalWidth - _totalFixedWidth) : 0;
 
     for (const headerCell of headerCells) {
       if (!headerCell.isLeaf) continue;
@@ -1065,7 +1149,6 @@ export class Renderer {
     }
 
     const padding = 8;
-    const isReorderable = column.reorderable !== false;
     // 右侧固定列不显示 drag handle（它们使用 renderHeaderCellMultiLevel）
     const showDragHandle = false;
     const dragHandleWidth = 0;
@@ -1116,7 +1199,6 @@ export class Renderer {
     const cols = 2;
     const rows = 3;
 
-    const totalWidth = (cols - 1) * dotGapX;
     const totalHeight = (rows - 1) * dotGapY;
 
     const startX = x;
@@ -1322,24 +1404,25 @@ export class Renderer {
     // Check if cell is disabled
     const isDisabled = this.resolveDisabled(column.disabled, row, column);
 
-    let renderResult: RenderResult = {
-      text: this.formatValue(value, column, row),
-      type: column.type ?? "text",
-    };
+    // 确定缓存模式
+    const cacheMode = this.getCacheMode(column);
+    let renderResult: RenderResult;
 
-    if (column.render) {
-      try {
-        const customResult = column.render(value, row, column, rowIndex);
-        if (customResult) {
-          renderResult = { ...renderResult, ...customResult };
-        }
-      } catch (error) {
-        console.error(`Error rendering cell at row ${rowIndex}, column ${column.key}:`, error);
-        renderResult = {
-          text: "[Error]",
-          type: "text",
-        };
+    // 尝试从缓存获取
+    if (this.renderCache && cacheMode !== false) {
+      const cached = this.renderCache.get(row, column, value, cacheMode);
+      if (cached) {
+        renderResult = cached;
+      } else {
+        // 缓存未命中，执行渲染
+        renderResult = this.executeRender(column, row, rowIndex, value);
+
+        // 存入缓存
+        this.renderCache.set(row, column, value, renderResult, cacheMode);
       }
+    } else {
+      // 不使用缓存，直接渲染
+      renderResult = this.executeRender(column, row, rowIndex, value);
     }
 
     const isCellSelected = this.isCellSelected(rowIndex, colIndex, options.selectedCells);
@@ -1408,6 +1491,50 @@ export class Renderer {
     }
   }
 
+  /**
+   * 获取列的缓存模式
+   */
+  private getCacheMode(column: Column): "cell" | "value" | false {
+    // 用户明确禁用缓存
+    if (column.cacheRender === false) return false;
+    if (column.cacheMode === false) return false;
+
+    // 用户明确指定模式
+    if (column.cacheMode === "value") return "value";
+    if (column.cacheMode === "cell") return "cell";
+
+    // 默认不使用缓存（对于大数据场景更高效）
+    // 只有用户明确指定 cacheMode 时才启用
+    return false;
+  }
+
+  /**
+   * 执行渲染函数
+   */
+  private executeRender(column: Column, row: Row, rowIndex: number, value: unknown): RenderResult {
+    let renderResult: RenderResult = {
+      text: this.formatValue(value, column, row),
+      type: column.type ?? "text",
+    };
+
+    if (column.render) {
+      try {
+        const customResult = column.render(value, row, column, rowIndex);
+        if (customResult) {
+          renderResult = { ...renderResult, ...customResult };
+        }
+      } catch (error) {
+        console.error(`Error rendering cell at row ${rowIndex}, column ${column.key}:`, error);
+        renderResult = {
+          text: "[Error]",
+          type: "text",
+        };
+      }
+    }
+
+    return renderResult;
+  }
+
   private renderCellContent(
     renderResult: RenderResult,
     x: number,
@@ -1467,12 +1594,14 @@ export class Renderer {
       this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
       if (type === "checkbox" && checkbox) {
-        this.renderCheckbox(x, y, width, height, checkbox, isDisabled);
+        this.measureRender("checkbox", () =>
+          this.renderCheckbox(x, y, width, height, checkbox, isDisabled),
+        );
         return;
       }
 
       if (type === "radio" && radio) {
-        this.renderRadio(x, y, width, height, radio, isDisabled);
+        this.measureRender("radio", () => this.renderRadio(x, y, width, height, radio, isDisabled));
         return;
       }
 
@@ -1485,20 +1614,24 @@ export class Renderer {
             hoverProgress = hoverState.progress;
           }
         }
-        this.renderButton(x, y, width, height, button, isDisabled, hoverProgress);
+        this.measureRender("button", () =>
+          this.renderButton(x, y, width, height, button, isDisabled, hoverProgress),
+        );
         return;
       }
 
       if (type === "buttons" && renderResult.buttons) {
-        this.renderButtons(
-          x,
-          y,
-          width,
-          height,
-          renderResult.buttons,
-          rowIndex,
-          colIndex,
-          isDisabled,
+        this.measureRender("buttons", () =>
+          this.renderButtons(
+            x,
+            y,
+            width,
+            height,
+            renderResult.buttons!,
+            rowIndex,
+            colIndex,
+            isDisabled,
+          ),
         );
         return;
       }
@@ -1512,27 +1645,43 @@ export class Renderer {
             animationProgress = animation.progress;
           }
         }
-        this.renderSwitch(x, y, width, height, renderResult.switch, isDisabled, animationProgress);
+        this.measureRender("switch", () =>
+          this.renderSwitch(
+            x,
+            y,
+            width,
+            height,
+            renderResult.switch!,
+            isDisabled,
+            animationProgress,
+          ),
+        );
         return;
       }
 
       if (type === "input" && input) {
-        this.renderInput(x, y, width, height, input, isDisabled);
+        this.measureRender("input", () => this.renderInput(x, y, width, height, input, isDisabled));
         return;
       }
 
       if (type === "select" && renderResult.select) {
-        this.renderSelect(x, y, width, height, renderResult.select, isDisabled);
+        this.measureRender("select", () =>
+          this.renderSelect(x, y, width, height, renderResult.select!, isDisabled),
+        );
         return;
       }
 
       if (type === "date" && renderResult.date) {
-        this.renderDate(x, y, width, height, renderResult.date, isDisabled);
+        this.measureRender("date", () =>
+          this.renderDate(x, y, width, height, renderResult.date!, isDisabled),
+        );
         return;
       }
 
       if (type === "tag" && tags) {
-        this.renderTags(x, y, width, height, padding, tags, isDisabled);
+        this.measureRender("tags", () =>
+          this.renderTags(x, y, width, height, padding, tags, isDisabled),
+        );
         return;
       }
 
@@ -1542,18 +1691,36 @@ export class Renderer {
           colIndex !== undefined &&
           this.currentHoveredCell?.rowIndex === rowIndex &&
           this.currentHoveredCell?.columnIndex === colIndex;
-        this.renderImage(x, y, width, height, renderResult.image, rowIndex, isHovered);
+        this.measureRender("image", () =>
+          this.renderImage(x, y, width, height, renderResult.image!, rowIndex, isHovered),
+        );
         return;
       }
 
       if (type === "progress" && renderResult.progress) {
-        this.renderProgress(x, y, width, height, renderResult.progress);
+        this.measureRender("progress", () =>
+          this.renderProgress(x, y, width, height, renderResult.progress!),
+        );
+        return;
+      }
+
+      if (type === "rating" && renderResult.rating) {
+        this.measureRender("rating", () =>
+          this.renderRating(x, y, width, height, renderResult.rating!, isDisabled ?? false),
+        );
+        return;
+      }
+
+      if (type === "color" && renderResult.color) {
+        this.measureRender("color", () =>
+          this.renderColorCell(x, y, width, height, renderResult.color!, isDisabled ?? false),
+        );
         return;
       }
 
       if (type === "custom" && renderResult.customRender) {
-        try {
-          renderResult.customRender({
+        this.measureRender("custom", () => {
+          renderResult.customRender!({
             ctx: this.ctx,
             x,
             y,
@@ -1563,85 +1730,86 @@ export class Renderer {
             theme: this.theme,
             dpr: this.dpr,
           });
-        } catch (error) {
-          console.error("Error in customRender:", error);
-        }
+        });
         return;
       }
 
-      // 处理 link 类型的显示文本
-      let displayText = text;
-      let color = style?.color ?? this.theme.colors.cellText;
-      if (type === "link" && link) {
-        displayText = link.text || link.link;
-        color = style?.color ?? this.theme.colors.linkColor;
-      }
-
-      if (!displayText) return;
-
-      this.ctx.fillStyle = color;
-
-      const align: HorizontalAlign = style?.horizontalAlign ?? defaultAlign ?? "left";
-      const verticalAlign: VerticalAlign = style?.verticalAlign ?? "middle";
-
-      const maxTextWidth = width - padding * 2;
-      const ellipsis = "...";
-      let textWidth = this.ctx.measureText(displayText).width;
-
-      if (textWidth > maxTextWidth) {
-        let truncated = displayText;
-        while (
-          truncated.length > 0 &&
-          this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
-        ) {
-          truncated = truncated.slice(0, -1);
+      // 文本渲染（默认）
+      this.measureRender("text", () => {
+        // 处理 link 类型的显示文本
+        let displayText = text;
+        let color = style?.color ?? this.theme.colors.cellText;
+        if (type === "link" && link) {
+          displayText = link.text || link.link;
+          color = style?.color ?? this.theme.colors.linkColor;
         }
-        displayText = truncated + ellipsis;
-        textWidth = this.ctx.measureText(displayText).width;
-      }
 
-      let textX: number;
-      switch (align) {
-        case "center":
-          textX = x + (width - this.ctx.measureText(displayText).width) / 2;
-          break;
-        case "right":
-          textX = x + width - padding - this.ctx.measureText(displayText).width;
-          break;
-        default:
-          textX = x + padding;
-      }
+        if (!displayText) return;
 
-      let textY: number;
-      switch (verticalAlign) {
-        case "top":
-          this.ctx.textBaseline = "top";
-          textY = y + padding;
-          break;
-        case "bottom":
-          this.ctx.textBaseline = "bottom";
-          textY = y + height - padding;
-          break;
-        default:
-          this.ctx.textBaseline = "middle";
-          textY = y + height / 2;
-      }
+        this.ctx.fillStyle = color;
 
-      if (type === "tag") {
-        this.renderTag(displayText, textX, textY, fontSize);
-      } else {
-        this.ctx.fillText(displayText, textX, textY);
+        const align: HorizontalAlign = style?.horizontalAlign ?? defaultAlign ?? "left";
+        const verticalAlign: VerticalAlign = style?.verticalAlign ?? "middle";
 
-        if (type === "link") {
-          const textWidth = this.ctx.measureText(displayText).width;
-          this.ctx.strokeStyle = color;
-          this.ctx.lineWidth = 1;
-          this.ctx.beginPath();
-          this.ctx.moveTo(textX, textY + fontSize / 2 + 2);
-          this.ctx.lineTo(textX + textWidth, textY + fontSize / 2 + 2);
-          this.ctx.stroke();
+        const maxTextWidth = width - padding * 2;
+        const ellipsis = "...";
+        let textWidth = this.ctx.measureText(displayText).width;
+
+        if (textWidth > maxTextWidth) {
+          let truncated = displayText;
+          while (
+            truncated.length > 0 &&
+            this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
+          ) {
+            truncated = truncated.slice(0, -1);
+          }
+          displayText = truncated + ellipsis;
+          textWidth = this.ctx.measureText(displayText).width;
         }
-      }
+
+        let textX: number;
+        switch (align) {
+          case "center":
+            textX = x + (width - this.ctx.measureText(displayText).width) / 2;
+            break;
+          case "right":
+            textX = x + width - padding - this.ctx.measureText(displayText).width;
+            break;
+          default:
+            textX = x + padding;
+        }
+
+        let textY: number;
+        switch (verticalAlign) {
+          case "top":
+            this.ctx.textBaseline = "top";
+            textY = y + padding;
+            break;
+          case "bottom":
+            this.ctx.textBaseline = "bottom";
+            textY = y + height - padding;
+            break;
+          default:
+            this.ctx.textBaseline = "middle";
+            textY = y + height / 2;
+        }
+
+        if (type === "tag") {
+          this.renderTag(displayText, textX, textY, fontSize);
+        } else {
+          this.ctx.fillText(displayText, textX, textY);
+
+          if (type === "link") {
+            const textWidth = this.ctx.measureText(displayText).width;
+            this.ctx.strokeStyle = color;
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            this.ctx.moveTo(textX, textY + fontSize / 2 + 2);
+            this.ctx.lineTo(textX + textWidth, textY + fontSize / 2 + 2);
+            this.ctx.stroke();
+          }
+        }
+      }); // Close measureRender lambda
     } finally {
       // 确保始终恢复 canvas 状态
       this.ctx.restore();
@@ -1846,10 +2014,9 @@ export class Renderer {
     const buttonY = y + (height - buttonHeight) / 2;
     const disabled = isDisabled ?? false;
 
-    // 计算按钮宽度：根据文本内容
+    // 计算按钮宽度：根据文本内容（使用缓存）
     const text = config.text ?? "Button";
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    const textWidth = this.ctx.measureText(text).width;
+    const textWidth = this.measureTextWidth(text);
     const buttonPadding = 16; // 按钮内边距
     const buttonWidth = Math.min(
       Math.max(textWidth + buttonPadding * 2, 60), // 最小 60px
@@ -1974,8 +2141,7 @@ export class Renderer {
     for (let i = 0; i < displayButtons.length; i++) {
       const btn = displayButtons[i]!;
       const text = btn.text ?? "Button";
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-      const textWidth = this.ctx.measureText(text).width;
+      const textWidth = this.measureTextWidth(text);
       const buttonWidth = Math.max(textWidth + 16, 40);
 
       const isHovered = i === hoveredIndex && !isDisabled;
@@ -1994,8 +2160,7 @@ export class Renderer {
 
     if (moreButtons.length > 0) {
       const moreText = config.moreButtonText ?? "···";
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-      const textWidth = this.ctx.measureText(moreText).width;
+      const textWidth = this.measureTextWidth(moreText);
       const buttonWidth = Math.max(textWidth + 16, 32);
 
       // "更多"按钮的索引是 maxVisible
@@ -2118,12 +2283,10 @@ export class Renderer {
     const minWidth = 100;
     const padding = 8;
 
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
     let maxWidth = minWidth;
     for (const btn of dropdown.buttons) {
       const text = btn.text ?? "Button";
-      const textWidth = this.ctx.measureText(text).width;
+      const textWidth = this.measureTextWidth(text);
       maxWidth = Math.max(maxWidth, textWidth + padding * 2 + 16);
     }
 
@@ -2240,8 +2403,8 @@ export class Renderer {
 
         const isHovered = index === imageTooltip.hoveredIndex;
 
-        // 尝试获取缓存的图片
-        const cachedImg = this.imageCache.get(imgSrc);
+        // 尝试获取缓存的图片（需要指定最小尺寸）
+        const cachedImg = this.imageLoadQueue.get(imgSrc, imgSize);
         if (cachedImg) {
           // 绘制图片
           this.ctx.save();
@@ -2253,6 +2416,9 @@ export class Renderer {
           }
           this.ctx.drawImage(cachedImg, x, y, imgSize, imgSize);
           this.ctx.restore();
+
+          // 收集可见图片
+          this.collectVisibleImage(imgSrc);
         } else {
           // 绘制占位符
           this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
@@ -2261,9 +2427,9 @@ export class Renderer {
           this.ctx.lineWidth = 1;
           this.ctx.strokeRect(x, y, imgSize, imgSize);
 
-          // 加载图片
-          if (!this.loadingImages.has(imgSrc)) {
-            this.loadImage(imgSrc);
+          // 加载图片（如果未在加载中）
+          if (!this.imageLoadQueue.isLoading(imgSrc)) {
+            this.loadImage(imgSrc, imgSize); // tooltip 图片尺寸
           }
         }
       }
@@ -2424,8 +2590,8 @@ export class Renderer {
         const isHovered = index === editor.hoveredIndex;
         const isPending = index >= images.length;
 
-        // 尝试获取缓存的图片
-        const cachedImg = this.imageCache.get(imgSrc);
+        // 尝试获取缓存的图片（需要指定最小尺寸）
+        const cachedImg = this.imageLoadQueue.get(imgSrc, imgSize);
         if (cachedImg) {
           // 绘制图片
           this.ctx.save();
@@ -2437,6 +2603,9 @@ export class Renderer {
           }
           this.ctx.drawImage(cachedImg, imgX, imgY, imgSize, imgSize);
           this.ctx.restore();
+
+          // 收集可见图片
+          this.collectVisibleImage(imgSrc);
         } else {
           // 绘制占位符
           this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
@@ -2446,8 +2615,8 @@ export class Renderer {
           this.ctx.strokeRect(imgX, imgY, imgSize, imgSize);
 
           // 加载图片
-          if (!this.loadingImages.has(imgSrc)) {
-            this.loadImage(imgSrc);
+          if (!this.imageLoadQueue.isLoading(imgSrc)) {
+            this.loadImage(imgSrc, imgSize); // editor 图片尺寸
           }
         }
 
@@ -2592,14 +2761,47 @@ export class Renderer {
   }
 
   private hexToRgb(hex: string): { r: number; g: number; b: number } {
+    // 使用缓存避免重复解析
+    let cached = this.hexToRgbCache.get(hex);
+    if (cached) return cached;
+
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result
+    cached = result
       ? {
           r: parseInt(result[1]!, 16),
           g: parseInt(result[2]!, 16),
           b: parseInt(result[3]!, 16),
         }
       : { r: 0, g: 0, b: 0 };
+
+    this.hexToRgbCache.set(hex, cached);
+    return cached;
+  }
+
+  /**
+   * 获取文本宽度（使用缓存优化性能）
+   * 避免每帧都调用 measureText
+   */
+  private measureTextWidth(text: string): number {
+    // 更新字体缓存 key
+    const fontKey = `${this.theme.font.size}-${this.theme.font.family}`;
+    if (this.textWidthCacheKey !== fontKey) {
+      // 字体配置变化，清空缓存
+      this.textWidthCache.clear();
+      this.textWidthCacheKey = fontKey;
+    }
+
+    // 检查缓存
+    const cachedWidth = this.textWidthCache.get(text);
+    if (cachedWidth !== undefined) {
+      return cachedWidth;
+    }
+
+    // 测量并缓存
+    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+    const width = this.ctx.measureText(text).width;
+    this.textWidthCache.set(text, width);
+    return width;
   }
 
   // === 进度条渲染方法 ===
@@ -2634,8 +2836,6 @@ export class Renderer {
     const showText = config.showText ?? true;
     const size = config.size ?? "medium";
 
-    this.ctx.save();
-
     // 计算进度条尺寸
     const barHeight = config.height ?? (size === "small" ? 6 : size === "large" ? 16 : 10);
     const textGap = 8;
@@ -2648,26 +2848,34 @@ export class Renderer {
     // 限制值在 [0, 100] 范围内
     const clampedValue = Math.min(100, Math.max(0, config.value));
 
-    // 获取进度颜色（使用原始值以支持颜色映射）
+    // 获取进度颜色
     const progressColor = this.getProgressColor(config, clampedValue);
     const trackColor = config.trackColor ?? this.theme.colors.progress.track;
     // 圆角半径：默认为高度的一半（完全圆角）
     const radius = config.borderRadius ?? barHeight / 2;
 
-    // 绘制轨道
+    // 绘制轨道 - 使用 fillRect 代替 roundRect 以提升性能
     this.ctx.fillStyle = trackColor;
-    this.ctx.beginPath();
-    this.ctx.roundRect(barX, barY, barWidth, barHeight, radius);
-    this.ctx.fill();
+    if (radius > 0) {
+      this.ctx.beginPath();
+      this.ctx.roundRect(barX, barY, barWidth, barHeight, radius);
+      this.ctx.fill();
+    } else {
+      this.ctx.fillRect(barX, barY, barWidth, barHeight);
+    }
 
     // 绘制进度
     const progressWidth = (clampedValue / 100) * barWidth;
     if (progressWidth > 0) {
       this.ctx.fillStyle = progressColor;
-      this.ctx.beginPath();
       const actualProgressWidth = Math.max(progressWidth, radius * 2);
-      this.ctx.roundRect(barX, barY, actualProgressWidth, barHeight, radius);
-      this.ctx.fill();
+      if (radius > 0) {
+        this.ctx.beginPath();
+        this.ctx.roundRect(barX, barY, actualProgressWidth, barHeight, radius);
+        this.ctx.fill();
+      } else {
+        this.ctx.fillRect(barX, barY, actualProgressWidth, barHeight);
+      }
     }
 
     // 绘制文本
@@ -2699,8 +2907,6 @@ export class Renderer {
         this.ctx.fillText(text, barX + barWidth / 2, y + cellHeight / 2);
       }
     }
-
-    this.ctx.restore();
   }
 
   private renderCircleProgress(
@@ -2727,8 +2933,6 @@ export class Renderer {
 
     const progressColor = this.getProgressColor(config, clampedValue);
     const trackColor = config.trackColor ?? this.theme.colors.progress.track;
-
-    this.ctx.save();
 
     // 绘制轨道圆环
     this.ctx.strokeStyle = trackColor;
@@ -2761,8 +2965,6 @@ export class Renderer {
       this.ctx.textBaseline = "middle";
       this.ctx.fillText(text, centerX, centerY);
     }
-
-    this.ctx.restore();
   }
 
   private renderDashboardProgress(
@@ -2792,19 +2994,10 @@ export class Renderer {
     const trackColor = config.trackColor ?? this.theme.colors.progress.track;
 
     // 仪表盘角度范围: 270° (3/4 圆)，缺口在底部中间
-    // Canvas arc 角度: 0°=右, 90°=下, 180°=左, 270°=上 (y轴向下)
-    //
-    // 缺口位置: 底部中间，即 45° 到 135° 的 90° 范围（以 90° 为中心）
-    // 弧的范围: 135° 顺时针画到 45°，经过 180°→270°→0°→45°
-    // 进度方向: 从 135°(右下偏右) 开始，顺时针增长
-    //   0% = 135°, 50% = 270°(顶部), 100% = 45°(右下偏左)
     const startAngle = Math.PI * 0.75; // 135°
     const totalAngle = Math.PI * 1.5; // 270°
 
-    this.ctx.save();
-
-    // 绘制轨道 - 顺时针画 270° (counterclockwise = false)
-    // 从 135° 顺时针到 135° + 270° = 405° = 45°
+    // 绘制轨道 - 顺时针画 270°
     this.ctx.strokeStyle = trackColor;
     this.ctx.lineWidth = strokeWidth;
     this.ctx.lineCap = config.strokeLinecap ?? "round";
@@ -2834,8 +3027,6 @@ export class Renderer {
       this.ctx.textBaseline = "middle";
       this.ctx.fillText(text, centerX, centerY);
     }
-
-    this.ctx.restore();
   }
 
   private getProgressColor(config: import("../types").ProgressConfig, value: number): string {
@@ -2849,16 +3040,23 @@ export class Renderer {
     // 单色
     if (typeof color === "string") return color;
 
-    // 函数动态计算
+    // 函数动态计算（无法缓存）
     if (typeof color === "function") return color(value);
 
     // 渐变区间
     if (Array.isArray(color) && color.length > 0) {
-      const sorted = [...color].sort((a, b) => a.value - b.value);
+      // 使用缓存避免每次排序
+      const cacheKey = color.map((c) => `${c.value}-${c.color}`).join("|");
+      let sorted = this.colorRangeCache.get(cacheKey);
+      if (!sorted) {
+        sorted = [...color].sort((a, b) => a.value - b.value);
+        this.colorRangeCache.set(cacheKey, sorted);
+      }
 
       if (value <= sorted[0]!.value) return sorted[0]!.color;
       if (value >= sorted[sorted.length - 1]!.value) return sorted[sorted.length - 1]!.color;
 
+      // 颜色区间通常很少（2-5个），线性查找足够
       for (let i = 0; i < sorted.length - 1; i++) {
         const curr = sorted[i]!;
         const next = sorted[i + 1]!;
@@ -2871,6 +3069,248 @@ export class Renderer {
 
     // 默认主题色
     return this.theme.colors.progress.default;
+  }
+
+  // === 评分渲染方法 ===
+
+  private renderRating(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    config: RatingConfig,
+    isDisabled: boolean,
+  ): void {
+    const ratingValue = config.value ?? 0;
+    const max = config.max ?? 5;
+    const starSize = config.starSize ?? 16;
+    const allowHalf = config.allowHalf ?? false;
+
+    // Default colors
+    const activeColor = config.color ?? "#FFD700";
+    const inactiveColor = config.inactiveColor ?? "#E0E0E0";
+    const disabledColor = config.disabledColor ?? "#BDBDBD";
+
+    // Use disabled color if cell is disabled
+    const fillColor = isDisabled ? disabledColor : activeColor;
+    const emptyColor = isDisabled ? disabledColor : inactiveColor;
+
+    // Calculate star positions (centered in cell)
+    const totalWidth = max * starSize;
+    const startX = x + (width - totalWidth) / 2;
+    const startY = y + (height - starSize) / 2;
+
+    for (let i = 0; i < max; i++) {
+      const starX = startX + i * starSize;
+
+      // Calculate fill amount for this star
+      const starValue = ratingValue - i;
+      let fillAmount = 0;
+
+      if (starValue >= 1) {
+        fillAmount = 1; // Full star
+      } else if (starValue > 0) {
+        fillAmount = allowHalf ? starValue : 0; // Half star or empty
+      }
+
+      // Draw the star
+      this.drawStar(starX, startY, starSize, fillAmount, fillColor, emptyColor);
+    }
+  }
+
+  private drawStar(
+    x: number,
+    y: number,
+    size: number,
+    fillAmount: number,
+    fillColor: string,
+    emptyColor: string,
+  ): void {
+    const centerX = x + size / 2;
+    const centerY = y + size / 2;
+    const outerRadius = size / 2;
+    const innerRadius = outerRadius * 0.4; // Inner radius ratio
+
+    // Star points (5-pointed star)
+    const points = this.getStarPoints(centerX, centerY, outerRadius, innerRadius);
+
+    // Draw empty star background first
+    this.ctx.beginPath();
+    this.ctx.moveTo(points[0]!.x, points[0]!.y);
+    for (let i = 1; i < points.length; i++) {
+      this.ctx.lineTo(points[i]!.x, points[i]!.y);
+    }
+    this.ctx.closePath();
+    this.ctx.fillStyle = emptyColor;
+    this.ctx.fill();
+
+    // Draw filled portion
+    if (fillAmount > 0) {
+      this.ctx.save();
+
+      // Create clipping path for filled portion
+      this.ctx.beginPath();
+      this.ctx.rect(x, y, size * fillAmount, size);
+      this.ctx.clip();
+
+      // Draw filled star
+      this.ctx.beginPath();
+      this.ctx.moveTo(points[0]!.x, points[0]!.y);
+      for (let i = 1; i < points.length; i++) {
+        this.ctx.lineTo(points[i]!.x, points[i]!.y);
+      }
+      this.ctx.closePath();
+      this.ctx.fillStyle = fillColor;
+      this.ctx.fill();
+
+      this.ctx.restore();
+    }
+  }
+
+  private getStarPoints(
+    centerX: number,
+    centerY: number,
+    outerRadius: number,
+    innerRadius: number,
+  ): Array<{ x: number; y: number }> {
+    const points: Array<{ x: number; y: number }> = [];
+    const angleStep = Math.PI / 5; // 36 degrees
+    const startAngle = -Math.PI / 2; // Start from top
+
+    for (let i = 0; i < 10; i++) {
+      const angle = startAngle + i * angleStep;
+      const radius = i % 2 === 0 ? outerRadius : innerRadius;
+      points.push({
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle),
+      });
+    }
+
+    return points;
+  }
+
+  // === 颜色选择器渲染方法 ===
+
+  private renderColorCell(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    config: ColorPickerConfig,
+    isDisabled: boolean,
+  ): void {
+    const padding = 8;
+    const colorBoxSize = Math.min(height - padding * 2, 24);
+    const colorBoxX = x + (width - colorBoxSize) / 2;
+    const colorBoxY = y + (height - colorBoxSize) / 2;
+
+    // 绘制颜色块
+    this.ctx.fillStyle = config.value || "#ffffff";
+    this.ctx.fillRect(colorBoxX, colorBoxY, colorBoxSize, colorBoxSize);
+
+    // 绘制边框
+    this.ctx.strokeStyle = isDisabled ? "#bdbdbd" : "#d9d9d9";
+    this.ctx.lineWidth = 1;
+    this.ctx.strokeRect(colorBoxX, colorBoxY, colorBoxSize, colorBoxSize);
+
+    // 可选：显示颜色值文本
+    if (config.showText) {
+      const textColor = this.getContrastColor(config.value || "#ffffff");
+      this.ctx.fillStyle = textColor;
+      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+      this.ctx.textAlign = "center";
+      this.ctx.textBaseline = "middle";
+      this.ctx.fillText(
+        config.value || "",
+        colorBoxX + colorBoxSize / 2,
+        colorBoxY + colorBoxSize / 2,
+      );
+    }
+  }
+
+  renderColorDropdown(dropdown: ColorPickerDropdownState): void {
+    const { config, x, y, width, hoveredColor } = dropdown;
+    const presetColors = config.presetColors || this.getDefaultPresetColors();
+
+    const columns = 8;
+    const cellSize = 24;
+    const gap = 4;
+    const padding = 8;
+
+    // 计算下拉框高度
+    const rows = Math.ceil(presetColors.length / columns);
+    const dropdownHeight = padding * 2 + rows * (cellSize + gap) - gap;
+
+    // 绘制背景
+    this.ctx.fillStyle = this.theme.colors.dropdown.background;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.fill();
+
+    // 绘制边框
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.stroke();
+
+    // 绘制颜色格子
+    for (let i = 0; i < presetColors.length; i++) {
+      const color = presetColors[i]!;
+      const col = i % columns;
+      const row = Math.floor(i / columns);
+      const cellX = x + padding + col * (cellSize + gap);
+      const cellY = y + padding + row * (cellSize + gap);
+
+      // 绘制颜色块
+      this.ctx.fillStyle = color;
+      this.ctx.fillRect(cellX, cellY, cellSize, cellSize);
+
+      // hover 效果
+      if (color === hoveredColor) {
+        this.ctx.strokeStyle = "#1890ff";
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(cellX - 1, cellY - 1, cellSize + 2, cellSize + 2);
+      } else {
+        // 绘制格子边框
+        this.ctx.strokeStyle = "#d9d9d9";
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(cellX, cellY, cellSize, cellSize);
+      }
+    }
+  }
+
+  private getDefaultPresetColors(): string[] {
+    return [
+      "#ff4d4f",
+      "#ff7a45",
+      "#ffa940",
+      "#ffc53d",
+      "#bae637",
+      "#73d13d",
+      "#36cfc9",
+      "#40a9ff",
+      "#597ef7",
+      "#9254de",
+      "#f759ab",
+      "#ff85c0",
+      "#a0d911",
+      "#13c2c2",
+      "#1890ff",
+      "#722ed1",
+      "#eb2f96",
+      "#faad14",
+      "#52c41a",
+      "#2f54eb",
+      "#ffffff",
+      "#f5f5f5",
+      "#d9d9d9",
+      "#8c8c8c",
+      "#595959",
+      "#262626",
+      "#000000",
+      "#f50",
+    ];
   }
 
   private getContrastColor(bgColor: string): string {
@@ -2947,27 +3387,59 @@ export class Renderer {
         continue;
       }
 
-      let currentLine = "";
-      const chars = paragraph.split("");
+      let remaining = paragraph;
 
-      for (const char of chars) {
-        const testLine = currentLine + char;
-        const metrics = this.ctx.measureText(testLine);
+      while (remaining.length > 0) {
+        // 使用二分查找找到当前行能放下的最大字符数
+        const breakPoint = this.findLineBreakPoint(remaining, maxWidth);
 
-        if (metrics.width > maxWidth && currentLine !== "") {
-          lines.push(currentLine);
-          currentLine = char;
+        if (breakPoint === 0) {
+          // 第一个字符都放不下，强制放一个字符
+          lines.push(remaining[0]!);
+          remaining = remaining.slice(1);
         } else {
-          currentLine = testLine;
+          lines.push(remaining.slice(0, breakPoint));
+          remaining = remaining.slice(breakPoint);
         }
-      }
-
-      if (currentLine) {
-        lines.push(currentLine);
       }
     }
 
     return lines;
+  }
+
+  /**
+   * 二分查找找到能放入 maxWidth 的最大字符数
+   */
+  private findLineBreakPoint(text: string, maxWidth: number): number {
+    const len = text.length;
+
+    // 边界检查
+    if (len === 0) return 0;
+
+    // 先检查整段是否能放下
+    if (this.ctx.measureText(text).width <= maxWidth) {
+      return len;
+    }
+
+    // 二分查找
+    let left = 1;
+    let right = len;
+    let result = 0;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const substr = text.slice(0, mid);
+      const width = this.ctx.measureText(substr).width;
+
+      if (width <= maxWidth) {
+        result = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+
+    return result;
   }
 
   private truncateTextWithEllipsis(
@@ -2976,28 +3448,62 @@ export class Renderer {
     forceEllipsis: boolean = false,
   ): string {
     const ellipsis = "...";
+    const ellipsisWidth = this.ctx.measureText(ellipsis).width;
+
+    // 先检查整段是否能放下
     const textWidth = this.ctx.measureText(text).width;
 
     if (textWidth <= maxWidth) {
       if (forceEllipsis) {
-        let truncated = text;
-        while (
-          truncated.length > 0 &&
-          this.ctx.measureText(truncated + ellipsis).width > maxWidth
-        ) {
-          truncated = truncated.slice(0, -1);
+        // 需要添加省略号，检查是否能放下文本+省略号
+        if (textWidth + ellipsisWidth <= maxWidth) {
+          return text + ellipsis;
         }
-        return truncated + ellipsis;
+        // 需要截断以放下省略号
+        return this.truncateWithEllipsisBinary(text, maxWidth, ellipsis, ellipsisWidth);
       }
       return text;
     }
 
-    let truncated = text;
-    while (truncated.length > 0 && this.ctx.measureText(truncated + ellipsis).width > maxWidth) {
-      truncated = truncated.slice(0, -1);
+    return this.truncateWithEllipsisBinary(text, maxWidth, ellipsis, ellipsisWidth);
+  }
+
+  /**
+   * 二分查找截断文本并添加省略号
+   */
+  private truncateWithEllipsisBinary(
+    text: string,
+    maxWidth: number,
+    ellipsis: string,
+    ellipsisWidth: number,
+  ): string {
+    const targetWidth = maxWidth - ellipsisWidth;
+
+    if (targetWidth <= 0) {
+      return ellipsis;
     }
 
-    return truncated + ellipsis;
+    const len = text.length;
+
+    // 二分查找能放下的最大长度
+    let left = 0;
+    let right = len;
+    let result = 0;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const substr = text.slice(0, mid);
+      const width = this.ctx.measureText(substr).width;
+
+      if (width <= targetWidth) {
+        result = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+
+    return text.slice(0, result) + ellipsis;
   }
 
   private renderSelect(
@@ -3228,13 +3734,13 @@ export class Renderer {
       }
 
       // 检查是否加载失败
-      if (this.failedImages.has(config.src)) {
+      if (this.imageLoadQueue.isFailed(config.src)) {
         // 加载失败，显示错误图片
         this.renderImageError(imgX, imgY, imgWidth, imgHeight, borderRadius, config.errorImage);
         return;
       }
 
-      const cachedImage = this.imageCache.get(config.src);
+      const cachedImage = this.imageLoadQueue.get(config.src, Math.max(imgWidth, imgHeight));
 
       if (cachedImage) {
         // 图片已加载，绘制图片
@@ -3253,9 +3759,12 @@ export class Renderer {
         this.drawImageWithFit(cachedImage, imgX, imgY, imgWidth, imgHeight, config.fit ?? "cover");
 
         this.ctx.restore();
-      } else if (!this.loadingImages.has(config.src)) {
-        // 图片未加载，开始加载
-        this.loadImage(config.src);
+
+        // 收集可见图片
+        this.collectVisibleImage(config.src);
+      } else if (!this.imageLoadQueue.isLoading(config.src)) {
+        // 图片未加载，开始加载（传递渲染尺寸用于预缩放）
+        this.loadImage(config.src, Math.max(imgWidth, imgHeight));
         // 显示占位图
         this.renderImagePlaceholder(
           imgX,
@@ -3266,7 +3775,9 @@ export class Renderer {
           config.placeholder,
         );
       } else {
-        // 图片正在加载中，显示占位图或加载指示
+        // 图片正在加载中，显示占位图
+        // 注意：仍然需要收集可见图片，防止被 cancelInvisible 取消
+        this.collectVisibleImage(config.src);
         this.renderImagePlaceholder(
           imgX,
           imgY,
@@ -3399,7 +3910,7 @@ export class Renderer {
       }
 
       // 检查是否加载失败
-      if (this.failedImages.has(src)) {
+      if (this.imageLoadQueue.isFailed(src)) {
         this.renderImageError(imgX, imgY, imgWidth, imgHeight, borderRadius, config.errorImage);
         if (isCurrentHovered) {
           this.renderImageHover(imgX, imgY, imgWidth, imgHeight, borderRadius);
@@ -3407,7 +3918,7 @@ export class Renderer {
         continue;
       }
 
-      const cachedImage = this.imageCache.get(src);
+      const cachedImage = this.imageLoadQueue.get(src, Math.max(imgWidth, imgHeight));
       if (cachedImage) {
         // 图片已加载，绘制
         this.ctx.save();
@@ -3420,8 +3931,11 @@ export class Renderer {
         this.ctx.clip();
         this.drawImageWithFit(cachedImage, imgX, imgY, imgWidth, imgHeight, config.fit ?? "cover");
         this.ctx.restore();
-      } else if (!this.loadingImages.has(src)) {
-        this.loadImage(src);
+
+        // 收集可见图片
+        this.collectVisibleImage(src);
+      } else if (!this.imageLoadQueue.isLoading(src)) {
+        this.loadImage(src, Math.max(imgWidth, imgHeight));
         this.renderImagePlaceholder(
           imgX,
           imgY,
@@ -3431,6 +3945,9 @@ export class Renderer {
           config.placeholder,
         );
       } else {
+        // 图片正在加载中，显示占位图
+        // 注意：仍然需要收集可见图片，防止被 cancelInvisible 取消
+        this.collectVisibleImage(src);
         this.renderImagePlaceholder(
           imgX,
           imgY,
@@ -3559,7 +4076,7 @@ export class Renderer {
   ): void {
     if (placeholder) {
       // 如果有占位图配置，尝试加载
-      const cachedPlaceholder = this.imageCache.get(placeholder);
+      const cachedPlaceholder = this.imageLoadQueue.get(placeholder, Math.max(width, height));
       if (cachedPlaceholder) {
         this.ctx.save();
         this.ctx.beginPath();
@@ -3572,8 +4089,8 @@ export class Renderer {
         this.drawImageWithFit(cachedPlaceholder, x, y, width, height, "cover");
         this.ctx.restore();
         return;
-      } else if (!this.loadingImages.has(placeholder)) {
-        this.loadImage(placeholder);
+      } else if (!this.imageLoadQueue.isLoading(placeholder)) {
+        this.loadImage(placeholder, Math.max(width, height));
       }
     }
 
@@ -3628,7 +4145,7 @@ export class Renderer {
   ): void {
     // 如果有错误图片配置，尝试显示
     if (errorImage) {
-      const cachedErrorImage = this.imageCache.get(errorImage);
+      const cachedErrorImage = this.imageLoadQueue.get(errorImage, Math.max(width, height));
       if (cachedErrorImage) {
         this.ctx.save();
         this.ctx.beginPath();
@@ -3641,8 +4158,11 @@ export class Renderer {
         this.drawImageWithFit(cachedErrorImage, x, y, width, height, "cover");
         this.ctx.restore();
         return;
-      } else if (!this.loadingImages.has(errorImage) && !this.failedImages.has(errorImage)) {
-        this.loadImage(errorImage);
+      } else if (
+        !this.imageLoadQueue.isLoading(errorImage) &&
+        !this.imageLoadQueue.isFailed(errorImage)
+      ) {
+        this.loadImage(errorImage, Math.max(width, height));
       }
     }
 
@@ -3686,7 +4206,7 @@ export class Renderer {
   }
 
   private drawImageWithFit(
-    img: HTMLImageElement,
+    img: HTMLImageElement | HTMLCanvasElement,
     x: number,
     y: number,
     containerWidth: number,
@@ -3768,82 +4288,290 @@ export class Renderer {
     return rowIndex >= lazyStartRow && rowIndex <= lazyEndRow;
   }
 
-  private loadImage(src: string): void {
-    if (this.loadingImages.has(src) || this.imageCache.has(src)) {
-      return;
+  private loadImage(src: string, targetSize?: number): void {
+    if (this.isDestroyed) return;
+
+    // 使用 ImageLoadQueue，传递渲染尺寸用于预缩放
+    this.imageLoadQueue.request(src, targetSize, (success) => {
+      if (this.isDestroyed) return;
+
+      if (success) {
+        // 请求重绘
+        this.markDirty(0, 0, this.canvas.width / this.dpr, this.canvas.height / this.dpr);
+        // 触发外部渲染
+        this.onImageLoaded?.();
+      }
+    });
+  }
+
+  /**
+   * 收集当前帧可见的图片 URL
+   */
+  collectVisibleImage(src: string): void {
+    if (src && !src.startsWith("data:")) {
+      this.frameVisibleUrls.add(src);
     }
+  }
 
-    this.loadingImages.add(src);
-
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-
-    img.onload = () => {
-      // 检查组件是否已销毁
-      if (this.isDestroyed) return;
-
-      this.imageCache.set(src, img);
-      this.loadingImages.delete(src);
-
-      // 触发回调
-      const callbacks = this.imageLoadCallbacks.get(src);
-      if (callbacks) {
-        callbacks.forEach((cb) => cb());
-        this.imageLoadCallbacks.delete(src);
-      }
-
-      // 请求重绘
-      this.markDirty(0, 0, this.canvas.width / this.dpr, this.canvas.height / this.dpr);
-    };
-
-    img.onerror = () => {
-      // 检查组件是否已销毁
-      if (this.isDestroyed) return;
-
-      this.loadingImages.delete(src);
-      this.failedImages.add(src);
-
-      // 触发回调（即使失败也触发，让调用者知道加载结束）
-      const callbacks = this.imageLoadCallbacks.get(src);
-      if (callbacks) {
-        callbacks.forEach((cb) => cb());
-        this.imageLoadCallbacks.delete(src);
-      }
-    };
-
-    img.src = src;
+  /**
+   * 提交当前帧可见图片集合
+   */
+  commitVisibleImages(): void {
+    // 取消不可见的请求
+    this.imageLoadQueue.cancelInvisible(this.frameVisibleUrls);
+    // 提交当前帧的加载请求，启动延迟加载
+    this.imageLoadQueue.commitFrame();
+    // 重置下一帧
+    this.frameVisibleUrls = new Set();
   }
 
   /**
    * 重试加载失败的图片
    */
   retryImage(src: string): void {
-    if (this.failedImages.has(src)) {
-      this.failedImages.delete(src);
-      this.loadImage(src);
-    }
+    this.imageLoadQueue.retry(src);
   }
 
   /**
    * 检查图片是否加载失败
    */
   isImageFailed(src: string): boolean {
-    return this.failedImages.has(src);
+    return this.imageLoadQueue.isFailed(src);
   }
 
   /**
    * 检查图片是否已加载
    */
   isImageLoaded(src: string): boolean {
-    return this.imageCache.has(src);
+    return this.imageLoadQueue.has(src);
   }
 
   /**
    * 清除图片缓存
    */
   clearImageCache(): void {
-    this.imageCache.clear();
-    this.failedImages.clear();
+    this.imageLoadQueue.clear();
+  }
+
+  /**
+   * 获取图片加载队列统计信息
+   */
+  getImageLoadStats(): { pending: number; loading: number; cached: number; failed: number } {
+    return this.imageLoadQueue.getStats();
+  }
+
+  // ==================== 性能监控方法 ====================
+
+  /**
+   * 启用或禁用性能监控
+   */
+  setPerformanceMonitoring(enabled: boolean): void {
+    this.performanceEnabled = enabled;
+    // 注意：禁用时不清空数据，让用户可以查看报告后再手动调用 resetPerformanceStats()
+  }
+
+  /**
+   * 检查性能监控是否启用
+   */
+  isPerformanceMonitoringEnabled(): boolean {
+    return this.performanceEnabled;
+  }
+
+  /**
+   * 重置性能统计
+   */
+  resetPerformanceStats(): void {
+    this.performanceStats.clear();
+    this.currentFrameStats.clear();
+    this.lastFrameStats.clear();
+    this.frameCount = 0;
+    this.lastReportTime = 0;
+  }
+
+  /**
+   * 开始帧计时
+   */
+  beginFrame(): void {
+    if (!this.performanceEnabled) return;
+    this.frameStartTime = performance.now();
+    // 清空当前帧统计
+    this.currentFrameStats.clear();
+  }
+
+  /**
+   * 结束帧计时
+   */
+  endFrame(): void {
+    if (!this.performanceEnabled) return;
+    this.frameCount++;
+
+    // 保存上一帧统计
+    this.lastFrameStats = new Map(this.currentFrameStats);
+
+    // 将当前帧统计累积到总统计
+    for (const [type, frameStat] of this.currentFrameStats) {
+      const stats = this.performanceStats.get(type) || { totalTime: 0, count: 0, maxTime: 0 };
+      stats.totalTime += frameStat.totalTime;
+      stats.count += frameStat.count;
+      // 计算该渲染器在此帧的平均时间作为 maxTime 候选
+      const avgFrameTime = frameStat.totalTime / frameStat.count;
+      stats.maxTime = Math.max(stats.maxTime, avgFrameTime);
+      this.performanceStats.set(type, stats);
+    }
+  }
+
+  /**
+   * 测量渲染类型的时间
+   */
+  private measureRender(type: string, fn: () => void): void {
+    if (!this.performanceEnabled) {
+      fn();
+      return;
+    }
+
+    const start = performance.now();
+    fn();
+    const duration = performance.now() - start;
+
+    // 更新当前帧统计
+    const frameStats = this.currentFrameStats.get(type) || { totalTime: 0, count: 0 };
+    frameStats.totalTime += duration;
+    frameStats.count++;
+    this.currentFrameStats.set(type, frameStats);
+  }
+
+  /**
+   * 获取性能统计
+   */
+  getPerformanceStats(): Map<
+    string,
+    { totalTime: number; count: number; maxTime: number; avgTime: number }
+  > {
+    const result = new Map();
+    for (const [type, stats] of this.performanceStats) {
+      result.set(type, {
+        ...stats,
+        avgTime: stats.totalTime / stats.count,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * 输出性能报告到控制台
+   */
+  logPerformanceReport(): void {
+    if (!this.performanceEnabled) return;
+
+    const entries = Array.from(this.performanceStats.entries())
+      .map(([type, stats]) => ({
+        type,
+        avgTime: stats.totalTime / stats.count,
+        ...stats,
+      }))
+      .sort((a, b) => b.avgTime - a.avgTime);
+
+    console.group(`🎯 Renderer Performance (Frame ${this.frameCount})`);
+    console.table(
+      entries.map((e) => ({
+        Type: e.type,
+        Calls: e.count,
+        "Avg(ms)": e.avgTime.toFixed(3),
+        "Max(ms)": e.maxTime.toFixed(3),
+        "Total(ms)": e.totalTime.toFixed(1),
+      })),
+    );
+    console.groupEnd();
+  }
+
+  /**
+   * 获取格式化的性能报告字符串
+   */
+  getPerformanceReport(): string {
+    const lines: string[] = [
+      "=== Renderer Performance Report ===",
+      `Status: ${this.performanceEnabled ? "Enabled" : "Disabled"}`,
+      `Total Frames: ${this.frameCount}`,
+    ];
+
+    const frameCount = this.frameCount || 1;
+
+    // 检查是否有数据
+    if (this.performanceStats.size === 0) {
+      lines.push("");
+      lines.push("No rendering data collected yet.");
+      lines.push("Try scrolling the table while monitoring is enabled.");
+      return lines.join("\n");
+    }
+
+    // 上一帧统计（如果有的话）
+    if (this.lastFrameStats.size > 0) {
+      lines.push("");
+      lines.push("=== LAST FRAME STATS (most recent frame) ===");
+      lines.push("-".repeat(70));
+
+      const lastEntries = Array.from(this.lastFrameStats.entries())
+        .map(([type, stats]) => ({
+          type,
+          count: stats.count,
+          totalTime: stats.totalTime,
+          avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
+        }))
+        .sort((a, b) => b.totalTime - a.totalTime);
+
+      for (const e of lastEntries) {
+        lines.push(
+          `${e.type.padEnd(15)} | ` +
+            `calls: ${e.count.toString().padStart(4)} | ` +
+            `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${e.totalTime.toFixed(2).padStart(6)}ms`,
+        );
+      }
+
+      const lastFrameTotal = lastEntries.reduce((sum, e) => sum + e.totalTime, 0);
+      lines.push("");
+      lines.push(`Last frame total render time: ${lastFrameTotal.toFixed(2)}ms`);
+    }
+
+    // 总体统计
+    lines.push("");
+    lines.push("=== TOTAL STATS (all frames average) ===");
+    lines.push("-".repeat(70));
+
+    const totalEntries = Array.from(this.performanceStats.entries())
+      .map(([type, stats]) => ({
+        type,
+        count: stats.count,
+        totalTime: stats.totalTime,
+        maxTime: stats.maxTime,
+        avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
+        callsPerFrame: Math.round(stats.count / frameCount),
+        avgFrameTime: stats.totalTime / frameCount,
+      }))
+      .sort((a, b) => b.avgFrameTime - a.avgFrameTime);
+
+    for (const e of totalEntries) {
+      lines.push(
+        `${e.type.padEnd(15)} | ` +
+          `avg calls/frame: ${e.callsPerFrame.toString().padStart(4)} | ` +
+          `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
+          `max: ${e.maxTime.toFixed(3).padStart(7)}ms | ` +
+          `frameTotal: ${e.avgFrameTime.toFixed(2).padStart(6)}ms`,
+      );
+    }
+
+    const avgFrameTotal = totalEntries.reduce((sum, e) => sum + e.avgFrameTime, 0);
+    lines.push("");
+    lines.push(`Average frame render time: ${avgFrameTotal.toFixed(2)}ms`);
+
+    return lines.join("\n");
+  }
+
+  /**
+   * 打印性能报告到控制台
+   */
+  printPerformanceReport(): void {
+    console.log(this.getPerformanceReport());
   }
 
   renderDropdown(dropdown: DropdownState): void {
@@ -4163,16 +4891,26 @@ export class Renderer {
     const availableWidth = width - padding * 2;
     const maxLineCount = maxRows;
 
-    const moreTagWidth = (count: number) => {
-      const moreText = `+${count}`;
-      return this.ctx.measureText(moreText).width + tagPadding * 2;
+    // 缓存已测量的文本宽度，避免重复调用 measureText
+    const textWidthCache = new Map<string, number>();
+    const measureTextCached = (text: string): number => {
+      let w = textWidthCache.get(text);
+      if (w === undefined) {
+        w = this.ctx.measureText(text).width;
+        textWidthCache.set(text, w);
+      }
+      return w;
+    };
+
+    const moreTagWidth = (count: number): number => {
+      return measureTextCached(`+${count}`) + tagPadding * 2;
     };
 
     const calculateTagWidth = (tag: TagItem): number => {
-      return this.ctx.measureText(tag.text).width + tagPadding * 2;
+      return measureTextCached(tag.text) + tagPadding * 2;
     };
 
-    const ellipsisWidth = this.ctx.measureText(ellipsis).width;
+    const ellipsisWidth = measureTextCached(ellipsis);
 
     const lines: { tag: TagItem; displayText: string; width: number }[][] = [];
     let currentLine: { tag: TagItem; displayText: string; width: number }[] = [];
@@ -4198,17 +4936,27 @@ export class Renderer {
           const truncatedTagSpace = availableWidth - currentLineWidth - moreWidth;
           if (truncatedTagSpace >= tagPadding * 2 + ellipsisWidth + 10) {
             const maxTextWidth = truncatedTagSpace - tagPadding * 2 - ellipsisWidth;
+            // 优化：使用二分查找代替逐字符测量
             let truncatedText = "";
-            let textWidth = 0;
-            for (const char of tag.text) {
-              const charWidth = this.ctx.measureText(char).width;
-              if (textWidth + charWidth > maxTextWidth) break;
-              truncatedText += char;
-              textWidth += charWidth;
+            const tagText = tag.text;
+            let left = 0;
+            let right = tagText.length;
+
+            while (left < right) {
+              const mid = Math.floor((left + right + 1) / 2);
+              const testText = tagText.slice(0, mid);
+              const testWidth = measureTextCached(testText);
+              if (testWidth <= maxTextWidth) {
+                left = mid;
+                truncatedText = testText;
+              } else {
+                right = mid - 1;
+              }
             }
+
             if (truncatedText.length > 0) {
               const displayText = truncatedText + ellipsis;
-              const truncatedWidth = this.ctx.measureText(displayText).width + tagPadding * 2;
+              const truncatedWidth = measureTextCached(displayText) + tagPadding * 2;
               currentLine.push({ tag, displayText, width: truncatedWidth });
               processedTags++;
             }
@@ -4242,14 +4990,18 @@ export class Renderer {
     const totalHeight = lines.length * tagHeight + (lines.length - 1) * lineGap;
     const startY = y + (height - totalHeight) / 2;
 
+    // 预设字体，避免每个标签都设置
+    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+    this.ctx.textBaseline = "middle";
+
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       const line = lines[lineIndex]!;
       const lineY = startY + lineIndex * (tagHeight + lineGap);
       let currentX = x + padding;
 
       for (const { tag, displayText, width: tagWidth } of line) {
-        let bgColor = tag.bgColor ?? (this.theme.colors.tagColors.default || "#f0f0f0");
-        let textColor = tag.color ?? this.theme.colors.cellText;
+        const bgColor = tag.bgColor ?? (this.theme.colors.tagColors.default || "#f0f0f0");
+        const textColor = tag.color ?? this.theme.colors.cellText;
 
         this.ctx.fillStyle = bgColor;
         this.ctx.beginPath();
@@ -4257,11 +5009,8 @@ export class Renderer {
         this.ctx.fill();
 
         this.ctx.fillStyle = textColor;
-        this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-        this.ctx.textBaseline = "middle";
-
         const textY = lineY + tagHeight / 2;
-        const textX = currentX + (tagWidth - this.ctx.measureText(displayText).width) / 2;
+        const textX = currentX + (tagWidth - measureTextCached(displayText)) / 2;
         this.ctx.fillText(displayText, textX, textY);
 
         currentX += tagWidth + gap;
@@ -4279,10 +5028,8 @@ export class Renderer {
           this.ctx.fill();
 
           this.ctx.fillStyle = this.theme.colors.moreCount.text;
-          this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-          this.ctx.textBaseline = "middle";
           const textY = lineY + tagHeight / 2;
-          const textX = currentX + (moreWidth - this.ctx.measureText(moreText).width) / 2;
+          const textX = currentX + (moreWidth - measureTextCached(moreText)) / 2;
           this.ctx.fillText(moreText, textX, textY);
         }
       }
@@ -4472,6 +5219,7 @@ export class Renderer {
     sortConfig: SortConfig[] = [],
     filterConfig: FilterConfig[] = [],
     hoveredHeaderColumnKey?: string,
+    scrollLeft: number = 0,
   ): void {
     const width = this.canvas.width / this.dpr;
     const height = this.canvas.height / this.dpr;
@@ -4485,6 +5233,13 @@ export class Renderer {
     const columns = this.layoutManager.getLeafColumns();
 
     if (columns.length > 0) {
+      // 获取固定列信息
+      const fixedInfo = this.layoutManager.getFixedColumnsInfo(columns);
+      const hasLeftFixed = fixedInfo.leftFixed.columns.length > 0;
+      const hasRightFixed = fixedInfo.rightFixed.columns.length > 0;
+      const leftFixedWidth = hasLeftFixed ? fixedInfo.leftFixed.width : 0;
+      const rightFixedWidth = hasRightFixed ? fixedInfo.rightFixed.width : 0;
+
       this.ctx.save();
       this.ctx.fillStyle = this.theme.colors.headerBackground;
       this.ctx.fillRect(0, 0, width, headerHeight);
@@ -4496,79 +5251,64 @@ export class Renderer {
       this.ctx.lineTo(width, headerHeight);
       this.ctx.stroke();
 
-      const headerCells = this.layoutManager.getHeaderCells();
+      // 使用可见表头单元格，与正常渲染保持一致
+      const headerCells = this.layoutManager.getVisibleHeaderCells();
+
+      // 先绘制中心区域（需要裁剪）
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(leftFixedWidth, 0, width - leftFixedWidth - rightFixedWidth, headerHeight);
+      this.ctx.clip();
+
       for (const headerCell of headerCells) {
-        this.ctx.fillStyle = this.theme.colors.headerBackground;
-        this.ctx.fillRect(headerCell.x, headerCell.y, headerCell.width, headerCell.height);
-
-        this.ctx.fillStyle = this.theme.colors.headerText;
-        this.ctx.font = `${this.theme.font.headerSize}px ${this.theme.font.family}`;
-        this.ctx.textBaseline = "middle";
-
-        const sortInfo = sortConfig.find((s) => s.column === headerCell.column.key);
-        const sortDirection = sortInfo?.direction ?? "none";
-        const isSortable = headerCell.column.sortable !== false;
-        const isHovered = headerCell.column.key === hoveredHeaderColumnKey;
-        const showSortIndicator =
-          headerCell.isLeaf && isSortable && (sortDirection !== "none" || isHovered);
-        const sortIndicatorWidth = showSortIndicator ? 20 : 0;
-
-        const hasFilter = filterConfig.some((f) => f.column === headerCell.column.key);
-        const showFilterIndicator = headerCell.isLeaf && headerCell.column.filterable;
-        const filterIndicatorWidth = showFilterIndicator ? 20 : 0;
-
-        const padding = 8;
-        const maxTextWidth =
-          headerCell.width - padding * 2 - sortIndicatorWidth - filterIndicatorWidth;
-        const text = truncateText(headerCell.column.title, Math.floor(maxTextWidth / 7));
-
-        const align = headerCell.column.align ?? "center";
-        let textX = headerCell.x + padding;
-
-        if (align === "center") {
-          textX =
-            headerCell.x +
-            (headerCell.width -
-              this.ctx.measureText(text).width -
-              sortIndicatorWidth -
-              filterIndicatorWidth) /
-              2;
-        } else if (align === "right") {
-          textX =
-            headerCell.x +
-            headerCell.width -
-            padding -
-            this.ctx.measureText(text).width -
-            sortIndicatorWidth -
-            filterIndicatorWidth;
+        // 跳过固定列，它们会在后面单独绘制
+        if (headerCell.column.fixed === "left" || headerCell.column.fixed === "right") {
+          continue;
         }
 
-        const textY = headerCell.y + headerCell.height / 2;
-        this.ctx.fillText(text, textX, textY);
+        // 应用 scrollLeft 偏移
+        const cellX = headerCell.x - scrollLeft;
+        this.renderEmptyStateHeaderCell(
+          headerCell,
+          cellX,
+          sortConfig,
+          filterConfig,
+          hoveredHeaderColumnKey,
+        );
+      }
+      this.ctx.restore();
 
-        if (headerCell.isLeaf) {
-          if (showFilterIndicator) {
-            const filterX = headerCell.x + headerCell.width - padding - 10;
-            if (showSortIndicator) {
-              this.renderSortIndicator(
-                filterX - 16,
-                textY,
-                sortDirection === "none" ? "hover" : sortDirection,
-              );
-            }
-            this.renderFilterIndicator(filterX, textY, hasFilter);
-          } else if (showSortIndicator) {
-            this.renderSortIndicator(
-              headerCell.x + headerCell.width - padding - 10,
-              textY,
-              sortDirection === "none" ? "hover" : sortDirection,
-            );
-          }
+      // 绘制左侧固定列表头
+      if (hasLeftFixed) {
+        for (const headerCell of headerCells) {
+          if (headerCell.column.fixed !== "left") continue;
+          this.renderEmptyStateHeaderCell(
+            headerCell,
+            headerCell.x,
+            sortConfig,
+            filterConfig,
+            hoveredHeaderColumnKey,
+          );
         }
+      }
 
-        this.ctx.strokeStyle = this.theme.colors.cellBorder;
-        this.ctx.lineWidth = this.theme.border.width;
-        this.ctx.strokeRect(headerCell.x, headerCell.y, headerCell.width, headerCell.height);
+      // 绘制右侧固定列表头
+      if (hasRightFixed) {
+        for (const headerCell of headerCells) {
+          if (headerCell.column.fixed !== "right") continue;
+          // 计算右侧固定列的视口位置
+          const startX = width - rightFixedWidth;
+          const offsetX =
+            startX - (this.layoutManager.getLayoutInfo().totalWidth - rightFixedWidth);
+          const cellX = headerCell.x + offsetX;
+          this.renderEmptyStateHeaderCell(
+            headerCell,
+            cellX,
+            sortConfig,
+            filterConfig,
+            hoveredHeaderColumnKey,
+          );
+        }
       }
 
       this.ctx.restore();
@@ -4580,6 +5320,85 @@ export class Renderer {
     this.ctx.textBaseline = "middle";
     this.ctx.fillText(message, width / 2, headerHeight + (height - headerHeight) / 2);
     this.ctx.restore();
+  }
+
+  private renderEmptyStateHeaderCell(
+    headerCell: import("../types").HeaderCell,
+    cellX: number,
+    sortConfig: SortConfig[],
+    filterConfig: FilterConfig[],
+    hoveredHeaderColumnKey?: string,
+  ): void {
+    this.ctx.fillStyle = this.theme.colors.headerBackground;
+    this.ctx.fillRect(cellX, headerCell.y, headerCell.width, headerCell.height);
+
+    this.ctx.fillStyle = this.theme.colors.headerText;
+    this.ctx.font = `${this.theme.font.headerSize}px ${this.theme.font.family}`;
+    this.ctx.textBaseline = "middle";
+
+    const sortInfo = sortConfig.find((s) => s.column === headerCell.column.key);
+    const sortDirection = sortInfo?.direction ?? "none";
+    const isSortable = headerCell.column.sortable !== false;
+    const isHovered = headerCell.column.key === hoveredHeaderColumnKey;
+    const showSortIndicator =
+      headerCell.isLeaf && isSortable && (sortDirection !== "none" || isHovered);
+    const sortIndicatorWidth = showSortIndicator ? 20 : 0;
+
+    const hasFilter = filterConfig.some((f) => f.column === headerCell.column.key);
+    const showFilterIndicator = headerCell.isLeaf && headerCell.column.filterable;
+    const filterIndicatorWidth = showFilterIndicator ? 20 : 0;
+
+    const padding = 8;
+    const maxTextWidth = headerCell.width - padding * 2 - sortIndicatorWidth - filterIndicatorWidth;
+    const text = truncateText(headerCell.column.title, Math.floor(maxTextWidth / 7));
+
+    const align = headerCell.column.align ?? "center";
+    let textX = cellX + padding;
+
+    if (align === "center") {
+      textX =
+        cellX +
+        (headerCell.width -
+          this.ctx.measureText(text).width -
+          sortIndicatorWidth -
+          filterIndicatorWidth) /
+          2;
+    } else if (align === "right") {
+      textX =
+        cellX +
+        headerCell.width -
+        padding -
+        this.ctx.measureText(text).width -
+        sortIndicatorWidth -
+        filterIndicatorWidth;
+    }
+
+    const textY = headerCell.y + headerCell.height / 2;
+    this.ctx.fillText(text, textX, textY);
+
+    if (headerCell.isLeaf) {
+      if (showFilterIndicator) {
+        const filterX = cellX + headerCell.width - padding - 10;
+        if (showSortIndicator) {
+          this.renderSortIndicator(
+            filterX - 16,
+            textY,
+            sortDirection === "none" ? "hover" : sortDirection,
+          );
+        }
+        this.renderFilterIndicator(filterX, textY, hasFilter);
+      } else if (showSortIndicator) {
+        this.renderSortIndicator(
+          cellX + headerCell.width - padding - 10,
+          textY,
+          sortDirection === "none" ? "hover" : sortDirection,
+        );
+      }
+    }
+
+    this.ctx.strokeStyle = this.theme.colors.cellBorder;
+    this.ctx.lineWidth = this.theme.border.width;
+    this.ctx.strokeRect(cellX, headerCell.y, headerCell.width, headerCell.height);
   }
 
   private isColumnHovered(column: Column, hoveredIndex: number): boolean {
@@ -4852,19 +5671,19 @@ export class Renderer {
     const viewportWidth = this.canvas.width / this.dpr;
     const viewportHeight = this.canvas.height / this.dpr;
 
-    const fontSize = this.watermarkConfig.fontSize ?? 16;
-    const fontFamily = this.watermarkConfig.fontFamily ?? this.theme.font.family;
-    const color = this.watermarkConfig.color ?? "rgba(0, 0, 0, 0.15)";
+    // 从 theme 中获取默认值，WatermarkConfig 可覆盖
+    const themeWatermark = this.theme.colors.watermark;
+    const fontSize = this.watermarkConfig.fontSize ?? themeWatermark.fontSize;
+    const fontFamily =
+      this.watermarkConfig.fontFamily ?? themeWatermark.fontFamily ?? this.theme.font.family;
+    const color = this.watermarkConfig.color ?? themeWatermark.color;
     const rotation = this.watermarkConfig.rotation ?? -22;
     const gapX = this.watermarkConfig.gapX ?? 100;
     const gapY = this.watermarkConfig.gapY ?? 100;
-    const opacity = this.watermarkConfig.opacity;
+    const opacity = this.watermarkConfig.opacity ?? themeWatermark.opacity;
 
     this.ctx.save();
-
-    if (opacity !== undefined) {
-      this.ctx.globalAlpha = opacity;
-    }
+    this.ctx.globalAlpha = opacity;
 
     this.ctx.font = `${fontSize}px ${fontFamily}`;
     this.ctx.fillStyle = color;
@@ -4954,17 +5773,50 @@ export class Renderer {
   }
 
   renderFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { x, y, width, options, scrollTop, hoveredIndex } = filterDropdown;
+    const { mode } = filterDropdown;
+
+    // 根据模式调用不同的渲染函数
+    switch (mode) {
+      case "search":
+        this.renderSearchFilterDropdown(filterDropdown);
+        break;
+      case "select":
+        this.renderSelectFilterDropdown(filterDropdown);
+        break;
+      case "range":
+        this.renderRangeFilterDropdown(filterDropdown);
+        break;
+      case "boolean":
+        this.renderBooleanFilterDropdown(filterDropdown);
+        break;
+      case "dateRange":
+        // dateRange 模式可以复用现有的日期选择器
+        this.renderDateRangeFilterDropdown(filterDropdown);
+        // 日历作为独立层级渲染在 filter dropdown 之上
+        if (
+          filterDropdown.activeDateField &&
+          filterDropdown.currentYear !== undefined &&
+          filterDropdown.currentMonth !== undefined
+        ) {
+          this.renderDateRangeCalendarPopover(filterDropdown);
+        }
+        break;
+    }
+  }
+
+  /**
+   * 渲染关键字搜索筛选下拉框
+   */
+  private renderSearchFilterDropdown(filterDropdown: FilterDropdownState): void {
+    const { x, y, width, searchValue } = filterDropdown;
     const padding = 8;
-    const itemHeight = 32;
-    const maxVisibleItems = 8;
-    const visibleCount = Math.min(options.length, maxVisibleItems);
+    const gap = 4; // Reduced gap between input and buttons
+    const inputHeight = 36;
     const buttonHeight = 36;
-    const dropdownHeight = visibleCount * itemHeight + buttonHeight;
-    const listHeight = visibleCount * itemHeight;
+    const dropdownHeight = padding + inputHeight + gap + buttonHeight;
 
+    // 绘制背景
     this.ctx.save();
-
     this.ctx.fillStyle = this.theme.colors.dropdown.background;
     this.ctx.shadowColor = this.theme.colors.shadow.color;
     this.ctx.shadowBlur = this.theme.colors.shadow.blur;
@@ -4974,95 +5826,703 @@ export class Renderer {
     this.ctx.beginPath();
     this.ctx.roundRect(x, y, width, dropdownHeight, 6);
     this.ctx.fill();
-
     this.ctx.restore();
 
-    this.ctx.save();
+    // 绘制输入框背景
+    const inputY = y + padding;
+    this.ctx.fillStyle = this.theme.colors.input.background;
+    this.ctx.strokeStyle = this.theme.colors.input.border;
+    this.ctx.lineWidth = 1;
     this.ctx.beginPath();
-    this.ctx.rect(x, y, width, listHeight);
-    this.ctx.clip();
+    this.ctx.roundRect(x + padding, inputY, width - padding * 2, inputHeight, 4);
+    this.ctx.fill();
+    this.ctx.stroke();
 
+    // 绘制输入框文本或占位符
+    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+    this.ctx.textBaseline = "middle";
+    const textY = inputY + inputHeight / 2;
+    const textX = x + padding + 12;
+
+    if (searchValue) {
+      this.ctx.fillStyle = this.theme.colors.dropdown.text;
+      this.ctx.fillText(searchValue, textX, textY);
+    } else {
+      this.ctx.fillStyle = this.theme.colors.placeholderText;
+      this.ctx.fillText("输入关键字筛选...", textX, textY);
+    }
+
+    // 绘制按钮区域
+    this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
+
+    // 绘制边框
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.stroke();
+  }
+
+  /**
+   * 渲染多选筛选下拉框（原有逻辑）
+   */
+  private renderSelectFilterDropdown(filterDropdown: FilterDropdownState): void {
+    const { x, y, width, options, scrollTop, hoveredIndex, isLoading } = filterDropdown;
+    if (!options && !isLoading) return;
+
+    const padding = 8;
+    const gap = 4; // Reduced gap
+    const searchHeight = 32;
+    const itemHeight = 32;
+    const maxVisibleItems = 8;
+    const buttonHeight = 36;
+
+    // 计算实际显示的选项数量
+    const visibleOptions = options?.length ?? 0;
+    const visibleCount = Math.min(visibleOptions, maxVisibleItems);
+    const listHeight = visibleCount * itemHeight;
+    const dropdownHeight = padding + searchHeight + gap + listHeight + gap + buttonHeight;
+
+    // 绘制背景
+    this.ctx.save();
     this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.fillRect(x, y, width, listHeight);
+    this.ctx.shadowColor = this.theme.colors.shadow.color;
+    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
+    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
+    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
 
-    const checkboxSize = 14;
-    const checkboxGap = 8;
-    const startIndex = Math.floor(scrollTop / itemHeight);
-    const offsetY = -(scrollTop % itemHeight);
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.fill();
+    this.ctx.restore();
 
-    for (let i = 0; i <= visibleCount + 1; i++) {
-      const optionIndex = startIndex + i;
-      if (optionIndex < 0 || optionIndex >= options.length) continue;
+    // 绘制搜索框
+    const searchY = y + padding;
+    this.ctx.fillStyle = this.theme.colors.input.background;
+    this.ctx.strokeStyle = this.theme.colors.input.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x + padding, searchY, width - padding * 2, searchHeight, 4);
+    this.ctx.fill();
+    this.ctx.stroke();
 
-      const option = options[optionIndex];
-      if (!option) continue;
+    // 搜索框文本
+    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+    this.ctx.textBaseline = "middle";
+    if (filterDropdown.searchText) {
+      this.ctx.fillStyle = this.theme.colors.dropdown.text;
+      this.ctx.fillText(filterDropdown.searchText, x + padding + 12, searchY + searchHeight / 2);
+    } else {
+      this.ctx.fillStyle = this.theme.colors.placeholderText;
+      this.ctx.fillText("搜索...", x + padding + 12, searchY + searchHeight / 2);
+    }
 
-      const itemY = y + i * itemHeight + offsetY;
+    // 绘制选项列表区域
+    const listY = y + padding + searchHeight + gap;
+    if (isLoading) {
+      // 加载状态
+      this.ctx.fillStyle = this.theme.colors.placeholderText;
+      this.ctx.fillText("加载中...", x + padding, listY + itemHeight / 2);
+    } else if (options && options.length > 0) {
+      // 绘制选项列表
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(x, listY, width, listHeight);
+      this.ctx.clip();
 
-      if (optionIndex === hoveredIndex) {
+      const checkboxSize = 14;
+      const checkboxGap = 8;
+      const startIndex = Math.floor(scrollTop / itemHeight);
+      const offsetY = -(scrollTop % itemHeight);
+
+      for (let i = 0; i <= visibleCount + 1; i++) {
+        const optionIndex = startIndex + i;
+        if (optionIndex < 0 || optionIndex >= options.length) continue;
+
+        const option = options[optionIndex];
+        if (!option) continue;
+
+        const itemY = listY + i * itemHeight + offsetY;
+
+        if (optionIndex === hoveredIndex) {
+          this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
+          this.ctx.fillRect(x, itemY, width, itemHeight);
+        }
+
+        const checkboxX = x + padding;
+        const checkboxY = itemY + (itemHeight - checkboxSize) / 2;
+
+        this.ctx.strokeStyle = option.checked
+          ? this.theme.colors.checkbox.checkedBg
+          : this.theme.colors.checkbox.border;
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
+        this.ctx.stroke();
+
+        if (option.checked) {
+          this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
+          this.ctx.beginPath();
+          this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
+          this.ctx.fill();
+
+          this.ctx.strokeStyle = this.theme.colors.checkbox.checkmark;
+          this.ctx.lineWidth = 2;
+          this.ctx.beginPath();
+          this.ctx.moveTo(checkboxX + 3, checkboxY + 7);
+          this.ctx.lineTo(checkboxX + 6, checkboxY + 10);
+          this.ctx.lineTo(checkboxX + 11, checkboxY + 4);
+          this.ctx.stroke();
+        }
+
+        this.ctx.fillStyle = this.theme.colors.dropdown.text;
+        this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+        this.ctx.textBaseline = "middle";
+        const textX = checkboxX + checkboxSize + checkboxGap;
+        const maxTextWidth = width - padding * 2 - checkboxSize - checkboxGap;
+
+        // 检查是否是颜色值 (hex 格式 #RRGGBB)
+        const colorValue = String(option.value);
+        const isColorOption = /^#[0-9A-Fa-f]{6}$/.test(colorValue);
+
+        if (isColorOption) {
+          // 渲染颜色方块
+          const colorBoxSize = 16;
+          const colorBoxY = itemY + (itemHeight - colorBoxSize) / 2;
+          const colorBoxX = textX;
+
+          // 绘制颜色方块
+          this.ctx.fillStyle = colorValue;
+          this.ctx.beginPath();
+          this.ctx.roundRect(colorBoxX, colorBoxY, colorBoxSize, colorBoxSize, 2);
+          this.ctx.fill();
+
+          // 绘制边框
+          this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+          this.ctx.lineWidth = 1;
+          this.ctx.stroke();
+
+          // 颜色值文本
+          this.ctx.fillStyle = this.theme.colors.dropdown.text;
+          const colorTextX = colorBoxX + colorBoxSize + 6;
+          const colorMaxWidth = maxTextWidth - colorBoxSize - 6;
+          const colorText = truncateText(
+            colorValue.toUpperCase(),
+            Math.floor(colorMaxWidth / (this.theme.font.size * 0.6)),
+          );
+          this.ctx.fillText(colorText, colorTextX, itemY + itemHeight / 2);
+        } else {
+          // 普通文本选项
+          const text = truncateText(
+            option.label,
+            Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
+          );
+          this.ctx.fillText(text, textX, itemY + itemHeight / 2);
+        }
+      }
+
+      this.ctx.restore();
+
+      // 绘制滚动条
+      if (options.length > maxVisibleItems) {
+        const scrollbarWidth = 6;
+        const totalHeight = options.length * itemHeight;
+        const thumbHeight = Math.max(20, (listHeight / totalHeight) * listHeight);
+        const maxThumbY = listHeight - thumbHeight;
+        const thumbY = (scrollTop / (totalHeight - listHeight)) * maxThumbY;
+
+        const prevAlpha = this.ctx.globalAlpha;
+        this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
+        this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
+        this.ctx.beginPath();
+        this.ctx.roundRect(
+          x + width - scrollbarWidth - 2,
+          listY + thumbY + 2,
+          scrollbarWidth,
+          thumbHeight,
+          3,
+        );
+        this.ctx.fill();
+        this.ctx.globalAlpha = prevAlpha;
+      }
+    } else {
+      // 无选项
+      this.ctx.fillStyle = this.theme.colors.placeholderText;
+      this.ctx.fillText("暂无数据", x + padding, listY + itemHeight / 2);
+    }
+
+    // 绘制按钮区域
+    this.renderFilterButtons(
+      x,
+      y + padding + searchHeight + gap + listHeight + gap,
+      width,
+      buttonHeight,
+    );
+
+    // 绘制边框
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.stroke();
+  }
+
+  /**
+   * 渲染范围筛选下拉框
+   */
+  private renderRangeFilterDropdown(filterDropdown: FilterDropdownState): void {
+    const { x, y, width, minValue, maxValue } = filterDropdown;
+    const padding = 8;
+    const gap = 4; // Reduced gap
+    const inputHeight = 32;
+    const inputGap = 8;
+    const buttonHeight = 36;
+    // 删除标题，直接放输入框
+    const dropdownHeight = padding + inputHeight + gap + buttonHeight;
+
+    // 绘制背景
+    this.ctx.save();
+    this.ctx.fillStyle = this.theme.colors.dropdown.background;
+    this.ctx.shadowColor = this.theme.colors.shadow.color;
+    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
+    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
+    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
+
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.fill();
+    this.ctx.restore();
+
+    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+
+    // 绘制最小值输入框
+    const input1Y = y + padding;
+    const inputWidth = (width - padding * 3) / 2;
+    this.ctx.fillStyle = this.theme.colors.input.background;
+    this.ctx.strokeStyle = this.theme.colors.input.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x + padding, input1Y, inputWidth, inputHeight, 4);
+    this.ctx.fill();
+    this.ctx.stroke();
+
+    this.ctx.fillStyle = minValue
+      ? this.theme.colors.dropdown.text
+      : this.theme.colors.placeholderText;
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText(
+      minValue ? String(minValue) : "最小值",
+      x + padding + 8,
+      input1Y + inputHeight / 2,
+    );
+
+    // 绘制最大值输入框
+    const input2X = x + padding + inputWidth + inputGap;
+    this.ctx.fillStyle = this.theme.colors.input.background;
+    this.ctx.strokeStyle = this.theme.colors.input.border;
+    this.ctx.beginPath();
+    this.ctx.roundRect(input2X, input1Y, inputWidth, inputHeight, 4);
+    this.ctx.fill();
+    this.ctx.stroke();
+
+    this.ctx.fillStyle = maxValue
+      ? this.theme.colors.dropdown.text
+      : this.theme.colors.placeholderText;
+    this.ctx.fillText(
+      maxValue ? String(maxValue) : "最大值",
+      input2X + 8,
+      input1Y + inputHeight / 2,
+    );
+
+    // 绘制按钮区域
+    this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
+
+    // 绘制边框
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.stroke();
+  }
+
+  /**
+   * 渲染布尔筛选下拉框
+   */
+  private renderBooleanFilterDropdown(filterDropdown: FilterDropdownState): void {
+    const { x, y, width, boolValue } = filterDropdown;
+    const padding = 8;
+    const gap = 4; // Reduced gap
+    const itemHeight = 32;
+    const buttonHeight = 36;
+    const dropdownHeight = padding + itemHeight * 3 + gap + buttonHeight;
+
+    // 绘制背景
+    this.ctx.save();
+    this.ctx.fillStyle = this.theme.colors.dropdown.background;
+    this.ctx.shadowColor = this.theme.colors.shadow.color;
+    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
+    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
+    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
+
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.fill();
+    this.ctx.restore();
+
+    const options = [
+      { value: "all", label: "全部" },
+      { value: "true", label: "已选" },
+      { value: "false", label: "未选" },
+    ];
+
+    const radioSize = 14;
+    const radioGap = 8;
+
+    for (let i = 0; i < options.length; i++) {
+      const option = options[i]!;
+      const itemY = y + padding + i * itemHeight;
+      const isSelected = boolValue === option.value;
+
+      if (isSelected) {
         this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
         this.ctx.fillRect(x, itemY, width, itemHeight);
       }
 
-      const checkboxX = x + padding;
-      const checkboxY = itemY + (itemHeight - checkboxSize) / 2;
+      const radioX = x + padding;
+      const radioY = itemY + (itemHeight - radioSize) / 2;
 
-      this.ctx.strokeStyle = option.checked
-        ? this.theme.colors.checkbox.checkedBg
+      // 绘制圆形外框
+      this.ctx.strokeStyle = isSelected
+        ? this.theme.colors.button.primaryBg
         : this.theme.colors.checkbox.border;
       this.ctx.lineWidth = 1;
       this.ctx.beginPath();
-      this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
+      this.ctx.arc(radioX + radioSize / 2, radioY + radioSize / 2, radioSize / 2, 0, Math.PI * 2);
       this.ctx.stroke();
 
-      if (option.checked) {
-        this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
+      // 选中时绘制内部圆点
+      if (isSelected) {
+        this.ctx.fillStyle = this.theme.colors.button.primaryBg;
         this.ctx.beginPath();
-        this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
+        this.ctx.arc(radioX + radioSize / 2, radioY + radioSize / 2, radioSize / 4, 0, Math.PI * 2);
         this.ctx.fill();
-
-        this.ctx.strokeStyle = this.theme.colors.checkbox.checkmark;
-        this.ctx.lineWidth = 2;
-        this.ctx.beginPath();
-        this.ctx.moveTo(checkboxX + 3, checkboxY + 7);
-        this.ctx.lineTo(checkboxX + 6, checkboxY + 10);
-        this.ctx.lineTo(checkboxX + 11, checkboxY + 4);
-        this.ctx.stroke();
       }
 
+      // 绘制文本
       this.ctx.fillStyle = this.theme.colors.dropdown.text;
       this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
       this.ctx.textBaseline = "middle";
-      const textX = checkboxX + checkboxSize + checkboxGap;
-      const maxTextWidth = width - padding * 2 - checkboxSize - checkboxGap;
-      const text = truncateText(
-        option.label,
-        Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
-      );
-      this.ctx.fillText(text, textX, itemY + itemHeight / 2);
+      this.ctx.fillText(option.label, radioX + radioSize + radioGap, itemY + itemHeight / 2);
     }
 
-    this.ctx.restore();
+    // 绘制按钮区域
+    this.renderFilterButtons(x, y + padding + itemHeight * 3 + gap, width, buttonHeight);
 
-    const buttonY = y + listHeight;
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.fillRect(x, buttonY, width, buttonHeight);
+    // 绘制边框
     this.ctx.strokeStyle = this.theme.colors.dropdown.border;
     this.ctx.lineWidth = 1;
     this.ctx.beginPath();
-    this.ctx.moveTo(x, buttonY);
-    this.ctx.lineTo(x + width, buttonY);
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
     this.ctx.stroke();
+  }
+
+  /**
+   * 渲染日期范围筛选下拉框
+   */
+  private renderDateRangeFilterDropdown(filterDropdown: FilterDropdownState): void {
+    const { x, y, width, startDate, endDate, activeDateField } = filterDropdown;
+    const padding = 8;
+    const gap = 4; // Reduced gap
+    const inputHeight = 32;
+    const inputGap = 8;
+    const buttonHeight = 36;
+
+    // 删除标题，直接放输入框
+    const dropdownHeight = padding + inputHeight + gap + buttonHeight;
+
+    // 绘制背景
+    this.ctx.save();
+    this.ctx.fillStyle = this.theme.colors.dropdown.background;
+    this.ctx.shadowColor = this.theme.colors.shadow.color;
+    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
+    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
+    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
+
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.fill();
+    this.ctx.restore();
 
     this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+
+    // 绘制开始日期输入框
+    const input1Y = y + padding;
+    const inputWidth = (width - padding * 3) / 2;
+    const input1X = x + padding;
+
+    // 高亮当前激活的输入框
+    const isStartActive = activeDateField === "startDate";
+    this.ctx.fillStyle = this.theme.colors.input.background;
+    this.ctx.strokeStyle = isStartActive
+      ? this.theme.colors.primary
+      : this.theme.colors.input.border;
+    this.ctx.lineWidth = isStartActive ? 2 : 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(input1X, input1Y, inputWidth, inputHeight, 4);
+    this.ctx.fill();
+    this.ctx.stroke();
+
+    const startText = startDate ? this.formatDate(startDate, "YYYY-MM-DD") : "";
+    this.ctx.fillStyle = startText
+      ? this.theme.colors.dropdown.text
+      : this.theme.colors.placeholderText;
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText(startText || "开始日期", input1X + 8, input1Y + inputHeight / 2);
+
+    // 绘制结束日期输入框
+    const input2X = x + padding + inputWidth + inputGap;
+    const isEndActive = activeDateField === "endDate";
+
+    this.ctx.fillStyle = this.theme.colors.input.background;
+    this.ctx.strokeStyle = isEndActive ? this.theme.colors.primary : this.theme.colors.input.border;
+    this.ctx.lineWidth = isEndActive ? 2 : 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(input2X, input1Y, inputWidth, inputHeight, 4);
+    this.ctx.fill();
+    this.ctx.stroke();
+
+    const endText = endDate ? this.formatDate(endDate, "YYYY-MM-DD") : "";
+    this.ctx.fillStyle = endText
+      ? this.theme.colors.dropdown.text
+      : this.theme.colors.placeholderText;
+    this.ctx.fillText(endText || "结束日期", input2X + 8, input1Y + inputHeight / 2);
+
+    // 绘制按钮区域
+    this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
+
+    // 绘制边框
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
+    this.ctx.stroke();
+  }
+
+  /**
+   * 渲染日期范围筛选的日历弹出层（独立层级）
+   */
+  private renderDateRangeCalendarPopover(filterDropdown: FilterDropdownState): void {
+    const {
+      x,
+      y,
+      width,
+      startDate,
+      endDate,
+      activeDateField,
+      currentYear,
+      currentMonth,
+      hoveredDate,
+    } = filterDropdown;
+
+    if (!activeDateField || currentYear === undefined || currentMonth === undefined) return;
+
+    const padding = 8;
+    const inputHeight = 32;
+    const gap = 8;
+
+    // 日历尺寸
+    const headerHeight = 40;
+    const weekdayHeight = 28;
+    const dayHeight = 28;
+    const rowPadding = 8;
+    const calendarRows = 6;
+    const calendarHeight = headerHeight + weekdayHeight + calendarRows * dayHeight + rowPadding * 2;
+    const calendarWidth = 240;
+
+    const inputWidth = (width - padding * 3) / 2;
+    const input1X = x + padding;
+    const input2X = x + padding + inputWidth + gap;
+    const input1Y = y + padding;
+
+    // 计算日历位置（居中对齐激活的输入框）
+    const activeInputX = activeDateField === "startDate" ? input1X : input2X;
+    const activeInputCenterX = activeInputX + inputWidth / 2;
+    let calendarX = activeInputCenterX - calendarWidth / 2;
+
+    // 边界检测
+    if (calendarX < x) {
+      calendarX = x;
+    }
+    if (calendarX + calendarWidth > x + width) {
+      calendarX = x + width - calendarWidth;
+    }
+
+    // 日历显示在输入框下方
+    const calendarY = input1Y + inputHeight + gap;
+
+    // 当前选中的日期
+    const selectedDate = activeDateField === "startDate" ? startDate : endDate;
+
+    this.ctx.save();
+
+    // 绘制日历背景（带阴影，独立层级效果）
+    this.ctx.fillStyle = this.theme.colors.dropdown.background;
+    this.ctx.shadowColor = this.theme.colors.shadow.color;
+    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
+    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
+    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
+
+    this.ctx.beginPath();
+    this.ctx.roundRect(calendarX, calendarY, calendarWidth, calendarHeight, 6);
+    this.ctx.fill();
+
+    // 重置阴影
+    this.ctx.shadowColor = "transparent";
+    this.ctx.shadowBlur = 0;
+    this.ctx.shadowOffsetX = 0;
+    this.ctx.shadowOffsetY = 0;
+
+    // 绘制边框
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.stroke();
+
+    // 绘制月份标题
+    const monthNames = [
+      "1月",
+      "2月",
+      "3月",
+      "4月",
+      "5月",
+      "6月",
+      "7月",
+      "8月",
+      "9月",
+      "10月",
+      "11月",
+      "12月",
+    ];
+    const headerText = `${currentYear}年 ${monthNames[currentMonth]}`;
+
+    this.ctx.fillStyle = this.theme.colors.dropdown.text;
+    this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`;
+    this.ctx.textAlign = "center";
+    this.ctx.textBaseline = "middle";
+    this.ctx.fillText(headerText, calendarX + calendarWidth / 2, calendarY + headerHeight / 2);
+
+    // 绘制左右箭头
+    const arrowSize = 6;
+    const leftArrowX = calendarX + 20;
+    const rightArrowX = calendarX + calendarWidth - 20;
+    const arrowY = calendarY + headerHeight / 2;
+
+    this.ctx.fillStyle = this.theme.colors.placeholderText;
+    this.ctx.beginPath();
+    this.ctx.moveTo(leftArrowX + arrowSize, arrowY - arrowSize);
+    this.ctx.lineTo(leftArrowX - arrowSize, arrowY);
+    this.ctx.lineTo(leftArrowX + arrowSize, arrowY + arrowSize);
+    this.ctx.closePath();
+    this.ctx.fill();
+
+    this.ctx.beginPath();
+    this.ctx.moveTo(rightArrowX - arrowSize, arrowY - arrowSize);
+    this.ctx.lineTo(rightArrowX + arrowSize, arrowY);
+    this.ctx.lineTo(rightArrowX - arrowSize, arrowY + arrowSize);
+    this.ctx.closePath();
+    this.ctx.fill();
+
+    // 绘制星期标题
+    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+    const dayWidth = (calendarWidth - rowPadding * 2) / 7;
+
+    this.ctx.font = `${this.theme.font.size - 1}px ${this.theme.font.family}`;
+    this.ctx.fillStyle = this.theme.colors.placeholderText;
+
+    for (let i = 0; i < 7; i++) {
+      const dayX = calendarX + rowPadding + i * dayWidth + dayWidth / 2;
+      const dayY = calendarY + headerHeight + weekdayHeight / 2;
+      this.ctx.fillText(weekdays[i]!, dayX, dayY);
+    }
+
+    // 绘制日期格子
+    const firstDay = new Date(currentYear, currentMonth, 1);
+    const startWeekday = firstDay.getDay();
+    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const index = startWeekday + day - 1;
+      const row = Math.floor(index / 7);
+      const col = index % 7;
+
+      const cellX = calendarX + rowPadding + col * dayWidth;
+      const cellY = calendarY + headerHeight + weekdayHeight + row * dayHeight;
+      const cellCenterX = cellX + dayWidth / 2;
+      const cellCenterY = cellY + dayHeight / 2;
+
+      const currentDate = new Date(currentYear, currentMonth, day);
+      const isSelected = selectedDate && currentDate.getTime() === selectedDate.getTime();
+      const isHovered = hoveredDate && currentDate.getTime() === hoveredDate.getTime();
+      const isToday = currentDate.getTime() === today.getTime();
+
+      // 绘制选中或 hover 背景
+      if (isSelected) {
+        this.ctx.fillStyle = this.theme.colors.primary;
+        this.ctx.beginPath();
+        this.ctx.arc(cellCenterX, cellCenterY, dayHeight / 2 - 2, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.fillStyle = "#ffffff";
+      } else if (isHovered) {
+        this.ctx.fillStyle = this.theme.colors.rowHoverBackground;
+        this.ctx.beginPath();
+        this.ctx.arc(cellCenterX, cellCenterY, dayHeight / 2 - 2, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.fillStyle = this.theme.colors.dropdown.text;
+      } else if (isToday) {
+        this.ctx.fillStyle = this.theme.colors.primary;
+        this.ctx.fillText(String(day), cellCenterX, cellCenterY);
+        this.ctx.fillStyle = this.theme.colors.dropdown.text;
+        continue;
+      } else {
+        this.ctx.fillStyle = this.theme.colors.dropdown.text;
+      }
+
+      this.ctx.textAlign = "center";
+      this.ctx.fillText(String(day), cellCenterX, cellCenterY);
+    }
+
+    this.ctx.restore();
+  }
+
+  /**
+   * 渲染筛选下拉框的按钮区域
+   */
+  private renderFilterButtons(x: number, y: number, width: number, buttonHeight: number): void {
+    const padding = 8;
+    const fontSize = 14;
+
+    // 绘制按钮区域背景和分隔线
+    this.ctx.fillStyle = this.theme.colors.dropdown.background;
+    this.ctx.fillRect(x, y, width, buttonHeight);
+    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath();
+    this.ctx.moveTo(x, y);
+    this.ctx.lineTo(x + width, y);
+    this.ctx.stroke();
+
+    // 绘制按钮文本
+    this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
     const resetText = "重置";
     const confirmText = "确定";
-    const resetWidth = this.ctx.measureText(resetText).width;
     const confirmWidth = this.ctx.measureText(confirmText).width;
 
     const resetX = x + padding;
     const confirmX = x + width - padding - confirmWidth;
-    const textY = buttonY + buttonHeight / 2;
+    const textY = y + buttonHeight / 2;
 
     this.ctx.fillStyle = this.theme.colors.placeholderText;
     this.ctx.textBaseline = "middle";
@@ -5070,34 +6530,6 @@ export class Renderer {
 
     this.ctx.fillStyle = this.theme.colors.linkColor;
     this.ctx.fillText(confirmText, confirmX, textY);
-
-    if (options.length > maxVisibleItems) {
-      const scrollbarWidth = 6;
-      const totalHeight = options.length * itemHeight;
-      const thumbHeight = Math.max(20, (listHeight / totalHeight) * listHeight);
-      const maxThumbY = listHeight - thumbHeight;
-      const thumbY = (scrollTop / (totalHeight - listHeight)) * maxThumbY;
-
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
-      this.ctx.beginPath();
-      this.ctx.roundRect(
-        x + width - scrollbarWidth - 2,
-        y + thumbY + 2,
-        scrollbarWidth,
-        thumbHeight,
-        3,
-      );
-      this.ctx.fill();
-      this.ctx.globalAlpha = prevAlpha;
-    }
-
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
   }
 
   renderDateDropdown(dateDropdown: DateDropdownState): void {
@@ -5647,13 +7079,77 @@ export class Renderer {
     );
   }
 
+  // ==================== 缓存管理方法 ====================
+
+  /**
+   * 清空渲染缓存
+   */
+  clearRenderCache(): void {
+    if (this.renderCache) {
+      this.renderCache.clear();
+    }
+  }
+
+  /**
+   * 重置行 ID 管理器
+   */
+  resetRowIds(): void {
+    if (this.renderCache) {
+      this.renderCache.resetRowIds();
+    }
+    this.rowIdManager.reset();
+  }
+
+  /**
+   * 重置列 ID 管理器
+   */
+  resetColumnIds(): void {
+    if (this.renderCache) {
+      this.renderCache.resetColumnIds();
+    }
+    this.columnIdManager.reset();
+  }
+
+  /**
+   * 清理不可见行的缓存
+   */
+  cleanupInvisibleRows(visibleRowIds: Set<string>): void {
+    if (this.renderCache) {
+      this.renderCache.cleanupInvisibleRows(visibleRowIds);
+    }
+  }
+
+  /**
+   * 清理不可见列的缓存
+   */
+  cleanupInvisibleColumns(visibleColumnIds: Set<string>): void {
+    if (this.renderCache) {
+      this.renderCache.cleanupInvisibleColumns(visibleColumnIds);
+    }
+  }
+
+  /**
+   * 获取缓存统计信息
+   */
+  getCacheStats(): {
+    cellCacheSize: number;
+    valueCacheSize: number;
+    maxCellCacheSize: number;
+  } | null {
+    return this.renderCache?.getStats() ?? null;
+  }
+
   destroy(): void {
     this.isDestroyed = true;
     this.dirtyRegions = [];
-    // 清理图片缓存，防止内存泄漏
-    this.imageCache.clear();
-    this.loadingImages.clear();
-    this.failedImages.clear();
-    this.imageLoadCallbacks.clear();
+    // 清理图片加载队列
+    this.imageLoadQueue.destroy();
+    // 清理颜色缓存
+    this.colorRangeCache.clear();
+    this.hexToRgbCache.clear();
+    // 清理渲染缓存
+    if (this.renderCache) {
+      this.renderCache.clear();
+    }
   }
 }

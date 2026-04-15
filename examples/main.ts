@@ -7,6 +7,177 @@ import type {
   TagItem,
   CustomRenderContext,
 } from "../src/types";
+import { getFPSMonitor } from "./FPSMonitor";
+
+// 创建 Web Worker 用于数据生成
+const dataWorker = new Worker(new URL("./dataWorker.ts", import.meta.url), {
+  type: "module",
+});
+
+// 当前活跃的 CanvasTable 实例（用于调用 showLoading/hideLoading）
+
+// 渲染耗时提示工具
+const renderToast = {
+  element: document.getElementById("renderToast"),
+  createTimeSpan: document.getElementById("createTime"),
+  renderTimeSpan: document.getElementById("renderTime"),
+  timeout: null as number | null,
+
+  show(createTime: number, renderTime: number) {
+    if (!this.element || !this.createTimeSpan || !this.renderTimeSpan) return;
+
+    // 清除之前的 timeout
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+    }
+
+    this.createTimeSpan.textContent = `${createTime.toFixed(2)}ms`;
+    this.renderTimeSpan.textContent = `${renderTime.toFixed(2)}ms`;
+
+    this.element.classList.add("show");
+
+    // 3秒后隐藏
+    this.timeout = window.setTimeout(() => {
+      this.hide();
+    }, 3000);
+  },
+
+  hide() {
+    if (!this.element) return;
+    this.element.classList.remove("show");
+  },
+};
+
+// Worker 消息处理
+interface WorkerResponse {
+  type: "data" | "error";
+  data?: { rows: Row[]; columns: Column[] };
+  error?: string;
+  workerCreateTime?: number; // Worker 内部生成时间
+  isHierarchical?: boolean;
+}
+
+let pendingWorkerRequest: {
+  table: CanvasTable;
+  label: string;
+  isHierarchical: boolean;
+  sendTime: number; // 主线程发送消息的时间
+  resolve?: (rows: Row[]) => void;
+} | null = null;
+
+dataWorker.onmessage = function (e: MessageEvent<WorkerResponse>) {
+  const { type, data, error, workerCreateTime } = e.data;
+
+  if (type === "error") {
+    if (pendingWorkerRequest?.table) {
+      pendingWorkerRequest.table.hideLoading();
+    }
+    console.error("Worker error:", error);
+    pendingWorkerRequest = null;
+    return;
+  }
+
+  if (!pendingWorkerRequest || !data) {
+    if (pendingWorkerRequest?.table) {
+      pendingWorkerRequest.table.hideLoading();
+    }
+    return;
+  }
+
+  const { table, label, isHierarchical, sendTime } = pendingWorkerRequest;
+
+  // 计算完整的"创建数据"时间：从发送消息到收到消息
+  // 包含：Worker生成时间 + 序列化时间 + 反序列化时间 + 通信开销
+  const totalTime = performance.now() - sendTime;
+
+  // Worker 返回的 columns 不含 formatter，使用主线程定义的完整 columns
+  // 对于层级数据，使用 Worker 返回的 columns（不需要特殊 formatter）
+  const finalRows = data.rows;
+  if (!isHierarchical) {
+    // 使用主线程预定义的完整 columns
+    table.setColumns(columns);
+  } else {
+    table.setColumns(data.columns);
+  }
+
+  // 测量渲染耗时
+  console.time(label);
+  const renderStart = performance.now();
+  table.setRows(finalRows);
+  const renderTime = performance.now() - renderStart;
+  console.timeEnd(label);
+
+  table.hideLoading();
+
+  // 显示耗时：totalTime 包含了 Worker 生成 + 序列化/反序列化 + 传输
+  renderToast.show(totalTime, renderTime);
+  console.log(
+    `${label} - 数据准备(含传输): ${totalTime.toFixed(2)}ms, Worker内部: ${(workerCreateTime ?? 0).toFixed(2)}ms, 渲染: ${renderTime.toFixed(2)}ms`,
+  );
+
+  // resolve promise
+  if (pendingWorkerRequest.resolve) {
+    pendingWorkerRequest.resolve(finalRows);
+  }
+
+  pendingWorkerRequest = null;
+};
+
+// 通过 Worker 生成数据（异步，不阻塞主线程）
+function setRowsWithWorker(
+  table: CanvasTable,
+  messageType: "generate" | "generateHierarchical",
+  count?: number,
+  label?: string,
+): Promise<Row[]> {
+  return new Promise((resolve) => {
+    const isHierarchical = messageType === "generateHierarchical";
+    const sendTime = performance.now(); // 记录发送时间
+
+    pendingWorkerRequest = {
+      table,
+      label: label ?? `Load ${count ?? "hierarchical"} rows`,
+      isHierarchical,
+      sendTime,
+      resolve,
+    };
+
+    table.showLoading(
+      `生成 ${count ? `${count.toLocaleString()} 行数据` : "层级数据"}中...`,
+    );
+
+    dataWorker.postMessage({
+      type: messageType,
+      count,
+      seed: DATA_SEED,
+    });
+  });
+}
+
+// 同步方式测量创建数据和渲染耗时（用于小数据量）
+function setRowsWithMeasure(
+  table: CanvasTable,
+  rowsFn: () => Row[],
+  label: string,
+) {
+  // 测量创建数据耗时
+  const createStart = performance.now();
+  const rows = rowsFn();
+  const createTime = performance.now() - createStart;
+
+  // 测量渲染耗时
+  console.time(label);
+  const renderStart = performance.now();
+  table.setRows(rows);
+  const renderTime = performance.now() - renderStart;
+  console.timeEnd(label);
+
+  // 显示两个耗时
+  renderToast.show(createTime, renderTime);
+  console.log(
+    `${label} - 创建: ${createTime.toFixed(2)}ms, 渲染: ${renderTime.toFixed(2)}ms`,
+  );
+}
 
 const DATA_SEED = 12345;
 
@@ -66,7 +237,8 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
   for (let i = 0; i < count; i++) {
     const cellMerges: CellMerge[] = [];
 
-    if (i % 5 === 0 && i + 1 < count) {
+    // 使用种子随机数决定是否合并单元格
+    if (random() > 0.8 && i + 1 < count) {
       cellMerges.push({
         rowIndex: i,
         columnIndex: 2,
@@ -75,11 +247,11 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
       });
     }
 
-    // 直接计算各项值
-    const selected = i % 3 === 0;
-    const radioValue = ["high", "medium", "low"][i % 3]!;
-    const level = levelOptions[i % 4]!;
-    const enabled = i % 2 === 0;
+    // 直接计算各项值（使用种子随机数）
+    const selected = random() > 0.67;
+    const radioValue = ["high", "medium", "low"][Math.floor(random() * 3)]!;
+    const level = levelOptions[Math.floor(random() * levelOptions.length)]!;
+    const enabled = random() > 0.5;
 
     const roleOptions = ["admin", "editor", "viewer", "developer"];
     const numRoles = Math.floor(random() * 3) + 1;
@@ -100,13 +272,20 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
       }
     }
 
+    // 生成姓名，用于生成邮箱
+    const name =
+      firstNames[Math.floor(random() * firstNames.length)] +
+      lastNames[Math.floor(random() * lastNames.length)];
+    const email = `${name.toLowerCase()}@example.com`;
+    const website = `https://example.com/users/${i + 1}`;
+
     rows.push({
       id: `row-${i}`,
       data: {
         id: i + 1,
-        name:
-          firstNames[Math.floor(random() * firstNames.length)] +
-          lastNames[Math.floor(random() * lastNames.length)],
+        name,
+        email,
+        website,
         secretCode: `CODE-${Math.floor(random() * 10000)
           .toString()
           .padStart(4, "0")}`, // 隐藏列数据
@@ -141,10 +320,35 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
         progress: Math.floor(random() * 100),
         taskProgress: Math.floor(random() * 100),
         completionRate: Math.floor(random() * 100),
-        // 测试超出范围的进度值
-        progressOverflow: i === 0 ? 150 : i === 1 ? -20 : Math.floor(random() * 100), // 第一行150，第二行-20
+        // 测试超出范围的进度值（使用种子随机数，但第一行强制150，第二行强制-20）
+        progressOverflow: Math.floor(random() * 100),
         dashboard: Math.floor(random() * 100),
         volume: Math.floor(random() * 100),
+        // 评分数据
+        rating: Math.floor(random() * 10) / 2, // 0-5，支持半星
+        // 颜色数据
+        color: [
+          "#ff4d4f",
+          "#ff7a45",
+          "#ffa940",
+          "#ffc53d",
+          "#bae637",
+          "#73d13d",
+          "#36cfc9",
+          "#40a9ff",
+          "#597ef7",
+          "#9254de",
+          "#f759ab",
+          "#ff85c0",
+          "#a0d911",
+          "#13c2c2",
+          "#1890ff",
+          "#722ed1",
+          "#eb2f96",
+          "#faad14",
+          "#52c41a",
+          "#2f54eb",
+        ][Math.floor(random() * 20)],
         // [
         //   `https://picsum.photos/seed/${i}-1/100/100`,
         //   `https://picsum.photos/seed/${i}-2/100/100`,
@@ -240,6 +444,7 @@ const columns: Column[] = [
     align: "center",
     fixed: "left",
     sortable: false,
+    filterable: true,
     disabled: isRowDisabled,
     render: (_value, row) => ({
       type: "checkbox" as CellType,
@@ -387,6 +592,7 @@ const columns: Column[] = [
     width: 120,
     type: "date",
     sortable: true,
+    filterable: true,
     disabled: isRowDisabled,
     render: (value) => ({
       type: "date" as CellType,
@@ -401,29 +607,28 @@ const columns: Column[] = [
     title: "邮箱",
     width: 180,
     type: "link",
+    filterable: true,
     disabled: isRowDisabled,
-    render: (_value, row) => {
-      const name = row.data.name as string;
-      const email = `${name.toLowerCase()}@example.com`;
-      return {
-        type: "link" as CellType,
-        link: {
-          text: email,
-          link: `mailto:${email}`,
-        },
-      };
-    },
+    render: (value) => ({
+      type: "link" as CellType,
+      link: {
+        text: value as string,
+        link: `mailto:${value}`,
+      },
+    }),
   },
   {
     key: "website",
     title: "个人主页",
     width: 150,
     type: "link",
+    filterable: true,
     disabled: isRowDisabled,
-    render: (_value, row) => ({
+    render: (value) => ({
       type: "link" as CellType,
       link: {
-        link: `https://example.com/users/${row.data.id}`,
+        text: value as string,
+        link: value as string,
       },
     }),
   },
@@ -438,6 +643,7 @@ const columns: Column[] = [
         width: 100,
         type: "number",
         sortable: true,
+        filterable: true,
         disabled: isRowDisabled,
         formatter: (value) => "¥" + (value as number).toLocaleString(),
       },
@@ -447,6 +653,7 @@ const columns: Column[] = [
         width: 80,
         type: "number",
         sortable: true,
+        filterable: true,
         disabled: isRowDisabled,
         formatter: (value) => "¥" + (value as number).toLocaleString(),
       },
@@ -458,6 +665,7 @@ const columns: Column[] = [
     width: 100,
     type: "tag",
     sortable: true,
+    filterable: true,
     disabled: isRowDisabled,
     render: (value) => {
       const statusOptions = [
@@ -492,6 +700,7 @@ const columns: Column[] = [
     width: 200,
     type: "radio",
     align: "left",
+    filterable: true,
     disabled: isRowDisabled,
     render: (_value, row) => ({
       type: "radio" as CellType,
@@ -560,6 +769,7 @@ const columns: Column[] = [
     title: "进度",
     width: 120,
     align: "center",
+    filterable: true,
     disabled: isRowDisabled,
     render: (value) => ({
       type: "progress" as CellType,
@@ -690,12 +900,50 @@ const columns: Column[] = [
       },
     }),
   },
+  // 评分列
+  {
+    key: "rating",
+    title: "评分",
+    width: 120,
+    type: "rating",
+    align: "center",
+    disabled: isRowDisabled,
+    render: (value) => ({
+      type: "rating",
+      rating: {
+        value: (value ?? 0) as number,
+        max: 5,
+        starSize: 16,
+        allowHalf: true,
+        color: "#FFD700",
+        inactiveColor: "#E0E0E0",
+      },
+    }),
+  },
+  // 颜色选择器列
+  {
+    key: "color",
+    title: "颜色",
+    width: 80,
+    type: "color",
+    align: "center",
+    editable: true,
+    filterable: true,
+    disabled: isRowDisabled,
+    render: (value) => ({
+      type: "color",
+      color: {
+        value: (value as string) || "#1890ff",
+      },
+    }),
+  },
   {
     key: "skills",
     title: "技能标签",
     width: 200,
     type: "tag",
     sortable: false,
+    filterable: true,
     disabled: isRowDisabled,
     render: (value, row, column, rowIndex) => {
       if (!Array.isArray(value) && rowIndex === 0) {
@@ -781,6 +1029,7 @@ const columns: Column[] = [
     width: 120,
     type: "select",
     align: "left",
+    filterable: true,
     disabled: isRowDisabled,
     render: (value) => ({
       type: "select" as CellType,
@@ -802,6 +1051,7 @@ const columns: Column[] = [
     width: 160,
     type: "select",
     align: "left",
+    filterable: true,
     disabled: isRowDisabled,
     render: (_value, row) => ({
       type: "select" as CellType,
@@ -824,6 +1074,7 @@ const columns: Column[] = [
     width: 80,
     type: "switch",
     align: "center",
+    filterable: true,
     disabled: isRowDisabled,
     render: (_value, row) => ({
       type: "switch" as CellType,
@@ -1145,7 +1396,7 @@ function generate1000ColumnsData(count: number): Row[] {
 const container = document.getElementById("table-container")!;
 
 const table = new CanvasTable(container, {
-  data: { rows: generateData(100), columns },
+  rows: generateData(100),
   columns,
   width: "100%",
   height: "100%",
@@ -1218,6 +1469,9 @@ const table = new CanvasTable(container, {
           break;
         case "enabled":
           newData.enabled = false;
+          break;
+        case "rating":
+          newData.rating = 0;
           break;
         default:
           newData[col.key] = "";
@@ -1309,6 +1563,9 @@ const table = new CanvasTable(container, {
   onTagsChange: (cell, values) => {
     console.log("Tags changed:", cell, values);
   },
+  onRatingChange: (cell, value) => {
+    console.log("Rating changed:", cell, value);
+  },
   onColumnHide: (columnKey) => {
     console.log("Column hidden:", columnKey);
   },
@@ -1340,28 +1597,22 @@ const table = new CanvasTable(container, {
   },
 });
 
+// 小数据量使用同步方式（可以对比 Worker 和主线程的差异）
+// 大数据量也使用同步方式，因为 postMessage 的结构化克隆开销太大
 document.getElementById("load1k")!.addEventListener("click", () => {
-  console.time("Load 1K rows");
-  table.setData({ rows: generateData(1000), columns });
-  console.timeEnd("Load 1K rows");
+  setRowsWithMeasure(table, () => generateData(1000), "Load 1K rows");
 });
 
 document.getElementById("load10k")!.addEventListener("click", () => {
-  console.time("Load 10K rows");
-  table.setData({ rows: generateData(10000), columns });
-  console.timeEnd("Load 10K rows");
+  setRowsWithMeasure(table, () => generateData(10000), "Load 10K rows");
 });
 
 document.getElementById("load100k")!.addEventListener("click", () => {
-  console.time("Load 100K rows");
-  table.setData({ rows: generateData(100_000), columns });
-  console.timeEnd("Load 100K rows");
+  setRowsWithMeasure(table, () => generateData(100_000), "Load 100K rows");
 });
 
 document.getElementById("load1m")!.addEventListener("click", () => {
-  console.time("Load 1M rows");
-  table.setData({ rows: generateData(1_000_000), columns });
-  console.timeEnd("Load 1M rows");
+  setRowsWithMeasure(table, () => generateData(1_000_000), "Load 1M rows");
 });
 
 document.getElementById("clearSort")!.addEventListener("click", () => {
@@ -1384,13 +1635,14 @@ document.getElementById("exportCsv")!.addEventListener("click", async () => {
 
 let currentThemeMode: "light" | "dark" | "auto" = "auto";
 const themeDisplay = document.getElementById("currentTheme")!;
+themeDisplay.textContent = `(auto)`;
 
 document.getElementById("toggleTheme")!.addEventListener("click", () => {
   const modes: ("light" | "dark" | "auto")[] = ["light", "dark", "auto"];
   const currentIndex = modes.indexOf(currentThemeMode);
   currentThemeMode = modes[(currentIndex + 1) % modes.length]!;
   table.setThemeMode(currentThemeMode);
-  themeDisplay.textContent = `(current:${currentThemeMode})`;
+  themeDisplay.textContent = `(${currentThemeMode})`;
   console.log("Theme mode changed to:", currentThemeMode);
 });
 
@@ -1406,38 +1658,221 @@ document.getElementById("hideAgeColumn")!.addEventListener("click", () => {
   console.log("Hide age column");
 });
 
+// 性能检测按钮
+let perfMonitoringEnabled = false;
+const perfButton = document.getElementById("perfMonitor")!;
+perfButton.addEventListener("click", () => {
+  if (!perfMonitoringEnabled) {
+    // 开始检测
+    perfMonitoringEnabled = true;
+    table.setPerformanceMonitoring(true);
+    table.resetPerformanceStats();
+    perfButton.textContent = "结束性能检测";
+    perfButton.style.background = "#fff1f0";
+    perfButton.style.borderColor = "#ff4d4f";
+    perfButton.style.color = "#ff4d4f";
+    console.log("性能检测已开始，滚动表格数据进行测试...");
+  } else {
+    // 先打印报告，再禁用监控
+    perfMonitoringEnabled = false;
+    console.log("\n========== 性能检测报告 ==========\n");
+    table.printPerformanceReport();
+    console.log("\n==================================\n");
+    // 打印完报告后再禁用
+    table.setPerformanceMonitoring(false);
+    perfButton.textContent = "开始性能检测";
+    perfButton.style.background = "#e6f7ff";
+    perfButton.style.borderColor = "#1890ff";
+    perfButton.style.color = "#1890ff";
+  }
+});
+
+// 缓存开关按钮
+let cacheEnabled = false;
+const cacheButton = document.getElementById("cacheToggle")!;
+cacheButton.addEventListener("click", () => {
+  cacheEnabled = !cacheEnabled;
+
+  // 更新所有列的 cacheMode
+  const currentColumns = table.getColumns();
+  const cacheModeValue: "cell" | false = cacheEnabled ? "cell" : false;
+  const updatedColumns = currentColumns.map((col) => ({
+    ...col,
+    cacheMode: cacheModeValue,
+  }));
+
+  // 应用更新
+  table.setColumns(updatedColumns);
+
+  // 更新按钮状态
+  if (cacheEnabled) {
+    cacheButton.textContent = "Cache: ON";
+    cacheButton.style.background =
+      "linear-gradient(135deg, #52c41a 0%, #389e0d 100%)";
+    cacheButton.style.borderColor = "transparent";
+    cacheButton.style.color = "#fff";
+
+    // 显示缓存统计
+    const stats = table.getRenderCacheStats();
+    console.log("Cache enabled. Stats:", stats);
+  } else {
+    cacheButton.textContent = "Cache: OFF";
+    cacheButton.style.background = "";
+    cacheButton.style.borderColor = "";
+    cacheButton.style.color = "";
+
+    // 清空缓存
+    table.clearRenderCache();
+    console.log("Cache disabled and cleared.");
+  }
+});
+
+// 图片加载队列开关按钮 -暂时隐藏，有 bug
+// let imageLoadEnabled = false;
+// const imageLoadButton = document.getElementById("imageLoadToggle")!;
+// if (imageLoadButton) {
+//   imageLoadButton.addEventListener("click", () => {
+//     imageLoadEnabled = !imageLoadEnabled;
+//
+//     // 更新图片加载配置
+//     table.setImageLoadConfig({
+//       enabled: imageLoadEnabled,
+//       delay: 100,
+//       maxConcurrent: 6,
+//       maxCacheSize: 200,
+//     });
+//
+//     // 更新按钮状态
+//     if (imageLoadEnabled) {
+//       imageLoadButton.textContent = "Image Queue: ON";
+//       imageLoadButton.style.background = "linear-gradient(135deg, #1890ff 0%, #096dd9 100%)";
+//       imageLoadButton.style.borderColor = "transparent";
+//       imageLoadButton.style.color = "#fff";
+//
+//       console.log("Image load queue enabled. Config: { delay: 100, maxConcurrent: 6 }");
+//     } else {
+//       imageLoadButton.textContent = "Image Queue: OFF";
+//       imageLoadButton.style.background = "";
+//       imageLoadButton.style.borderColor = "";
+//       imageLoadButton.style.color = "";
+//
+//       console.log("Image load queue disabled (immediate loading).");
+//     }
+//   });
+// }
+
 document.getElementById("loadComplex")!.addEventListener("click", () => {
-  console.time("Load complex columns");
   const complexColumns = generateComplexColumns();
-  table.setData({ rows: generateComplexData(1000), columns: complexColumns });
-  console.timeEnd("Load complex columns");
+  table.setColumns(complexColumns);
+  setRowsWithMeasure(
+    table,
+    () => generateComplexData(1000),
+    "Load complex columns",
+  );
 });
 
 document.getElementById("load1000Cols")!.addEventListener("click", () => {
-  console.time("Load 1000 columns");
   const cols1000 = generate1000Columns();
-  table.setData({ rows: generate1000ColumnsData(1000), columns: cols1000 });
-  console.timeEnd("Load 1000 columns");
+  table.setColumns(cols1000);
+  setRowsWithMeasure(
+    table,
+    () => generate1000ColumnsData(1000),
+    "Load 1000 columns",
+  );
 });
 
 document.getElementById("loadMerged")!.addEventListener("click", () => {
-  console.time("Load merged cells");
   const mergedData = generateMergedCellsData();
-  table.setData({ rows: mergedData.rows, columns: mergedData.columns });
-  console.timeEnd("Load merged cells");
+  table.setColumns(mergedData.columns);
+  setRowsWithMeasure(table, () => mergedData.rows, "Load merged cells");
 });
 
-document.getElementById("loadHierarchical")!.addEventListener("click", () => {
-  console.time("Load hierarchical data");
-  const hierarchicalData = generateHierarchicalData();
-  table.setData({
-    rows: hierarchicalData.rows,
-    columns: hierarchicalData.columns,
+document
+  .getElementById("loadHierarchical")!
+  .addEventListener("click", async () => {
+    await setRowsWithWorker(
+      table,
+      "generateHierarchical",
+      undefined,
+      "Load hierarchical rows (worker)",
+    );
+    (
+      table as unknown as { setExpandColumnKey: (key: string) => void }
+    ).setExpandColumnKey("name");
   });
-  (
-    table as unknown as { setExpandColumnKey: (key: string) => void }
-  ).setExpandColumnKey("name");
-  console.timeEnd("Load hierarchical data");
+
+// 懒加载 demo
+let lazyLoadSeed = 10000;
+const BATCH_SIZE = 100;
+
+document.getElementById("loadLazy")!.addEventListener("click", () => {
+  // 重置状态
+  lazyLoadSeed = 10000;
+  const initialRows = generateData(100, 1000);
+
+  // 销毁原表格
+  table.destroy();
+
+  // 创建新的支持懒加载的表格
+  const lazyTable = new CanvasTable(container, {
+    rows: initialRows,
+    columns,
+    width: "100%",
+    height: "100%",
+    stripeRows: true,
+    hoverable: true,
+    showRowNumbers: true,
+    themeMode: "auto",
+    lazyLoad: {
+      enabled: true,
+      threshold: 10, // 距离底部 10 行时触发
+    },
+    onLoadMore: (params) => {
+      console.log("Load more triggered:", params);
+      const currentCount = lazyTable.getRows().length;
+
+      // 显示加载提示
+      lazyTable.showLoading(`加载更多数据... (当前 ${currentCount} 行)`);
+
+      // 模拟异步加载
+      setTimeout(() => {
+        // 生成新的数据批次
+        const newRows = generateData(BATCH_SIZE, lazyLoadSeed);
+        lazyLoadSeed += BATCH_SIZE;
+
+        // 追加数据
+        lazyTable.appendRows(newRows);
+
+        lazyTable.hideLoading();
+        console.log(
+          `Loaded ${BATCH_SIZE} rows, total: ${lazyTable.getRows().length}`,
+        );
+
+        // 模拟最多加载 10000 行
+        if (lazyTable.getRows().length >= 10000) {
+          lazyTable.setHasMore(false); // 没有更多数据了
+          console.log("Reached max rows (10000), stopped lazy loading");
+        }
+      }, 1000); // 模拟网络延迟
+    },
+  });
+
+  // 更新全局引用
+  (window as unknown as { table: CanvasTable }).table = lazyTable;
+
+  // 添加提示
+  const infoEl = document.createElement("div");
+  infoEl.style.cssText =
+    "position: absolute; top: 10px; right: 10px; background: rgba(0,212,170,0.9); color: #0f1419; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-family: 'JetBrains Mono', monospace; z-index: 100;";
+  infoEl.textContent = "滚动到底部加载更多 (最多 10000 行)";
+  container.appendChild(infoEl);
+
+  // 3秒后移除提示
+  setTimeout(() => {
+    infoEl.remove();
+  }, 3000);
+
+  console.log("Lazy load demo enabled. Scroll to bottom to trigger load more.");
 });
 
 function generateMergedCellsData(seed: number = DATA_SEED): {
@@ -1617,221 +2052,6 @@ function generateMergedCellsData(seed: number = DATA_SEED): {
   return { rows, columns };
 }
 
-function generateHierarchicalData(): { rows: Row[]; columns: Column[] } {
-  const columns: Column[] = [
-    { key: "name", title: "名称", width: 200, fixed: "left" },
-    { key: "type", title: "类型", width: 100 },
-    { key: "size", title: "大小", width: 100 },
-    { key: "modified", title: "修改时间", width: 150 },
-    { key: "status", title: "状态", width: 80, fixed: "right" },
-  ];
-
-  const rows: Row[] = [
-    {
-      id: "folder-1",
-      data: {
-        name: "项目文档",
-        type: "文件夹",
-        size: "-",
-        modified: "2024-01-15",
-        status: "正常",
-      },
-      expanded: false,
-      children: [
-        {
-          id: "folder-1-1",
-          data: {
-            name: "需求文档",
-            type: "文件夹",
-            size: "-",
-            modified: "2024-01-15",
-            status: "正常",
-          },
-          expanded: false,
-          children: [
-            {
-              id: "file-1-1-1",
-              data: {
-                name: "需求说明书.docx",
-                type: "文档",
-                size: "2.5MB",
-                modified: "2024-01-15",
-                status: "正常",
-              },
-            },
-            {
-              id: "file-1-1-2",
-              data: {
-                name: "需求变更记录.xlsx",
-                type: "表格",
-                size: "1.2MB",
-                modified: "2024-01-14",
-                status: "正常",
-              },
-            },
-          ],
-        },
-        {
-          id: "folder-1-2",
-          data: {
-            name: "设计文档",
-            type: "文件夹",
-            size: "-",
-            modified: "2024-01-13",
-            status: "正常",
-          },
-          expanded: false,
-          children: [
-            {
-              id: "file-1-2-1",
-              data: {
-                name: "架构设计.pdf",
-                type: "文档",
-                size: "5.8MB",
-                modified: "2024-01-13",
-                status: "正常",
-              },
-            },
-            {
-              id: "file-1-2-2",
-              data: {
-                name: "UI设计稿.sketch",
-                type: "设计",
-                size: "15.2MB",
-                modified: "2024-01-12",
-                status: "正常",
-              },
-            },
-          ],
-        },
-        {
-          id: "file-1-3",
-          data: {
-            name: "项目计划.xlsx",
-            type: "表格",
-            size: "0.8MB",
-            modified: "2024-01-10",
-            status: "正常",
-          },
-        },
-      ],
-    },
-    {
-      id: "folder-2",
-      data: {
-        name: "源代码",
-        type: "文件夹",
-        size: "-",
-        modified: "2024-01-16",
-        status: "正常",
-      },
-      expanded: false,
-      children: [
-        {
-          id: "folder-2-1",
-          data: {
-            name: "src",
-            type: "文件夹",
-            size: "-",
-            modified: "2024-01-16",
-            status: "正常",
-          },
-          expanded: false,
-          children: [
-            {
-              id: "folder-2-1-1",
-              data: {
-                name: "components",
-                type: "文件夹",
-                size: "-",
-                modified: "2024-01-16",
-                status: "正常",
-              },
-              children: [
-                {
-                  id: "file-2-1-1-1",
-                  data: {
-                    name: "Table.tsx",
-                    type: "代码",
-                    size: "25KB",
-                    modified: "2024-01-16",
-                    status: "正常",
-                  },
-                },
-                {
-                  id: "file-2-1-1-2",
-                  data: {
-                    name: "Button.tsx",
-                    type: "代码",
-                    size: "8KB",
-                    modified: "2024-01-15",
-                    status: "正常",
-                  },
-                },
-              ],
-            },
-            {
-              id: "file-2-1-2",
-              data: {
-                name: "index.ts",
-                type: "代码",
-                size: "2KB",
-                modified: "2024-01-16",
-                status: "正常",
-              },
-            },
-          ],
-        },
-        {
-          id: "file-2-2",
-          data: {
-            name: "package.json",
-            type: "配置",
-            size: "1KB",
-            modified: "2024-01-14",
-            status: "正常",
-          },
-        },
-      ],
-    },
-    {
-      id: "folder-3",
-      data: {
-        name: "测试报告",
-        type: "文件夹",
-        size: "-",
-        modified: "2024-01-11",
-        status: "正常",
-      },
-      expanded: false,
-      children: [
-        {
-          id: "file-3-1",
-          data: {
-            name: "单元测试报告.pdf",
-            type: "文档",
-            size: "3.2MB",
-            modified: "2024-01-11",
-            status: "正常",
-          },
-        },
-        {
-          id: "file-3-2",
-          data: {
-            name: "集成测试报告.pdf",
-            type: "文档",
-            size: "4.5MB",
-            modified: "2024-01-10",
-            status: "正常",
-          },
-        },
-      ],
-    },
-  ];
-
-  return { rows, columns };
-}
-
 // 处理 Vite 热更新，防止内存泄漏
 const hot = (import.meta as { hot?: { accept: (cb: () => void) => void } }).hot;
 if (hot) {
@@ -1843,3 +2063,6 @@ if (hot) {
 }
 
 (window as unknown as { table: CanvasTable }).table = table;
+
+// Start FPS Monitor
+getFPSMonitor().start();

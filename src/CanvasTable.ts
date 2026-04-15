@@ -1,7 +1,6 @@
 import {
   CanvasTableProps,
   CanvasTableAPI,
-  TableData,
   Row,
   Column,
   CellPosition,
@@ -18,19 +17,24 @@ import {
   VirtualScrollConfig,
   ThemeMode,
   WatermarkConfig,
+  ImageLoadConfig,
 } from "./types";
 import { DataManager } from "./core/DataManager";
 import { LayoutManager } from "./core/LayoutManager";
 import { Renderer } from "./core/Renderer";
 import { InteractionManager } from "./core/InteractionManager";
 import { EditorManager } from "./core/EditorManager";
+import { FilterInputManager } from "./core/FilterInputManager";
 import { EventEmitter } from "./core/EventEmitter";
+import { RenderCache, RowIdManager, ColumnIdManager } from "./core/RenderCache";
+import { ImageRenderer } from "./core/renderers";
 import { DEFAULT_THEME, DARK_THEME } from "./theme";
 import { arrayToCsv, debounce, getColumnField } from "./utils";
 import { TableEvents as Events } from "./constants/events";
+import { LoadingOverlay } from "./core/LoadingOverlay";
 
 interface TableEvents {
-  load: [TableData];
+  load: [{ rows: Row[]; columns: Column[] }];
   error: [Error];
   change: [unknown[]];
   sort: [SortConfig[]];
@@ -40,11 +44,11 @@ interface TableEvents {
   cellDblClick: [CellInfo, MouseEvent];
   cellHover: [CellInfo | null, MouseEvent];
   headerHover: [string | undefined];
-  rowClick: [number, MouseEvent];
-  rowDblClick: [number, MouseEvent];
+  rowClick: [Row, number, MouseEvent];
+  rowDblClick: [Row, number, MouseEvent];
   headerClick: [Column, number, MouseEvent];
   scroll: [number, number];
-  columnResize: [string, number];
+  columnResize: [Column, number];
   columnReorder: [number, number];
   columnReorderDrag: [];
   columnHide: [string];
@@ -65,7 +69,7 @@ interface TableEvents {
   rowAddAbove: [number];
   rowAddBelow: [number];
   rowDelete: [number];
-  expand: [number, boolean];
+  expand: [Row, number, boolean];
   checkboxChange: [CellInfo, boolean];
   radioChange: [CellInfo, unknown];
   switchChange: [CellInfo, boolean];
@@ -79,6 +83,7 @@ interface TableEvents {
 
 export class CanvasTable implements CanvasTableAPI {
   private container: HTMLElement;
+  private wrapper: HTMLDivElement;
   private canvas: HTMLCanvasElement;
   private props: CanvasTableProps;
 
@@ -87,7 +92,9 @@ export class CanvasTable implements CanvasTableAPI {
   private renderer: Renderer;
   private interactionManager: InteractionManager;
   private editorManager: EditorManager;
+  private filterInputManager: FilterInputManager;
   private eventEmitter: EventEmitter<TableEvents>;
+  private loadingOverlay: LoadingOverlay;
 
   private theme: TableTheme;
   private themeMode: ThemeMode;
@@ -95,7 +102,12 @@ export class CanvasTable implements CanvasTableAPI {
   private isDestroyed: boolean = false;
   private resizeObserver: ResizeObserver | null = null;
 
+  private renderCache: RenderCache;
+  private rowIdManager: RowIdManager;
+  private columnIdManager: ColumnIdManager;
+
   private scheduledRender: (() => void) | null = null;
+  private manualLoading: boolean = false; // 用户手动设置的 loading 状态
 
   constructor(container: HTMLElement | string, props: CanvasTableProps) {
     if (typeof container === "string") {
@@ -116,9 +128,28 @@ export class CanvasTable implements CanvasTableAPI {
       this.setupAutoThemeDetection();
     }
 
+    // 创建 wrapper 容器，用于定位所有浮层元素
+    this.wrapper = document.createElement("div");
+    this.wrapper.style.cssText = `
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    `;
+    this.container.appendChild(this.wrapper);
+
     this.canvas = document.createElement("canvas");
-    this.canvas.style.display = "block";
-    this.container.appendChild(this.canvas);
+    this.canvas.style.cssText = `
+      display: block;
+      position: relative;
+      z-index: 1;
+    `;
+    this.wrapper.appendChild(this.canvas);
+
+    // 初始化 loading overlay
+    this.loadingOverlay = new LoadingOverlay(this.wrapper, this.theme, {
+      text: this.props.loadingText,
+    });
 
     this.eventEmitter = new EventEmitter<TableEvents>();
     this.setupEventHandlers();
@@ -150,13 +181,31 @@ export class CanvasTable implements CanvasTableAPI {
     this.layoutManager.setShowRowNumbers(props.showRowNumbers === true);
     this.renderer = new Renderer(this.canvas, this.theme, this.layoutManager);
 
+    // 初始化渲染缓存相关管理器
+    this.rowIdManager = this.renderer.getRowIdManager();
+    this.columnIdManager = this.renderer.getColumnIdManager();
+    this.renderCache = new RenderCache(
+      this.rowIdManager,
+      this.columnIdManager,
+      this.dataManager.getRowVersionManager(),
+    );
+    this.renderer.setRenderCache(this.renderCache);
+
+    // 设置图片加载完成后的渲染触发回调
+    this.renderer.setOnImageLoaded(() => this.render());
+
     if (props.watermark) {
       this.renderer.setWatermarkConfig(props.watermark);
+    }
+
+    if (props.imageLoad) {
+      this.renderer.setImageLoadConfig(props.imageLoad);
     }
 
     this.interactionManager = new InteractionManager(
       this.canvas,
       this.layoutManager,
+      this.dataManager,
       this.eventEmitter as unknown as EventEmitter,
       selectionConfig,
       editingConfig,
@@ -171,16 +220,48 @@ export class CanvasTable implements CanvasTableAPI {
       );
     });
     this.editorManager = new EditorManager(
-      this.container,
+      this.wrapper,
       this.canvas,
       this.layoutManager,
       this.eventEmitter as unknown as EventEmitter,
       this.theme,
+      () => this.dataManager.getRows(),
     );
 
     this.editorManager.setOnScrollCallback((deltaX: number, deltaY: number) => {
       this.interactionManager.handleExternalWheel(deltaX, deltaY);
     });
+
+    this.filterInputManager = new FilterInputManager(
+      this.wrapper,
+      this.eventEmitter as unknown as EventEmitter,
+      this.theme,
+    );
+
+    this.filterInputManager.setOnInputChange((value: string, field: string) => {
+      const filterDropdown = this.interactionManager.getFilterDropdown();
+      if (filterDropdown) {
+        if (field === "searchValue" || field === "searchText") {
+          this.interactionManager.handleFilterDropdownSearch(value);
+        } else if (field === "minValue") {
+          this.interactionManager.handleFilterDropdownRangeUpdate(
+            value,
+            String(filterDropdown.maxValue ?? ""),
+          );
+        } else if (field === "maxValue") {
+          this.interactionManager.handleFilterDropdownRangeUpdate(
+            String(filterDropdown.minValue ?? ""),
+            value,
+          );
+        }
+        this.render();
+      }
+    });
+
+    // 配置懒加载
+    if (props.lazyLoad?.enabled) {
+      this.interactionManager.setLazyLoadConfig(true, props.lazyLoad.threshold ?? 5);
+    }
 
     this.setupInternalEventListeners();
     this.setupResizeObserver();
@@ -191,13 +272,17 @@ export class CanvasTable implements CanvasTableAPI {
     this.eventEmitter.on(Events.SCROLL, (scrollLeft: unknown, scrollTop: unknown) => {
       this.editorManager.setScroll(scrollLeft as number, scrollTop as number);
       this.editorManager.updatePosition();
+      // 滚动时更新筛选输入框位置
+      const filterDropdown = this.interactionManager.getFilterDropdown();
+      if (filterDropdown) {
+        this.filterInputManager.updatePosition(filterDropdown);
+      }
       this.render();
     });
 
     this.eventEmitter.on(Events.COLUMN_RESIZE, () => {
       const columns = this.dataManager.getColumns();
-      const rows = this.dataManager.getRows();
-      this.layoutManager.calculateLayout(columns, rows);
+      this.layoutManager.calculateColumnLayoutOnly(columns);
       this.interactionManager.updateMaxScroll(
         this.layoutManager.getMaxScrollLeft(),
         this.layoutManager.getMaxScrollTop(),
@@ -212,8 +297,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.dataManager.reorderColumns(fromIndex, toIndex);
 
       const columns = this.dataManager.getColumns();
-      const rows = this.dataManager.getRows();
-      this.layoutManager.calculateLayout(columns, rows);
+      this.layoutManager.calculateColumnLayoutOnly(columns);
 
       if (this.props.onColumnReorder) {
         const columnKeys = columns.map((col) => col.key);
@@ -234,8 +318,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.dataManager.swapColumnsByKey(fromKey, toKey);
 
       const columns = this.dataManager.getColumns();
-      const rows = this.dataManager.getRows();
-      this.layoutManager.calculateLayout(columns, rows);
+      this.layoutManager.calculateColumnLayoutOnly(columns);
 
       this.render();
     });
@@ -257,10 +340,31 @@ export class CanvasTable implements CanvasTableAPI {
     });
 
     this.eventEmitter.on(Events.FILTER_DROPDOWN_OPEN, () => {
+      const filterDropdown = this.interactionManager.getFilterDropdown();
+      // 只在下拉框打开时创建输入框（通过检查当前是否已有输入框来判断）
+      // updateFilterDropdown 会检查模式是否变化，如果没变化就不会重新创建
+      this.filterInputManager.updateFilterDropdown(filterDropdown);
       this.render();
     });
 
     this.eventEmitter.on(Events.FILTER_DROPDOWN_CLOSE, () => {
+      this.filterInputManager.updateFilterDropdown(null);
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.FILTER_DROPDOWN_CONFIRM, () => {
+      this.interactionManager.applyFilter();
+      this.filterInputManager.updateFilterDropdown(null);
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.FILTER_DROPDOWN_RESET, () => {
+      this.interactionManager.resetFilterValue();
+      this.filterInputManager.forceReset();
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.FILTER_DROPDOWN_CHANGE, () => {
       this.render();
     });
 
@@ -270,13 +374,21 @@ export class CanvasTable implements CanvasTableAPI {
 
     this.eventEmitter.on(Events.CELL_CLICK, (cell, _event) => {
       if (cell.rowIndex >= 0) {
-        this.eventEmitter.emit(Events.ROW_CLICK, cell.rowIndex, _event);
+        const rows = this.dataManager.getRows();
+        const row = rows[cell.rowIndex];
+        if (row) {
+          this.eventEmitter.emit(Events.ROW_CLICK, row, cell.rowIndex, _event);
+        }
       }
     });
 
     this.eventEmitter.on(Events.CELL_DBL_CLICK, (cell, _event) => {
       if (cell.rowIndex >= 0) {
-        this.eventEmitter.emit(Events.ROW_DBL_CLICK, cell.rowIndex, _event);
+        const rows = this.dataManager.getRows();
+        const row = rows[cell.rowIndex];
+        if (row) {
+          this.eventEmitter.emit(Events.ROW_DBL_CLICK, row, cell.rowIndex, _event);
+        }
       }
     });
 
@@ -302,6 +414,36 @@ export class CanvasTable implements CanvasTableAPI {
       if (this.props.onSwitchChange) {
         this.props.onSwitchChange(cell, checked);
       }
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.RATING_CHANGE, (_cell: unknown, _value: unknown) => {
+      const cell = _cell as CellPosition;
+      const value = _value as number;
+      if (this.props.onRatingChange) {
+        this.props.onRatingChange(cell, value);
+      }
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.COLOR_CHANGE, (_cell: unknown, _color: unknown) => {
+      const cell = _cell as CellPosition;
+      const color = _color as string;
+      if (this.props.onColorChange) {
+        this.props.onColorChange(cell, color);
+      }
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.COLOR_DROPDOWN_OPEN, () => {
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.COLOR_DROPDOWN_CLOSE, () => {
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.COLOR_DROPDOWN_HOVER, () => {
       this.render();
     });
 
@@ -334,7 +476,7 @@ export class CanvasTable implements CanvasTableAPI {
         this.props.onSelectChange(cell, value);
       }
 
-      this.updateLayout();
+      // 只修改数据，不需要重新计算布局
       this.render();
     });
 
@@ -361,13 +503,19 @@ export class CanvasTable implements CanvasTableAPI {
           this.props.onTagsChange(cell, values);
         }
 
-        this.updateLayout();
+        // 只修改数据，不需要重新计算布局
         this.render();
       },
     );
 
-    this.eventEmitter.on(Events.EXPAND, (_rowIndex: unknown, _expanded: unknown) => {
-      this.dataManager.toggleRowExpand(_rowIndex as number);
+    this.eventEmitter.on(Events.EXPAND, (_row: unknown, _rowIndex: unknown, _expanded: unknown) => {
+      const row = _row as Row;
+      const rowIndex = _rowIndex as number;
+      const expanded = _expanded as boolean;
+      if (this.props.onExpand) {
+        this.props.onExpand(row, rowIndex, expanded);
+      }
+      this.dataManager.toggleRowExpand(rowIndex);
       this.updateLayout();
       this.render();
     });
@@ -381,6 +529,10 @@ export class CanvasTable implements CanvasTableAPI {
     });
 
     this.eventEmitter.on(Events.DROPDOWN_HOVER, () => {
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.BUTTONS_DROPDOWN_CLOSE, () => {
       this.render();
     });
 
@@ -407,7 +559,7 @@ export class CanvasTable implements CanvasTableAPI {
       }
 
       this.interactionManager.clearEditingState();
-      this.updateLayout();
+      // 只修改数据，不需要重新计算布局
       this.render();
     });
 
@@ -545,32 +697,15 @@ export class CanvasTable implements CanvasTableAPI {
       }
 
       this.interactionManager.clearEditingState();
-      this.updateLayout();
+      // 编辑单元格只修改数据，不需要重新计算布局
       this.render();
     });
 
-    this.eventEmitter.on(Events.DATE_EDIT_START, (_cell: unknown, _config: unknown) => {
-      const cell = _cell as CellPosition;
-      const config = _config as import("./types").DateConfig;
-      this.editorManager.startDateEditing(cell, config);
-    });
-
-    this.eventEmitter.on(Events.DATE_EDIT_END, (_cell: unknown, _value: unknown) => {
-      const cell = _cell as CellPosition;
-      const value = _value as string;
-      const leafColumns = this.layoutManager.getLeafColumns();
-      const column = leafColumns[cell.columnIndex];
-
-      if (column && value) {
-        const rows = this.dataManager.getRows();
-        const row = rows[cell.rowIndex];
-        if (row) {
-          row.data[getColumnField(column)] = value;
-        }
+    this.eventEmitter.on(Events.LOAD_MORE, (_params: unknown) => {
+      const params = _params as import("./types").LoadMoreParams;
+      if (this.props.onLoadMore) {
+        this.props.onLoadMore(params);
       }
-
-      this.interactionManager.clearEditingState();
-      this.render();
     });
   }
 
@@ -631,7 +766,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.renderer.resize(width, height);
       this.layoutManager.setViewportSize(width, height);
 
-      await this.dataManager.loadData(this.props.data);
+      await this.dataManager.loadRows(this.props.rows);
       this.dataManager.setColumns(this.props.columns);
 
       if (this.props.expandColumnKey) {
@@ -657,14 +792,8 @@ export class CanvasTable implements CanvasTableAPI {
   private updateLayout(): void {
     const columns = this.dataManager.getColumns();
     const rows = this.dataManager.getRows();
-    const allRows = this.dataManager.getAllRows();
 
     this.layoutManager.calculateLayout(columns, rows);
-    this.interactionManager.setColumns(columns);
-    this.interactionManager.setRows(rows);
-    this.interactionManager.setAllRows(allRows);
-    this.editorManager.setColumns(columns);
-    this.editorManager.setRows(rows);
 
     this.interactionManager.updateMaxScroll(
       this.layoutManager.getMaxScrollLeft(),
@@ -695,13 +824,19 @@ export class CanvasTable implements CanvasTableAPI {
     const columns = this.dataManager.getColumns();
     const rows = this.dataManager.getRows();
     const interactionState = this.interactionManager.getInteractionState();
+    const scrollState = this.interactionManager.getScrollState();
+
+    // 始终更新滚动位置，确保 getVisibleHeaderCells 能正确计算
+    this.layoutManager.setScrollPosition(scrollState.scrollLeft, scrollState.scrollTop);
 
     if (rows.length === 0) {
+      this.loadingOverlay.hide();
       this.renderer.renderEmptyState(
         this.props.emptyText ?? "No data",
         this.dataManager.getSort(),
         this.dataManager.getFilters(),
         interactionState.hoveredHeaderColumnKey,
+        scrollState.scrollLeft,
       );
 
       const filterDropdown = this.interactionManager.getFilterDropdown();
@@ -712,15 +847,15 @@ export class CanvasTable implements CanvasTableAPI {
       return;
     }
 
-    if (this.dataManager.isLoading()) {
-      this.renderer.renderLoadingOverlay();
+    if (this.dataManager.isLoading() || this.manualLoading) {
+      this.loadingOverlay.show(this.props.loadingText);
       this.renderer.renderWatermark();
       return;
     }
 
-    const scrollState = this.interactionManager.getScrollState();
+    // 隐藏 loading overlay（如果正在显示）
+    this.loadingOverlay.hide();
 
-    this.layoutManager.setScrollPosition(scrollState.scrollLeft, scrollState.scrollTop);
     const visibleRange = this.layoutManager.getVisibleRange();
 
     this.renderer.render(
@@ -771,6 +906,11 @@ export class CanvasTable implements CanvasTableAPI {
       this.renderer.renderDateDropdown(dateDropdown);
     }
 
+    const colorDropdown = this.interactionManager.getColorDropdown();
+    if (colorDropdown) {
+      this.renderer.renderColorDropdown(colorDropdown);
+    }
+
     const buttonsDropdown = this.interactionManager.getButtonsDropdown();
     if (buttonsDropdown) {
       this.renderer.renderButtonsDropdown(buttonsDropdown);
@@ -807,26 +947,25 @@ export class CanvasTable implements CanvasTableAPI {
     this.render();
   }
 
-  setData(data: TableData): void {
+  setRows(rows: Row[]): void {
     this.dataManager
-      .loadData(data)
+      .loadRows(rows)
       .then(() => {
         this.interactionManager.setScrollPosition(0, 0);
         this.interactionManager.resetState();
         this.editorManager.destroy();
+        // 清理图片缓存，防止内存泄漏
+        this.renderer.clearImageCache();
+        ImageRenderer.clearCache();
+        // 重置渲染缓存
+        this.renderer.resetRowIds();
+        this.renderCache.clear();
         this.updateLayout();
         this.render();
       })
       .catch((error) => {
         this.eventEmitter.emit(Events.ERROR, error);
       });
-  }
-
-  getData(): TableData {
-    return {
-      rows: this.dataManager.getRows(),
-      columns: this.dataManager.getColumns(),
-    };
   }
 
   getRows(): Row[] {
@@ -844,6 +983,9 @@ export class CanvasTable implements CanvasTableAPI {
 
   setColumns(columns: Column[]): void {
     this.dataManager.setColumns(columns);
+    // 重置列 ID 管理器并清空缓存
+    this.renderer.resetColumnIds();
+    this.renderCache.clear();
     this.updateLayout();
     this.render();
   }
@@ -925,6 +1067,53 @@ export class CanvasTable implements CanvasTableAPI {
     this.render();
   }
 
+  /**
+   * 追加数据行（用于懒加载）
+   * @param rows 要追加的行数据
+   */
+  appendRows(rows: Row[]): void {
+    const currentRows = this.dataManager.getAllRows();
+    this.dataManager.setRows([...currentRows, ...rows]);
+    this.interactionManager.setLoadingMore(false);
+    this.updateLayout();
+    this.render();
+  }
+
+  /**
+   * 设置加载更多状态
+   * @param loading 是否正在加载
+   */
+  setLoadingMore(loading: boolean): void {
+    this.interactionManager.setLoadingMore(loading);
+  }
+
+  /**
+   * 设置是否还有更多数据
+   * @param hasMore 是否还有更多数据，false 表示加载完成
+   */
+  setHasMore(hasMore: boolean): void {
+    this.interactionManager.setHasMore(hasMore);
+  }
+
+  /**
+   * 显示 loading overlay
+   * @param text 可选的 loading 文本
+   */
+  showLoading(text?: string): void {
+    this.manualLoading = true;
+    this.loadingOverlay.show(text);
+    this.render(); // 确保触发渲染
+  }
+
+  /**
+   * 隐藏 loading overlay
+   */
+  hideLoading(): void {
+    this.manualLoading = false;
+    this.loadingOverlay.hide();
+    this.render(); // 确保触发渲染
+  }
+
   sort(configs: SortConfig[]): void {
     this.dataManager.sort(configs);
     this.interactionManager.setSortConfig(configs);
@@ -932,23 +1121,17 @@ export class CanvasTable implements CanvasTableAPI {
     this.render();
   }
 
-  getSort(): SortConfig[] {
-    return this.dataManager.getSort();
-  }
-
   filter(filters: FilterConfig[]): void {
     this.dataManager.filter(filters);
+    this.interactionManager.setFilterConfig(filters);
     this.eventEmitter.emit(Events.FILTER, filters);
     this.updateLayout();
     this.render();
   }
 
-  getFilters(): FilterConfig[] {
-    return this.dataManager.getFilters();
-  }
-
   clearFilters(): void {
     this.dataManager.clearFilters();
+    this.interactionManager.setFilterConfig([]);
     this.eventEmitter.emit(Events.FILTER, []);
     this.updateLayout();
     this.render();
@@ -1150,7 +1333,12 @@ export class CanvasTable implements CanvasTableAPI {
 
     findColumnAndParents(columns);
     if (setColumnVisible(columns)) {
-      this.updateLayout();
+      // 只更新列布局，不需要重新计算行布局
+      this.layoutManager.calculateColumnLayoutOnly(this.dataManager.getColumns());
+      this.interactionManager.updateMaxScroll(
+        this.layoutManager.getMaxScrollLeft(),
+        this.layoutManager.getMaxScrollTop(),
+      );
       this.render();
       if (this.props.onColumnShow) {
         this.props.onColumnShow(columnKey);
@@ -1185,7 +1373,12 @@ export class CanvasTable implements CanvasTableAPI {
     };
 
     if (findAndHideColumn(columns)) {
-      this.updateLayout();
+      // 只更新列布局，不需要重新计算行布局
+      this.layoutManager.calculateColumnLayoutOnly(this.dataManager.getColumns());
+      this.interactionManager.updateMaxScroll(
+        this.layoutManager.getMaxScrollLeft(),
+        this.layoutManager.getMaxScrollTop(),
+      );
       this.render();
       if (this.props.onColumnHide) {
         this.props.onColumnHide(columnKey);
@@ -1321,6 +1514,20 @@ export class CanvasTable implements CanvasTableAPI {
     this.render();
   }
 
+  /**
+   * 设置图片加载配置
+   */
+  setImageLoadConfig(config: ImageLoadConfig): void {
+    this.renderer.setImageLoadConfig(config);
+  }
+
+  /**
+   * 获取图片加载队列统计信息
+   */
+  getImageLoadStats(): { pending: number; loading: number; cached: number; failed: number } {
+    return this.renderer.getImageLoadStats();
+  }
+
   setExpandColumnKey(key: string | null): void {
     this.renderer.setExpandColumnKey(key);
     this.interactionManager.setExpandColumnKey(key);
@@ -1387,6 +1594,26 @@ export class CanvasTable implements CanvasTableAPI {
             ...baseTheme.colors.tooltip,
             ...mergedCustomTheme.colors?.tooltip,
           },
+          image: {
+            ...baseTheme.colors.image,
+            ...mergedCustomTheme.colors?.image,
+          },
+          hiddenPlaceholder: {
+            ...baseTheme.colors.hiddenPlaceholder,
+            ...mergedCustomTheme.colors?.hiddenPlaceholder,
+          },
+          moreCount: {
+            ...baseTheme.colors.moreCount,
+            ...mergedCustomTheme.colors?.moreCount,
+          },
+          shadow: {
+            ...baseTheme.colors.shadow,
+            ...mergedCustomTheme.colors?.shadow,
+          },
+          watermark: {
+            ...baseTheme.colors.watermark,
+            ...mergedCustomTheme.colors?.watermark,
+          },
         },
         font: {
           ...baseTheme.font,
@@ -1410,6 +1637,8 @@ export class CanvasTable implements CanvasTableAPI {
     this.layoutManager.setTheme(this.theme);
     this.renderer.setTheme(this.theme);
     this.editorManager.setTheme(this.theme);
+    this.filterInputManager.setTheme(this.theme);
+    this.loadingOverlay.setTheme(this.theme);
   }
 
   private setupAutoThemeDetection(): void {
@@ -1432,6 +1661,92 @@ export class CanvasTable implements CanvasTableAPI {
     this.render();
   };
 
+  // 性能监控 API
+  /**
+   * 启用或禁用渲染器性能监控
+   * @param enabled 是否启用
+   */
+  setPerformanceMonitoring(enabled: boolean): void {
+    this.renderer.setPerformanceMonitoring(enabled);
+  }
+
+  /**
+   * 检查性能监控是否启用
+   */
+  isPerformanceMonitoringEnabled(): boolean {
+    return this.renderer.isPerformanceMonitoringEnabled();
+  }
+
+  /**
+   * 获取性能统计报告
+   */
+  getPerformanceReport(): string {
+    return this.renderer.getPerformanceReport();
+  }
+
+  /**
+   * 打印性能统计报告到控制台
+   */
+  printPerformanceReport(): void {
+    this.renderer.printPerformanceReport();
+  }
+
+  /**
+   * 重置性能统计数据
+   */
+  resetPerformanceStats(): void {
+    this.renderer.resetPerformanceStats();
+  }
+
+  // === 渲染缓存 API ===
+
+  /**
+   * 清空渲染缓存
+   * 当数据外部变化时调用，确保缓存失效
+   */
+  clearRenderCache(): void {
+    this.renderCache.clear();
+  }
+
+  /**
+   * 获取渲染缓存统计信息
+   */
+  getRenderCacheStats(): {
+    cellCacheSize: number;
+    valueCacheSize: number;
+    maxCellCacheSize: number;
+  } {
+    return this.renderCache.getStats();
+  }
+
+  // === 调试方法 ===
+
+  /**
+   * 获取当前的筛选配置
+   * @returns 筛选配置数组
+   */
+  getFilterConfig(): FilterConfig[] {
+    return this.dataManager.getFilters();
+  }
+
+  /**
+   * 获取当前的排序配置
+   * @returns 排序配置数组
+   */
+  getSortConfig(): SortConfig[] {
+    return this.dataManager.getSort();
+  }
+
+  /**
+   * 打印当前的筛选和排序状态到控制台
+   */
+  debugState(): void {
+    console.group("CanvasTable State");
+    console.log("Filters:", this.getFilterConfig());
+    console.log("Sorts:", this.getSortConfig());
+    console.groupEnd();
+  }
+
   destroy(): void {
     if (this.isDestroyed) return;
 
@@ -1449,9 +1764,14 @@ export class CanvasTable implements CanvasTableAPI {
     this.interactionManager.destroy();
     this.renderer.destroy();
     this.editorManager.destroy();
+    this.filterInputManager.destroy();
+    this.loadingOverlay.destroy();
+    this.dataManager.destroy();
+    // 清理静态图片缓存，防止内存泄漏
+    ImageRenderer.clearCache();
 
-    if (this.canvas.parentNode) {
-      this.canvas.parentNode.removeChild(this.canvas);
+    if (this.wrapper.parentNode) {
+      this.wrapper.parentNode.removeChild(this.wrapper);
     }
 
     this.eventEmitter.removeAllListeners();

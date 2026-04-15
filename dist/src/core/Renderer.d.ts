@@ -1,5 +1,6 @@
-import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState } from '../types';
-import { LayoutManager } from './LayoutManager';
+import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState, ColorPickerDropdownState, ImageLoadConfig } from "../types";
+import { LayoutManager } from "./LayoutManager";
+import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
 export declare class Renderer {
     private canvas;
     private ctx;
@@ -15,22 +16,56 @@ export declare class Renderer {
     private currentButtonHoverStates;
     private hoveredPlaceholderColumnIndex;
     private isDestroyed;
-    private imageCache;
-    private loadingImages;
-    private failedImages;
-    private imageLoadCallbacks;
+    private imageLoadQueue;
+    /** 当前帧收集的可见图片 URL */
+    private frameVisibleUrls;
+    private colorRangeCache;
+    private hexToRgbCache;
+    private textWidthCache;
+    private textWidthCacheKey;
+    private performanceEnabled;
+    private performanceStats;
+    private frameStartTime;
+    private frameCount;
+    private lastReportTime;
+    private currentFrameStats;
+    private lastFrameStats;
     private currentVisibleRange;
     private currentScrollTop;
     private rowHeight;
     private currentHoveredCell;
     private currentHoveredImageIndex;
     private currentHoveredButtonIndex;
+    private renderCache;
+    private rowIdManager;
+    private columnIdManager;
+    private onImageLoaded;
     constructor(canvas: HTMLCanvasElement, theme: TableTheme, layoutManager: LayoutManager);
     private getContext;
     setCanvas(canvas: HTMLCanvasElement): void;
     setTheme(theme: TableTheme): void;
+    /**
+     * 设置图片加载配置
+     */
+    setImageLoadConfig(config: ImageLoadConfig): void;
     setWatermarkConfig(config: WatermarkConfig | null): void;
     setExpandColumnKey(key: string | null): void;
+    /**
+     * 设置渲染缓存
+     */
+    setRenderCache(renderCache: RenderCache): void;
+    /**
+     * 设置图片加载完成后的渲染触发回调
+     */
+    setOnImageLoaded(callback: (() => void) | null): void;
+    /**
+     * 获取行 ID 管理器
+     */
+    getRowIdManager(): RowIdManager;
+    /**
+     * 获取列 ID 管理器
+     */
+    getColumnIdManager(): ColumnIdManager;
     resize(width: number, height: number): void;
     updateTheme(theme: TableTheme): void;
     markDirty(x: number, y: number, width: number, height: number): void;
@@ -75,6 +110,14 @@ export declare class Renderer {
     private renderCell;
     private renderCellWithPosition;
     private renderCellInternal;
+    /**
+     * 获取列的缓存模式
+     */
+    private getCacheMode;
+    /**
+     * 执行渲染函数
+     */
+    private executeRender;
     private renderCellContent;
     private renderCellContentInternal;
     private renderExpandIcon;
@@ -89,15 +132,34 @@ export declare class Renderer {
     private interpolateColor;
     private renderSwitch;
     private hexToRgb;
+    /**
+     * 获取文本宽度（使用缓存优化性能）
+     * 避免每帧都调用 measureText
+     */
+    private measureTextWidth;
     private renderProgress;
     private renderLineProgress;
     private renderCircleProgress;
     private renderDashboardProgress;
     private getProgressColor;
+    private renderRating;
+    private drawStar;
+    private getStarPoints;
+    private renderColorCell;
+    renderColorDropdown(dropdown: ColorPickerDropdownState): void;
+    private getDefaultPresetColors;
     private getContrastColor;
     private renderInput;
     private wrapText;
+    /**
+     * 二分查找找到能放入 maxWidth 的最大字符数
+     */
+    private findLineBreakPoint;
     private truncateTextWithEllipsis;
+    /**
+     * 二分查找截断文本并添加省略号
+     */
+    private truncateWithEllipsisBinary;
     private renderSelect;
     private renderDate;
     private formatDate;
@@ -114,6 +176,14 @@ export declare class Renderer {
     private isInLazyLoadRange;
     private loadImage;
     /**
+     * 收集当前帧可见的图片 URL
+     */
+    collectVisibleImage(src: string): void;
+    /**
+     * 提交当前帧可见图片集合
+     */
+    commitVisibleImages(): void;
+    /**
      * 重试加载失败的图片
      */
     retryImage(src: string): void;
@@ -129,6 +199,60 @@ export declare class Renderer {
      * 清除图片缓存
      */
     clearImageCache(): void;
+    /**
+     * 获取图片加载队列统计信息
+     */
+    getImageLoadStats(): {
+        pending: number;
+        loading: number;
+        cached: number;
+        failed: number;
+    };
+    /**
+     * 启用或禁用性能监控
+     */
+    setPerformanceMonitoring(enabled: boolean): void;
+    /**
+     * 检查性能监控是否启用
+     */
+    isPerformanceMonitoringEnabled(): boolean;
+    /**
+     * 重置性能统计
+     */
+    resetPerformanceStats(): void;
+    /**
+     * 开始帧计时
+     */
+    beginFrame(): void;
+    /**
+     * 结束帧计时
+     */
+    endFrame(): void;
+    /**
+     * 测量渲染类型的时间
+     */
+    private measureRender;
+    /**
+     * 获取性能统计
+     */
+    getPerformanceStats(): Map<string, {
+        totalTime: number;
+        count: number;
+        maxTime: number;
+        avgTime: number;
+    }>;
+    /**
+     * 输出性能报告到控制台
+     */
+    logPerformanceReport(): void;
+    /**
+     * 获取格式化的性能报告字符串
+     */
+    getPerformanceReport(): string;
+    /**
+     * 打印性能报告到控制台
+     */
+    printPerformanceReport(): void;
     renderDropdown(dropdown: DropdownState): void;
     private renderTagsDropdown;
     private renderTag;
@@ -139,9 +263,10 @@ export declare class Renderer {
     private renderCenterSelections;
     private renderFixedSelections;
     renderLoadingOverlay(): void;
-    renderEmptyState(message: string, sortConfig?: SortConfig[], filterConfig?: FilterConfig[], hoveredHeaderColumnKey?: string): void;
+    renderEmptyState(message: string, sortConfig?: SortConfig[], filterConfig?: FilterConfig[], hoveredHeaderColumnKey?: string, scrollLeft?: number): void;
+    private renderEmptyStateHeaderCell;
     private isColumnHovered;
-    renderFixedColumnsShadow(fixedWidth: number, side: 'left' | 'right'): void;
+    renderFixedColumnsShadow(fixedWidth: number, side: "left" | "right"): void;
     getCanvas(): HTMLCanvasElement;
     getCanvasContext(): CanvasRenderingContext2D;
     renderTooltip(tooltip: TooltipState): void;
@@ -162,6 +287,34 @@ export declare class Renderer {
         } | null;
     };
     renderFilterDropdown(filterDropdown: FilterDropdownState): void;
+    /**
+     * 渲染关键字搜索筛选下拉框
+     */
+    private renderSearchFilterDropdown;
+    /**
+     * 渲染多选筛选下拉框（原有逻辑）
+     */
+    private renderSelectFilterDropdown;
+    /**
+     * 渲染范围筛选下拉框
+     */
+    private renderRangeFilterDropdown;
+    /**
+     * 渲染布尔筛选下拉框
+     */
+    private renderBooleanFilterDropdown;
+    /**
+     * 渲染日期范围筛选下拉框
+     */
+    private renderDateRangeFilterDropdown;
+    /**
+     * 渲染日期范围筛选的日历弹出层（独立层级）
+     */
+    private renderDateRangeCalendarPopover;
+    /**
+     * 渲染筛选下拉框的按钮区域
+     */
+    private renderFilterButtons;
     renderDateDropdown(dateDropdown: DateDropdownState): void;
     renderContextMenu(contextMenu: ContextMenuState): void;
     renderHeaderContextMenu(headerContextMenu: HeaderContextMenuState): void;
@@ -173,6 +326,34 @@ export declare class Renderer {
     private renderLeafColumnRowsGhost;
     private renderParentColumnRowsGhost;
     private renderGhostCellValue;
+    /**
+     * 清空渲染缓存
+     */
+    clearRenderCache(): void;
+    /**
+     * 重置行 ID 管理器
+     */
+    resetRowIds(): void;
+    /**
+     * 重置列 ID 管理器
+     */
+    resetColumnIds(): void;
+    /**
+     * 清理不可见行的缓存
+     */
+    cleanupInvisibleRows(visibleRowIds: Set<string>): void;
+    /**
+     * 清理不可见列的缓存
+     */
+    cleanupInvisibleColumns(visibleColumnIds: Set<string>): void;
+    /**
+     * 获取缓存统计信息
+     */
+    getCacheStats(): {
+        cellCacheSize: number;
+        valueCacheSize: number;
+        maxCellCacheSize: number;
+    } | null;
     destroy(): void;
 }
 //# sourceMappingURL=Renderer.d.ts.map

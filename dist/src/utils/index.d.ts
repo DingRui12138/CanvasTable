@@ -1,4 +1,4 @@
-import type { Column, Row, RenderResult, DisabledValue } from '../types';
+import type { Column, Row, RenderResult, DisabledValue, FilterMode, SelectOption } from "../types";
 /**
  * 获取列的数据字段名
  * 优先使用 field，如果没有则使用 key
@@ -76,4 +76,39 @@ export declare class LRUCache<K, V> {
      */
     keys(): IterableIterator<K>;
 }
+/**
+ * 根据列类型获取默认筛选模式
+ * @param column 列配置
+ * @returns 筛选模式，如果不支持筛选则返回 null
+ */
+export declare function getFilterModeByColumnType(column: Column): FilterMode | null;
+/** 采样获取筛选选项的最大行数 */
+declare const FILTER_SAMPLE_ROWS = 100;
+/** 搜索匹配结果的最大数量 */
+declare const FILTER_SEARCH_LIMIT = 100;
+/**
+ * 获取列的筛选选项（用于 select 模式）
+ * 策略：
+ * 1. 检查 column.filter.options 或 render 返回的 options
+ * 2. 如果没有，采样前 100 行获取
+ * 3. 返回去重后的选项列表
+ *
+ * @param column 列配置
+ * @param rows 数据行（可选，用于采样）
+ * @param startIndex 开始采样的行索引（默认 0）
+ * @returns 筛选选项列表，如果没有可用选项则返回空数组
+ */
+export declare function getColumnFilterOptions(column: Column, rows?: Row[], startIndex?: number): SelectOption[];
+/**
+ * 搜索匹配筛选选项
+ * 用于延迟加载场景：用户输入关键字后搜索匹配的选项
+ *
+ * @param column 列配置
+ * @param rows 数据行
+ * @param searchText 搜索关键字
+ * @param maxResults 最大结果数量（默认 100）
+ * @returns 匹配的筛选选项
+ */
+export declare function searchFilterOptions(column: Column, rows: Row[], searchText: string, maxResults?: number): SelectOption[];
+export { FILTER_SAMPLE_ROWS, FILTER_SEARCH_LIMIT };
 //# sourceMappingURL=index.d.ts.map

@@ -1,6 +1,9 @@
-import { CanvasTableProps, CanvasTableAPI, TableData, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig } from "./types";
+import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig } from "./types";
 interface TableEvents {
-    load: [TableData];
+    load: [{
+        rows: Row[];
+        columns: Column[];
+    }];
     error: [Error];
     change: [unknown[]];
     sort: [SortConfig[]];
@@ -10,11 +13,11 @@ interface TableEvents {
     cellDblClick: [CellInfo, MouseEvent];
     cellHover: [CellInfo | null, MouseEvent];
     headerHover: [string | undefined];
-    rowClick: [number, MouseEvent];
-    rowDblClick: [number, MouseEvent];
+    rowClick: [Row, number, MouseEvent];
+    rowDblClick: [Row, number, MouseEvent];
     headerClick: [Column, number, MouseEvent];
     scroll: [number, number];
-    columnResize: [string, number];
+    columnResize: [Column, number];
     columnReorder: [number, number];
     columnReorderDrag: [];
     columnHide: [string];
@@ -35,7 +38,7 @@ interface TableEvents {
     rowAddAbove: [number];
     rowAddBelow: [number];
     rowDelete: [number];
-    expand: [number, boolean];
+    expand: [Row, number, boolean];
     checkboxChange: [CellInfo, boolean];
     radioChange: [CellInfo, unknown];
     switchChange: [CellInfo, boolean];
@@ -48,6 +51,7 @@ interface TableEvents {
 }
 export declare class CanvasTable implements CanvasTableAPI {
     private container;
+    private wrapper;
     private canvas;
     private props;
     private dataManager;
@@ -55,13 +59,19 @@ export declare class CanvasTable implements CanvasTableAPI {
     private renderer;
     private interactionManager;
     private editorManager;
+    private filterInputManager;
     private eventEmitter;
+    private loadingOverlay;
     private theme;
     private themeMode;
     private mediaQuery;
     private isDestroyed;
     private resizeObserver;
+    private renderCache;
+    private rowIdManager;
+    private columnIdManager;
     private scheduledRender;
+    private manualLoading;
     constructor(container: HTMLElement | string, props: CanvasTableProps);
     private setupInternalEventListeners;
     private setupEventHandlers;
@@ -72,8 +82,7 @@ export declare class CanvasTable implements CanvasTableAPI {
     private render;
     private performRender;
     resize(): void;
-    setData(data: TableData): void;
-    getData(): TableData;
+    setRows(rows: Row[]): void;
     getRows(): Row[];
     getRow(rowIndex: number): Row | undefined;
     getColumns(): Column[];
@@ -93,10 +102,32 @@ export declare class CanvasTable implements CanvasTableAPI {
     updateRow(rowIndex: number, data: Record<string, unknown>): void;
     addRow(data: Record<string, unknown>, index?: number): void;
     deleteRow(rowIndex: number): void;
+    /**
+     * 追加数据行（用于懒加载）
+     * @param rows 要追加的行数据
+     */
+    appendRows(rows: Row[]): void;
+    /**
+     * 设置加载更多状态
+     * @param loading 是否正在加载
+     */
+    setLoadingMore(loading: boolean): void;
+    /**
+     * 设置是否还有更多数据
+     * @param hasMore 是否还有更多数据，false 表示加载完成
+     */
+    setHasMore(hasMore: boolean): void;
+    /**
+     * 显示 loading overlay
+     * @param text 可选的 loading 文本
+     */
+    showLoading(text?: string): void;
+    /**
+     * 隐藏 loading overlay
+     */
+    hideLoading(): void;
     sort(configs: SortConfig[]): void;
-    getSort(): SortConfig[];
     filter(filters: FilterConfig[]): void;
-    getFilters(): FilterConfig[];
     clearFilters(): void;
     export(options: ExportOptions): Promise<Blob>;
     /**
@@ -146,12 +177,73 @@ export declare class CanvasTable implements CanvasTableAPI {
     setThemeMode(mode: ThemeMode): void;
     setTheme(theme: Partial<TableTheme>): void;
     setWatermark(config: WatermarkConfig | null): void;
+    /**
+     * 设置图片加载配置
+     */
+    setImageLoadConfig(config: ImageLoadConfig): void;
+    /**
+     * 获取图片加载队列统计信息
+     */
+    getImageLoadStats(): {
+        pending: number;
+        loading: number;
+        cached: number;
+        failed: number;
+    };
     setExpandColumnKey(key: string | null): void;
     private resolveTheme;
     private applyTheme;
     private setupAutoThemeDetection;
     private teardownAutoThemeDetection;
     private handleThemeChange;
+    /**
+     * 启用或禁用渲染器性能监控
+     * @param enabled 是否启用
+     */
+    setPerformanceMonitoring(enabled: boolean): void;
+    /**
+     * 检查性能监控是否启用
+     */
+    isPerformanceMonitoringEnabled(): boolean;
+    /**
+     * 获取性能统计报告
+     */
+    getPerformanceReport(): string;
+    /**
+     * 打印性能统计报告到控制台
+     */
+    printPerformanceReport(): void;
+    /**
+     * 重置性能统计数据
+     */
+    resetPerformanceStats(): void;
+    /**
+     * 清空渲染缓存
+     * 当数据外部变化时调用，确保缓存失效
+     */
+    clearRenderCache(): void;
+    /**
+     * 获取渲染缓存统计信息
+     */
+    getRenderCacheStats(): {
+        cellCacheSize: number;
+        valueCacheSize: number;
+        maxCellCacheSize: number;
+    };
+    /**
+     * 获取当前的筛选配置
+     * @returns 筛选配置数组
+     */
+    getFilterConfig(): FilterConfig[];
+    /**
+     * 获取当前的排序配置
+     * @returns 排序配置数组
+     */
+    getSortConfig(): SortConfig[];
+    /**
+     * 打印当前的筛选和排序状态到控制台
+     */
+    debugState(): void;
     destroy(): void;
     on<K extends keyof TableEvents>(event: K, callback: (...args: TableEvents[K]) => void): void;
     off<K extends keyof TableEvents>(event: K, callback: (...args: TableEvents[K]) => void): void;

@@ -7,3 +7,4 @@ export { LayoutManager } from "./core/LayoutManager";
 export { Renderer } from "./core/Renderer";
 export { InteractionManager } from "./core/InteractionManager";
 export { EventEmitter } from "./core/EventEmitter";
+export { RenderCache, RowIdManager, ColumnIdManager, RowVersionManager } from "./core/RenderCache";

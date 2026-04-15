@@ -2,6 +2,8 @@
 
 一个基于 Canvas 的高性能数据表格组件，支持百万级数据流畅渲染。
 
+**[在线 Demo](https://your-username.github.io/canvas-table/)**
+
 ## 特性
 
 ### 核心功能
@@ -69,7 +71,8 @@ const rows: Row[] = [
 const container = document.getElementById('table-container')!;
 
 const table = new CanvasTable(container, {
-  data: { rows, columns },
+  rows,
+  columns,
   width: '100%',
   height: 600,
   stripeRows: true,
@@ -86,7 +89,8 @@ const table = new CanvasTable(container, {
 
 | 属性 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `data` | `{ rows, columns }` | - | 表格数据 |
+| `rows` | `Row[]` | - | 表格行数据 |
+| `columns` | `Column[]` | - | 表格列定义 |
 | `width` | `number \| '100%'` | `'100%'` | 表格宽度 |
 | `height` | `number \| '100%'` | `'100%'` | 表格高度 |
 | `stripeRows` | `boolean` | `false` | 是否显示斑马纹 |
@@ -96,6 +100,9 @@ const table = new CanvasTable(container, {
 | `selection` | `SelectionOptions` | - | 选择配置 |
 | `editing` | `EditingOptions` | - | 编辑配置 |
 | `watermark` | `WatermarkOptions` | - | 水印配置 |
+| `loadingText` | `string` | `'Loading...'` | Loading overlay 文本 |
+| `lazyLoad` | `LazyLoadConfig` | - | 懒加载配置 |
+| `imageLoad` | `ImageLoadConfig` | - | 图片加载配置 |
 | `createRowData` | `(columns: Column[]) => Record<string, unknown>` | - | 新增行时的数据初始化函数 |
 
 ### Column 配置
@@ -536,11 +543,12 @@ const table = new CanvasTable(container, {
 | `onSort` | `(sortInfo: SortConfig[])` | 排序变化 |
 | `onFilter` | `(filters: FilterConfig[])` | 筛选变化 |
 | `onScroll` | `(scrollLeft: number, scrollTop: number)` | 滚动变化 |
-| `onRowClick` | `(rowIndex: number, event: MouseEvent)` | 行点击 |
-| `onRowDoubleClick` | `(rowIndex: number, event: MouseEvent)` | 行双击 |
+| `onRowClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | 行点击 |
+| `onRowDoubleClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | 行双击 |
 | `onHeaderClick` | `(column: Column, columnIndex: number, event: MouseEvent)` | 表头点击 |
-| `onColumnResize` | `(columnKey: string, width: number)` | 列宽调整 |
-| `onExpand` | `(rowIndex: number, expanded: boolean)` | 展开/折叠 |
+| `onColumnResize` | `(column: Column, width: number)` | 列宽调整 |
+| `onExpand` | `(row: Row, rowIndex: number, expanded: boolean)` | 展开/折叠 |
+| `onLoadMore` | `(params: LoadMoreParams)` | 懒加载触发 |
 ```
 
 ## API 方法
@@ -548,17 +556,32 @@ const table = new CanvasTable(container, {
 ### 数据操作
 
 ```typescript
-// 设置数据
-table.setData({ rows, columns });
+// 设置行数据
+table.setRows(rows);
 
-// 获取数据
-const data = table.getData();
+// 设置列定义
+table.setColumns(columns);
+
+// 获取行数据
+const rows = table.getRows();
+
+// 获取列定义
+const columns = table.getColumns();
 
 // 获取指定行数据
-const rowData = table.getRowData(rowIndex);
+const rowData = table.getRow(rowIndex);
 
 // 更新单元格数据
 table.updateCell(rowIndex, columnKey, value);
+
+// 更新整行数据
+table.updateRow(rowIndex, { name: '新名字', age: 30 });
+
+// 新增行
+table.addRow({ id: 999, name: '新用户' }, 2);  // 在索引 2 处插入
+
+// 删除行
+table.deleteRow(rowIndex);
 ```
 
 ### 排序与筛选
@@ -570,14 +593,25 @@ table.sort([
   { key: 'name', order: 'asc' }
 ]);
 
+// 获取当前排序配置
+const sortConfig = table.getSortConfig();
+
 // 清除排序
 table.sort([]);
 
 // 设置筛选
-table.setFilter('department', ['技术部', '市场部']);
+table.filter([
+  { field: 'department', mode: 'select', value: ['技术部', '市场部'] }
+]);
+
+// 获取当前筛选配置
+const filterConfig = table.getFilterConfig();
 
 // 清除所有筛选
 table.clearFilters();
+
+// 调试：打印当前筛选和排序状态
+table.debugState();
 ```
 
 ### 选择操作
@@ -751,6 +785,21 @@ const customTheme: TableTheme = {
       warning: '#faad14',
       error: '#ff4d4f',
       info: '#1890ff'
+    },
+
+    // 水印配置
+    watermark: {
+      color: 'rgba(0, 0, 0, 0.15)',  // 水印颜色
+      fontSize: 16,                   // 字体大小
+      opacity: 1                      // 不透明度
+    },
+
+    // Loading overlay 配置
+    loading: {
+      background: 'rgba(255, 255, 255, 0.85)',  // 背景
+      spinnerBorder: '#d9d9d9',                  // Spinner 边框颜色
+      spinnerActive: '#1890ff',                  // Spinner 活动颜色
+      text: '#333333'                            // 文字颜色
     }
   },
   font: {
@@ -767,6 +816,56 @@ const customTheme: TableTheme = {
 table.setTheme(customTheme);
 ```
 
+### 水印配置
+
+水印样式可通过 `theme.colors.watermark` 统一配置，也支持运行时通过 `setWatermark` 方法覆盖：
+
+```typescript
+// 方式一：通过 theme 配置（推荐，跟随主题切换）
+const table = new CanvasTable(container, {
+  rows,
+  columns,
+  theme: {
+    colors: {
+      watermark: {
+        color: 'rgba(0, 0, 0, 0.1)',
+        fontSize: 14,
+        opacity: 0.8
+      }
+    }
+  },
+  watermark: {
+    enabled: true,
+    content: '机密文档'
+  }
+});
+
+// 方式二：运行时设置（可覆盖 theme 配置）
+table.setWatermark({
+  enabled: true,
+  content: '内部文档',
+  color: 'rgba(255, 0, 0, 0.1)',  // 覆盖 theme 中的颜色
+  fontSize: 20,                    // 覆盖 theme 中的大小
+  rotation: -30,
+  gapX: 150,
+  gapY: 100
+});
+```
+
+**WatermarkConfig 配置项：**
+
+| 属性 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | `boolean` | `true` | 是否启用水印 |
+| `content` | `string` | `'Watermark'` | 水印内容 |
+| `fontSize` | `number` | `16` | 字体大小（默认取自 theme） |
+| `fontFamily` | `string` | - | 字体（默认取自 theme.font.family） |
+| `color` | `string` | - | 颜色（默认取自 theme.colors.watermark.color） |
+| `opacity` | `number` | `1` | 不透明度（默认取自 theme） |
+| `rotation` | `number` | `-22` | 旋转角度（度） |
+| `gapX` | `number` | `100` | 水平间距 |
+| `gapY` | `number` | `100` | 垂直间距 |
+
 ## 性能优化
 
 Canvas Table 采用多种优化策略实现大数据量的流畅渲染：
@@ -782,6 +881,175 @@ Canvas Table 采用多种优化策略实现大数据量的流畅渲染：
 - **历史记录栈**：撤销/重做使用操作记录栈，仅存储变更值，避免深拷贝整个数据集
 - **图片懒加载**：仅加载可视区域内的图片，支持大图预览
 - **可配置历史记录**：默认保存 200 条操作记录，可根据内存情况调整
+
+## 懒加载
+
+Canvas Table 支持懒加载功能，当用户滚动到表格底部时自动触发加载更多数据，适用于大数据量的分批加载场景。
+
+### 基本用法
+
+```typescript
+const table = new CanvasTable(container, {
+  rows: initialRows,
+  columns,
+  lazyLoad: {
+    enabled: true,
+    threshold: 10  // 距离底部 10 行时触发加载
+  },
+  onLoadMore: (params) => {
+    console.log('触发加载更多:', params);
+    // params: { startIndex, scrollTop, direction }
+
+    // 异步加载数据
+    fetchData(params.startIndex).then(newRows => {
+      if (newRows.length > 0) {
+        table.appendRows(newRows);
+      } else {
+        // 没有更多数据了
+        table.setHasMore(false);
+      }
+    });
+  }
+});
+```
+
+### 配置选项
+
+```typescript
+interface LazyLoadConfig {
+  enabled: boolean;   // 是否启用懒加载
+  threshold?: number; // 触发加载的阈值（距离底部的行数），默认 5
+}
+```
+
+### API 方法
+
+```typescript
+// 追加数据行
+table.appendRows(newRows);
+
+// 设置加载状态（防止重复触发）
+table.setLoadingMore(true);  // 开始加载
+table.setLoadingMore(false); // 加载完成
+
+// 显示/隐藏 loading overlay（阻止所有事件，防止滚动穿透）
+table.showLoading('加载中...');  // 显示 loading
+table.hideLoading();            // 隐藏 loading
+
+// 设置是否还有更多数据
+table.setHasMore(false);  // 没有更多数据，停止加载
+table.setHasMore(true);   // 重置，允许继续加载
+```
+
+### 完整示例
+
+```typescript
+const BATCH_SIZE = 100;
+let currentPage = 0;
+
+const table = new CanvasTable(container, {
+  rows: [],
+  columns,
+  loadingText: '加载中...',  // loading overlay 文本
+  lazyLoad: {
+    enabled: true,
+    threshold: 15
+  },
+  onLoadMore: async (params) => {
+    console.log(`加载第 ${currentPage + 1} 页数据`);
+
+    // 显示 loading overlay（阻止事件，防止滚动穿透到 body）
+    table.showLoading('加载更多数据...');
+    table.setLoadingMore(true);
+
+    try {
+      const response = await fetch(`/api/data?page=${currentPage}&size=${BATCH_SIZE}`);
+      const data = await response.json();
+
+      if (data.rows.length === 0) {
+        // 没有更多数据
+        table.setHasMore(false);
+        table.hideLoading();
+        console.log('已加载全部数据');
+      } else {
+        // 追加数据
+        table.appendRows(data.rows);
+        currentPage++;
+        table.hideLoading();
+
+        // 如果返回数据少于请求数量，说明没有更多了
+        if (data.rows.length < BATCH_SIZE) {
+          table.setHasMore(false);
+        }
+      }
+    } catch (error) {
+      console.error('加载失败:', error);
+      // 加载失败，隐藏 loading 并重置状态
+      table.hideLoading();
+      table.setLoadingMore(false);
+    }
+  }
+});
+```
+
+### 注意事项
+
+1. **防重复触发**：在 `onLoadMore` 回调中，表格会自动设置 `isLoadingMore` 状态，防止滚动过程中重复触发。加载完成后调用 `appendRows` 会自动重置该状态。
+
+2. **防止滚动穿透**：使用 `showLoading()` 显示 loading overlay 时，会阻止所有事件（包括滚动事件），防止用户滚动触发加载更多时，滚动事件传递到 body 导致页面滚动。
+
+3. **加载完成**：当没有更多数据时，必须调用 `setHasMore(false)` 告知表格加载已完成，否则用户继续滚动时会不断触发 `onLoadMore`。
+
+4. **错误处理**：如果加载失败，需要调用 `hideLoading()` 和 `setLoadingMore(false)` 重置状态，允许用户重试。
+
+5. **性能建议**：每次加载的数据量不宜过大，建议 50-200 条，以保证追加时的渲染性能。
+
+## 图片加载配置
+
+Canvas Table 内置图片加载队列，支持并发限制、缓存管理和延迟加载。
+
+### 配置选项
+
+```typescript
+interface ImageLoadConfig {
+  /** 最大并发加载数，默认 6 */
+  maxConcurrent?: number;
+  /** 缓存最大数量，默认 200 */
+  maxCacheSize?: number;
+  /** 是否启用图片加载队列，默认 true */
+  enabled?: boolean;
+}
+```
+
+### 基本用法
+
+```typescript
+const table = new CanvasTable(container, {
+  rows,
+  columns,
+  imageLoad: {
+    enabled: true,
+    maxConcurrent: 6,   // 同时最多加载 6 张图片
+    maxCacheSize: 200   // 最多缓存 200 张图片
+  }
+});
+
+// 运行时修改配置
+table.setImageLoadConfig({
+  maxConcurrent: 3
+});
+
+// 获取加载统计信息
+const stats = table.getImageLoadStats();
+// { pending: 5, loading: 2, cached: 50, failed: 1 }
+```
+
+### 加载策略
+
+- **立即加载**：图片请求进入队列后立即开始加载（如果并发有空位）
+- **加载完成后继续**：一张图片加载完成后自动继续加载队列中的下一张
+- **并发限制**：同时最多加载 `maxConcurrent` 张图片，避免过多请求阻塞网络
+- **LRU 缓存**：缓存最多 `maxCacheSize` 张图片，超出时自动淘汰最早加载的图片
 
 ## 浏览器支持
 

@@ -1,4 +1,4 @@
-import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion } from '../types';
+import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion } from "../types";
 export declare class LayoutManager {
     private layoutInfo;
     private visibleRange;
@@ -38,6 +38,11 @@ export declare class LayoutManager {
     getScrollLeft(): number;
     private createRowNumberColumn;
     calculateLayout(columns: Column[], rows: Row[]): LayoutInfo;
+    /**
+     * 只更新列相关的布局（用于列重排、列交换等操作）
+     * 避免遍历所有行，提升大数据量时的性能
+     */
+    calculateColumnLayoutOnly(columns: Column[]): LayoutInfo;
     private calculateHeaderLayout;
     private calculateColumnLayout;
     private calculateCellMerges;

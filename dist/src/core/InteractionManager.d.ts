@@ -1,22 +1,23 @@
-import { CellPosition, CellInfo, CellRange, InteractionState, ScrollState, SelectionConfig, EditingConfig, Column, Row, SortConfig, InputConfig, SelectConfig, DropdownState, TagsConfig, ScrollbarState, FilterConfig, FilterDropdownState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ContextMenuState, HeaderContextMenuState, ButtonHoverState, DateConfig, DateDropdownState, SwitchAnimationState, ImageConfig } from '../types';
-import { LayoutManager } from './LayoutManager';
-import { EventEmitter } from './EventEmitter';
+import { CellPosition, CellInfo, CellRange, InteractionState, ScrollState, SelectionConfig, EditingConfig, Column, Row, SortConfig, InputConfig, SelectConfig, DropdownState, TagsConfig, ScrollbarState, FilterConfig, FilterDropdownState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ContextMenuState, HeaderContextMenuState, ButtonHoverState, DateConfig, DateDropdownState, SwitchAnimationState, ImageConfig, ColorPickerConfig, ColorPickerDropdownState } from "../types";
+import { LayoutManager } from "./LayoutManager";
+import { DataManager } from "./DataManager";
+import { EventEmitter } from "./EventEmitter";
 interface InteractionEvents {
     cellClick: [CellInfo, MouseEvent];
     cellDblClick: [CellInfo, MouseEvent];
     cellHover: [CellInfo | null, MouseEvent];
     headerHover: [string | undefined];
-    rowClick: [number, MouseEvent];
-    rowDblClick: [number, MouseEvent];
+    rowClick: [Row, number, MouseEvent];
+    rowDblClick: [Row, number, MouseEvent];
     selectionChange: [CellRange[]];
     editStart: [CellInfo, InputConfig?];
     selectEditStart: [CellInfo, SelectConfig?];
     editEnd: [CellInfo, unknown];
     scroll: [number, number];
-    columnResize: [string, number];
+    columnResize: [Column, number];
     sortChange: [SortConfig[]];
     filterChange: [FilterConfig[]];
-    expand: [number, boolean];
+    expand: [Row, number, boolean];
     checkboxChange: [CellInfo, boolean];
     radioChange: [CellInfo, unknown];
     switchChange: [CellInfo, boolean];
@@ -45,17 +46,23 @@ interface InteractionEvents {
     columnSwap: [string, string];
     imageClick: [CellInfo, string, MouseEvent];
     progressChange: [CellInfo, number];
+    ratingChange: [CellInfo, number];
+    loadMore: [{
+        startIndex: number;
+        scrollTop: number;
+        direction: "down" | "up";
+    }];
     [key: string]: unknown[];
 }
 export declare class InteractionManager {
     private static readonly DROPDOWN_ITEM_HEIGHT;
     private static readonly DROPDOWN_MAX_VISIBLE;
-    private static readonly IMAGE_SIZE;
-    private static readonly IMAGE_PADDING;
-    private static readonly IMAGE_GAP;
-    private static readonly IMAGES_PER_ROW;
-    private static readonly IMAGE_UPLOAD_AREA_HEIGHT;
-    private static readonly IMAGE_MAX_ROWS;
+    static readonly IMAGE_SIZE = 64;
+    static readonly IMAGE_PADDING = 8;
+    static readonly IMAGE_GAP = 8;
+    static readonly IMAGES_PER_ROW = 4;
+    static readonly IMAGE_UPLOAD_AREA_HEIGHT = 60;
+    static readonly IMAGE_MAX_ROWS = 3;
     private state;
     private scrollState;
     private scrollbarState;
@@ -64,20 +71,38 @@ export declare class InteractionManager {
     private canvas;
     private ctx;
     private editingConfig;
-    private columns;
-    private rows;
-    private allRows;
+    private dataManager;
     private sortConfig;
     private filterConfig;
     private expandColumnKey;
     private isDestroyed;
+    private editingHandler;
+    private dropdownHandler;
+    private selectionHandler;
+    private navigationHandler;
+    private contextMenuHandler;
+    private imageHandler;
+    private headerHandler;
+    private controlClickHandler;
+    private buttonAnimationHandler;
+    private tooltipHandler;
+    private get rows();
+    private get allRows();
     private resizeColumnIndex;
     private resizeStartX;
     private resizeStartWidth;
     private _lastClickTime;
     private _lastClickCell;
     private getScrollbarBounds;
-    constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig);
+    private lazyLoadEnabled;
+    private lazyLoadThreshold;
+    private isLoadingMore;
+    private hasMoreData;
+    constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig);
+    /**
+     * Initialize handler instances
+     */
+    private initHandlers;
     /**
      * 将 CellPosition 转换为 CellInfo，包含 row 和 column 数据
      */
@@ -86,10 +111,6 @@ export declare class InteractionManager {
      * 计算单元格在视口中的 X 坐标
      */
     private getCellViewportX;
-    /**
-     * 验证单元格是否可编辑，返回列和行数据
-     */
-    private validateCellForEditing;
     /**
      * 获取规范化的选择范围
      */
@@ -114,43 +135,20 @@ export declare class InteractionManager {
     }): void;
     getScrollbarState(): ScrollbarState;
     private handleMouseDown;
-    private handleDropdownClick;
-    private handleDropdownHover;
-    private handleButtonsDropdownHover;
-    private handleImageTooltipHover;
-    private handleImageTooltipClick;
-    private handleImageEditorHover;
-    private handleImageEditorClick;
     private triggerFileInput;
-    private handleFileUpload;
-    private readFileAsDataURL;
-    private commitImageEditorChanges;
-    private handleButtonsDropdownClick;
-    private handleFilterDropdownClick;
-    private handleFilterDropdownHover;
-    private handleDateDropdownClick;
-    private formatDate;
-    private handleDateDropdownHover;
     private handleDragOver;
     private handleDragLeave;
     private handleDrop;
     private handleContextMenu;
-    private handleContextMenuClick;
-    private handleContextMenuHover;
     getContextMenu(): ContextMenuState | null;
     getHeaderContextMenu(): HeaderContextMenuState | null;
-    private handleHeaderContextMenuClick;
-    private handleHeaderContextMenuHover;
     private handleDocumentMouseMove;
     private handleDocumentMouseUp;
     private handleMouseMove;
-    private handleHeaderHover;
     private updateButtonHoverState;
     private clearAllButtonHoverStates;
-    private buttonHoverAnimationRunning;
     private startButtonHoverAnimationLoop;
-    private runButtonHoverAnimationLoop;
-    getButtonHoverStates(): Map<string, ButtonHoverState>;
+    getButtonHoverStates: () => Map<string, ButtonHoverState>;
     getHoveredImageIndex(): number;
     getHoveredButtonIndex(): number;
     private updateImageHoverIndex;
@@ -162,43 +160,20 @@ export declare class InteractionManager {
     private handleDblClick;
     private handleControlClick;
     private handleProgressClick;
+    private handleRatingClick;
     private handleExpandIconClick;
     private getClickedRadioOption;
     private handleWheel;
-    private updateDropdownPosition;
-    private updateFilterDropdownPosition;
-    private updateDateDropdownPosition;
-    private updateButtonsDropdownPosition;
-    private updateImageTooltipPosition;
-    private updateImageEditorPosition;
+    /**
+     * 检查是否需要触发懒加载
+     */
+    private checkLazyLoad;
     handleExternalWheel(deltaX: number, deltaY: number): void;
     private updateTooltipPosition;
     private scrollTimeout;
     private handleKeyDown;
     private handleEditingKeyDown;
-    private handleArrowNavigation;
     private handleEnterKey;
-    private handleHeaderMouseDown;
-    /**
-     * 计算同级列信息
-     * 同级列定义：
-     * 1. 有相同父列的列（同一父列的 children）
-     * 2. 都是顶级列，且 fixed 属性相同
-     */
-    private calculateSiblingColumns;
-    private getFirstLeafKey;
-    private getFirstLeaf;
-    private getChildLeafCount;
-    private findParentColumn;
-    private handleHeaderClick;
-    private setSortDirection;
-    private toggleSort;
-    private openFilterDropdown;
-    private handleSingleSelection;
-    private handleRangeSelection;
-    private handleToggleSelection;
-    private scrollToCell;
-    private moveSelection;
     /**
      * 获取编辑配置
      * 优先级：editRender > render 返回的编辑配置 > null（走默认逻辑）
@@ -208,42 +183,85 @@ export declare class InteractionManager {
     startSelectEditing(cell: CellPosition, selectConfig?: SelectConfig): void;
     startTagsEditing(cell: CellPosition, tagsConfig: TagsConfig): void;
     startDateEditing(cell: CellPosition, dateConfig: DateConfig): void;
+    startColorEditing(cell: CellPosition, colorConfig: ColorPickerConfig): void;
     startImageEditing(cell: CellPosition, imageConfig: ImageConfig): void;
     endEditing(save: boolean): void;
     clearEditingState(): void;
     isEditing(): boolean;
     getDropdown(): DropdownState | null;
     private toggleRowExpand;
-    private selectAll;
     clearSelection(): void;
     resetState(): void;
+    /** 关闭 select/tags dropdown */
+    private closeDropdown;
+    /** 关闭 filter dropdown */
+    private closeFilterDropdown;
+    /** 关闭 date dropdown */
+    private closeDateDropdown;
+    /** 关闭 color dropdown */
+    private closeColorDropdown;
+    /** 关闭 buttons dropdown */
+    private closeButtonsDropdown;
+    /** 关闭所有 dropdown */
+    private closeAllDropdowns;
+    /** 更新所有 dropdown 位置（滚动时调用） */
+    private updateAllDropdownPositions;
     private copySelection;
     private getSelectedText;
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     updateMaxScroll(maxScrollLeft: number, maxScrollTop: number): void;
-    setColumns(columns: Column[]): void;
-    setRows(rows: Row[]): void;
-    setAllRows(rows: Row[]): void;
     setSortConfig(config: SortConfig[]): void;
     setFilterConfig(config: FilterConfig[]): void;
     setExpandColumnKey(key: string | null): void;
+    setLazyLoadConfig(enabled: boolean, threshold?: number): void;
+    setLoadingMore(loading: boolean): void;
+    /**
+     * 设置是否还有更多数据
+     * @param hasMore 是否还有更多数据，false 表示加载完成
+     */
+    setHasMore(hasMore: boolean): void;
     getFilterDropdown(): FilterDropdownState | null;
     getDateDropdown(): DateDropdownState | null;
+    getColorDropdown(): ColorPickerDropdownState | null;
     getButtonsDropdown(): ButtonsDropdownState | null;
     getImageTooltip(): ImageTooltipState | null;
     getImageEditor(): ImageEditorState | null;
     applyFilter(): void;
+    /**
+     * 根据筛选模式获取操作符
+     */
+    private getOperatorByMode;
     clearFilter(): void;
+    /**
+     * 重置当前筛选 dropdown 的筛选值，但保持 dropdown 打开
+     * 用于重置按钮
+     */
+    resetFilterValue(): void;
+    /**
+     * 处理筛选下拉框的搜索输入
+     * 用于延迟加载模式下的选项搜索
+     */
+    handleFilterDropdownSearch(searchText: string): void;
+    /**
+     * 处理筛选下拉框的范围值更新
+     */
+    handleFilterDropdownRangeUpdate(minValue: string, maxValue: string): void;
+    /**
+     * 处理筛选下拉框的布尔值更新
+     */
+    handleFilterDropdownBooleanUpdate(value: "all" | "true" | "false"): void;
+    /**
+     * 处理筛选下拉框的日期范围更新
+     */
+    handleFilterDropdownDateRangeUpdate(startDate: Date | null, endDate: Date | null): void;
     getScrollState(): ScrollState;
     getInteractionState(): InteractionState;
     getSelectedCells(): CellPosition[];
     getSelectedRows(): number[];
     setSelectedCells(cells: CellPosition[]): void;
     updateConfig(_selection: SelectionConfig, editing: EditingConfig): void;
-    private switchAnimationRunning;
     private startSwitchAnimationLoop;
-    private runSwitchAnimationLoop;
-    getSwitchAnimations(): Map<string, SwitchAnimationState>;
+    getSwitchAnimations: () => Map<string, SwitchAnimationState>;
     destroy(): void;
 }
 export {};

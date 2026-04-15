@@ -11,20 +11,20 @@ describe('DataManager', () => {
     columns = createTestColumns();
     rows = createTestRows(5);
     dataManager = new DataManager();
-    await dataManager.loadData({ columns, rows });
+    dataManager.setColumns(columns);
+    await dataManager.loadRows(rows);
   });
 
-  describe('loadData', () => {
-    it('should load data correctly', async () => {
+  describe('loadRows', () => {
+    it('should load rows correctly', async () => {
       expect(dataManager.getRows().length).toBe(5);
-      expect(dataManager.getColumns().length).toBe(4);
     });
 
     it('should process rows and add ids', async () => {
       const simpleRows: Row[] = [
         { id: 'test-1', data: { id: 1, name: 'Test' } },
       ];
-      await dataManager.loadData({ columns, rows: simpleRows });
+      await dataManager.loadRows(simpleRows);
 
       const loadedRows = dataManager.getRows();
       expect(loadedRows[0]!.id).toBeDefined();
@@ -114,7 +114,8 @@ describe('DataManager', () => {
         { id: 'row-2', data: { id: 1, name: 'Alice', active: false, progress: 30 } },
         { id: 'row-3', data: { id: 2, name: 'Bob', active: true, progress: 90 } },
       ];
-      await dataManager.loadData({ columns, rows: unsortedRows });
+      dataManager.setColumns(columns);
+      await dataManager.loadRows(unsortedRows);
     });
 
     it('should apply sort and get sorted rows', () => {
@@ -160,7 +161,8 @@ describe('DataManager', () => {
         { id: 'row-2', data: { id: 2, name: 'Bob', active: false, progress: 30 } },
         { id: 'row-3', data: { id: 3, name: 'Charlie', active: true, progress: 90 } },
       ];
-      await dataManager.loadData({ columns, rows: filterRows });
+      dataManager.setColumns(columns);
+      await dataManager.loadRows(filterRows);
     });
 
     it('should apply filters', () => {

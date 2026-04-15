@@ -1,4 +1,12 @@
-import type { Column, Row, RenderResult, TagItem, DisabledValue } from "../types";
+import type {
+  Column,
+  Row,
+  RenderResult,
+  TagItem,
+  DisabledValue,
+  FilterMode,
+  SelectOption,
+} from "../types";
 
 /**
  * 获取列的数据字段名
@@ -377,9 +385,6 @@ export function getRenderResult(column: Column, row: Row, rowIndex: number): Ren
     };
   }
 
-  // Resolve column-level disabled
-  const columnDisabled = resolveDisabled(column.disabled, row, column);
-
   return renderResult;
 }
 
@@ -540,3 +545,214 @@ export class LRUCache<K, V> {
     return this.cache.keys();
   }
 }
+
+// === 筛选相关工具函数 ===
+
+/** 列类型到筛选模式的默认映射 */
+const COLUMN_TYPE_FILTER_MODE_MAP: Record<string, FilterMode> = {
+  text: "search",
+  link: "search",
+  number: "range",
+  progress: "range",
+  select: "select",
+  tag: "select",
+  radio: "select",
+  color: "select",
+  date: "dateRange",
+  checkbox: "boolean",
+  switch: "boolean",
+};
+
+/** 不支持筛选的列类型 */
+const UNSUPPORTED_FILTER_TYPES = ["button", "buttons", "image"];
+
+/**
+ * 根据列类型获取默认筛选模式
+ * @param column 列配置
+ * @returns 筛选模式，如果不支持筛选则返回 null
+ */
+export function getFilterModeByColumnType(column: Column): FilterMode | null {
+  // 如果列配置中指定了筛选模式，优先使用
+  if (column.filter?.mode) {
+    return column.filter.mode;
+  }
+
+  // 如果列禁用了筛选
+  if (column.filter?.disabled) {
+    return null;
+  }
+
+  const columnType = column.type ?? "text";
+
+  // 检查是否是不支持的类型
+  if (UNSUPPORTED_FILTER_TYPES.includes(columnType)) {
+    return null;
+  }
+
+  // 返回默认映射的筛选模式
+  return COLUMN_TYPE_FILTER_MODE_MAP[columnType] ?? "search";
+}
+
+/** 采样获取筛选选项的最大行数 */
+const FILTER_SAMPLE_ROWS = 100;
+
+/** 搜索匹配结果的最大数量 */
+const FILTER_SEARCH_LIMIT = 100;
+
+/**
+ * 获取列的筛选选项（用于 select 模式）
+ * 策略：
+ * 1. 检查 column.filter.options 或 render 返回的 options
+ * 2. 如果没有，采样前 100 行获取
+ * 3. 返回去重后的选项列表
+ *
+ * @param column 列配置
+ * @param rows 数据行（可选，用于采样）
+ * @param startIndex 开始采样的行索引（默认 0）
+ * @returns 筛选选项列表，如果没有可用选项则返回空数组
+ */
+export function getColumnFilterOptions(
+  column: Column,
+  rows?: Row[],
+  startIndex: number = 0,
+): SelectOption[] {
+  // 1. 检查 column.filter.options
+  if (column.filter?.options && column.filter.options.length > 0) {
+    return column.filter.options;
+  }
+
+  // 2. 如果没有提供 rows，返回空数组（需要延迟加载）
+  if (!rows || rows.length === 0) {
+    return [];
+  }
+
+  // 3. 采样前 100 行，通过 render 获取选项
+  const field = getColumnField(column);
+  const sampledRows = rows.slice(startIndex, startIndex + FILTER_SAMPLE_ROWS);
+  const optionsMap = new Map<string, SelectOption>();
+
+  for (let i = 0; i < sampledRows.length; i++) {
+    const row = sampledRows[i]!;
+    const value = row.data[field];
+    const renderResult = getRenderResult(column, row, startIndex + i);
+
+    // 从 render 结果中提取 options
+    const extractedOptions = extractOptionsFromRenderResult(renderResult, value);
+    for (const opt of extractedOptions) {
+      const key = String(opt.value);
+      if (!optionsMap.has(key)) {
+        optionsMap.set(key, opt);
+      }
+    }
+  }
+
+  return Array.from(optionsMap.values());
+}
+
+/**
+ * 从 RenderResult 中提取筛选选项
+ */
+function extractOptionsFromRenderResult(
+  renderResult: RenderResult,
+  rawValue: unknown,
+): SelectOption[] {
+  const options: SelectOption[] = [];
+
+  // select 类型
+  if (renderResult.select?.options) {
+    options.push(...renderResult.select.options);
+  }
+
+  // tags 类型
+  if (renderResult.tags?.options) {
+    options.push(
+      ...renderResult.tags.options.map((tag) => ({
+        label: tag.text,
+        value: tag.value ?? tag.text,
+      })),
+    );
+  }
+
+  // radio 类型
+  if (renderResult.radio?.options) {
+    options.push(...renderResult.radio.options);
+  }
+
+  // color 类型 - 使用预设颜色作为选项
+  if (renderResult.color?.presetColors) {
+    options.push(
+      ...renderResult.color.presetColors.map((color) => ({
+        label: color,
+        value: color,
+      })),
+    );
+  }
+
+  // 如果没有提取到 options，使用原始值创建选项
+  if (options.length === 0 && rawValue !== undefined && rawValue !== null) {
+    // 对于数组值（如 tags），展开每个元素
+    if (Array.isArray(rawValue)) {
+      for (const item of rawValue) {
+        options.push({
+          label: String(item),
+          value: item,
+        });
+      }
+    } else {
+      options.push({
+        label: String(rawValue),
+        value: rawValue,
+      });
+    }
+  }
+
+  return options;
+}
+
+/**
+ * 搜索匹配筛选选项
+ * 用于延迟加载场景：用户输入关键字后搜索匹配的选项
+ *
+ * @param column 列配置
+ * @param rows 数据行
+ * @param searchText 搜索关键字
+ * @param maxResults 最大结果数量（默认 100）
+ * @returns 匹配的筛选选项
+ */
+export function searchFilterOptions(
+  column: Column,
+  rows: Row[],
+  searchText: string,
+  maxResults: number = FILTER_SEARCH_LIMIT,
+): SelectOption[] {
+  if (!searchText || searchText.trim() === "") {
+    return [];
+  }
+
+  const field = getColumnField(column);
+  const keyword = searchText.toLowerCase();
+  const optionsMap = new Map<string, SelectOption>();
+
+  for (const row of rows) {
+    if (optionsMap.size >= maxResults) {
+      break;
+    }
+
+    const value = row.data[field];
+    const valueStr = String(value ?? "").toLowerCase();
+
+    if (valueStr.includes(keyword)) {
+      const key = String(value);
+      if (!optionsMap.has(key)) {
+        optionsMap.set(key, {
+          label: String(value ?? ""),
+          value: value,
+        });
+      }
+    }
+  }
+
+  return Array.from(optionsMap.values());
+}
+
+export { FILTER_SAMPLE_ROWS, FILTER_SEARCH_LIMIT };

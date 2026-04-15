@@ -15,6 +15,7 @@ export const DEFAULT_THEME: TableTheme = {
     selectionBorder: "#1890ff",
     linkColor: "#1890ff",
     placeholderText: "#bfbfbf",
+    primary: "#1890ff",
     tagColors: {
       default: "#f0f0f0",
       primary: "#1890ff",
@@ -119,6 +120,17 @@ export const DEFAULT_THEME: TableTheme = {
       offsetX: 0,
       offsetY: 2,
     },
+    watermark: {
+      color: "rgba(0, 0, 0, 0.15)",
+      fontSize: 16,
+      opacity: 1,
+    },
+    loading: {
+      background: "rgba(255, 255, 255, 0.85)",
+      spinnerBorder: "#d9d9d9",
+      spinnerActive: "#1890ff",
+      text: "#333333",
+    },
   },
   font: {
     family:
@@ -151,6 +163,7 @@ export const DARK_THEME: TableTheme = {
     selectionBorder: "#177ddc",
     linkColor: "#177ddc",
     placeholderText: "#666666",
+    primary: "#177ddc",
     tagColors: {
       default: "#434343",
       primary: "#177ddc",
@@ -255,6 +268,17 @@ export const DARK_THEME: TableTheme = {
       offsetX: 0,
       offsetY: 2,
     },
+    watermark: {
+      color: "rgba(255, 255, 255, 0.1)",
+      fontSize: 16,
+      opacity: 1,
+    },
+    loading: {
+      background: "rgba(31, 31, 31, 0.85)",
+      spinnerBorder: "#434343",
+      spinnerActive: "#177ddc",
+      text: "#e0e0e0",
+    },
   },
   font: {
     family:
@@ -339,6 +363,13 @@ export function mergeTheme(theme?: Partial<TableTheme>): TableTheme {
         ...DEFAULT_THEME.colors.shadow,
         ...theme.colors?.shadow,
       },
+      watermark: {
+        ...DEFAULT_THEME.colors.watermark,
+        ...theme.colors?.watermark,
+      },
+      loading: theme.colors?.loading
+        ? { ...DEFAULT_THEME.colors.loading, ...theme.colors.loading }
+        : DEFAULT_THEME.colors.loading,
     },
     font: {
       ...DEFAULT_THEME.font,

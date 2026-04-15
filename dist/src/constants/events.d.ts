@@ -33,8 +33,6 @@ export declare const TableEvents: {
     readonly COLUMN_SHOW: "columnShow";
     readonly EDIT_START: "editStart";
     readonly EDIT_END: "editEnd";
-    readonly DATE_EDIT_START: "dateEditStart";
-    readonly DATE_EDIT_END: "dateEditEnd";
     readonly UNDO: "undo";
     readonly REDO: "redo";
     readonly DROPDOWN_OPEN: "dropdownOpen";
@@ -42,9 +40,16 @@ export declare const TableEvents: {
     readonly DROPDOWN_HOVER: "dropdownHover";
     readonly FILTER_DROPDOWN_OPEN: "filterDropdownOpen";
     readonly FILTER_DROPDOWN_CLOSE: "filterDropdownClose";
+    readonly FILTER_DROPDOWN_CONFIRM: "filterDropdownConfirm";
+    readonly FILTER_DROPDOWN_CHANGE: "filterDropdownChange";
+    readonly FILTER_DROPDOWN_RESET: "filterDropdownReset";
     readonly DATE_DROPDOWN_OPEN: "dateDropdownOpen";
     readonly DATE_DROPDOWN_CLOSE: "dateDropdownClose";
     readonly DATE_DROPDOWN_HOVER: "dateDropdownHover";
+    readonly COLOR_DROPDOWN_OPEN: "colorDropdownOpen";
+    readonly COLOR_DROPDOWN_CLOSE: "colorDropdownClose";
+    readonly COLOR_DROPDOWN_HOVER: "colorDropdownHover";
+    readonly BUTTONS_DROPDOWN_CLOSE: "buttonsDropdownClose";
     readonly CONTEXT_MENU_OPEN: "contextMenuOpen";
     readonly CONTEXT_MENU_CLOSE: "contextMenuClose";
     readonly CONTEXT_MENU_HOVER: "contextMenuHover";
@@ -60,6 +65,8 @@ export declare const TableEvents: {
     readonly TAGS_CHANGE: "tagsChange";
     readonly DATE_SELECT: "dateSelect";
     readonly PROGRESS_CHANGE: "progressChange";
+    readonly RATING_CHANGE: "ratingChange";
+    readonly COLOR_CHANGE: "colorChange";
     readonly IMAGE_CLICK: "imageClick";
     readonly IMAGE_TOOLTIP_SCROLL: "imageTooltipScroll";
     readonly IMAGE_TOOLTIP_HOVER: "imageTooltipHover";
@@ -69,6 +76,7 @@ export declare const TableEvents: {
     readonly IMAGE_EDITOR_HOVER: "imageEditorHover";
     readonly IMAGE_UPLOAD: "imageUpload";
     readonly IMAGE_DELETE: "imageDelete";
+    readonly LOAD_MORE: "loadMore";
 };
 export type TableEventType = (typeof TableEvents)[keyof typeof TableEvents];
 //# sourceMappingURL=events.d.ts.map

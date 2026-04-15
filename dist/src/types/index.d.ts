@@ -1,13 +1,13 @@
-export type CellType = 'text' | 'number' | 'boolean' | 'link' | 'tag' | 'date' | 'custom' | 'checkbox' | 'radio' | 'button' | 'buttons' | 'input' | 'select' | 'switch' | 'image' | 'progress';
-export type SortDirection = 'asc' | 'desc' | 'none';
-export type FixedType = 'left' | 'right' | false;
-export type HorizontalAlign = 'left' | 'center' | 'right';
-export type VerticalAlign = 'top' | 'middle' | 'bottom';
+export type CellType = "text" | "number" | "boolean" | "link" | "tag" | "date" | "custom" | "checkbox" | "radio" | "button" | "buttons" | "input" | "select" | "switch" | "image" | "progress" | "rating" | "color";
+export type SortDirection = "asc" | "desc" | "none";
+export type FixedType = "left" | "right" | false;
+export type HorizontalAlign = "left" | "center" | "right";
+export type VerticalAlign = "top" | "middle" | "bottom";
 export interface CellStyle {
     fontFamily?: string;
     fontSize?: number;
-    fontWeight?: 'normal' | 'bold';
-    fontStyle?: 'normal' | 'italic';
+    fontWeight?: "normal" | "bold";
+    fontStyle?: "normal" | "italic";
     color?: string;
     backgroundColor?: string;
     horizontalAlign?: HorizontalAlign;
@@ -56,7 +56,15 @@ export interface RenderResult {
     switch?: SwitchConfig;
     image?: ImageConfig;
     progress?: ProgressConfig;
+    rating?: RatingConfig;
+    color?: ColorPickerConfig;
     customRender?: (context: CustomRenderContext) => void;
+    /** Star bounds for rating click detection */
+    starBounds?: Array<{
+        index: number;
+        x: number;
+        width: number;
+    }>;
 }
 /**
  * 编辑渲染结果
@@ -71,6 +79,7 @@ export interface EditRenderResult {
     checkbox?: CheckboxConfig;
     radio?: RadioConfig;
     switch?: SwitchConfig;
+    color?: ColorPickerConfig;
 }
 export interface TagItem {
     text: string;
@@ -106,8 +115,8 @@ export interface RadioOption {
 }
 export interface ButtonConfig {
     text?: string;
-    variant?: 'default' | 'primary' | 'secondary' | 'danger' | 'warning' | 'link';
-    size?: 'small' | 'medium' | 'large';
+    variant?: "default" | "primary" | "secondary" | "danger" | "warning" | "link";
+    size?: "small" | "medium" | "large";
     actionKey?: string;
     visible?: boolean;
 }
@@ -120,7 +129,7 @@ export interface ButtonsConfig {
 export interface SwitchConfig {
     checked?: boolean;
     animationProgress?: number;
-    animationDirection?: 'forward' | 'backward';
+    animationDirection?: "forward" | "backward";
 }
 export interface SwitchAnimationState {
     cell: CellPosition;
@@ -130,11 +139,11 @@ export interface SwitchAnimationState {
     startProgress: number;
 }
 /** 进度条形状类型 */
-export type ProgressShape = 'line' | 'circle' | 'dashboard';
+export type ProgressShape = "line" | "circle" | "dashboard";
 /** 进度条预设尺寸 */
-export type ProgressSize = 'small' | 'medium' | 'large';
+export type ProgressSize = "small" | "medium" | "large";
 /** 进度条线帽样式 */
-export type ProgressStrokeLinecap = 'round' | 'square' | 'butt';
+export type ProgressStrokeLinecap = "round" | "square" | "butt";
 /** 进度条颜色区间配置 */
 export interface ProgressColorStop {
     /** 进度值 (0-100) */
@@ -171,11 +180,46 @@ export interface ProgressConfig {
     /** 文本颜色 */
     textColor?: string;
     /** 文本位置（线型时）: inside | right */
-    textPosition?: 'inside' | 'right';
+    textPosition?: "inside" | "right";
     /** 是否可交互（点击调整进度） */
     interactive?: boolean;
     /** 进度条状态 */
-    status?: 'normal' | 'success' | 'warning' | 'error';
+    status?: "normal" | "success" | "warning" | "error";
+}
+/** 评分配置 */
+export interface RatingConfig {
+    /** 当前评分值 (0-max) */
+    value: number;
+    /** 最大评分，默认 5 */
+    max?: number;
+    /** 星星大小，默认 16 */
+    starSize?: number;
+    /** 是否允许半星，默认 false */
+    allowHalf?: boolean;
+    /** 星星颜色，默认金色 */
+    color?: string;
+    /** 未激活颜色，默认灰色 */
+    inactiveColor?: string;
+    /** 禁用状态颜色 */
+    disabledColor?: string;
+}
+/** 颜色选择器配置 */
+export interface ColorPickerConfig {
+    /** 当前颜色值 (hex: #RRGGBB) */
+    value: string;
+    /** 是否显示颜色值文本，默认 false */
+    showText?: boolean;
+    /** 预设颜色列表 */
+    presetColors?: string[];
+}
+/** 颜色选择下拉框状态 */
+export interface ColorPickerDropdownState {
+    cell: CellPosition;
+    config: ColorPickerConfig;
+    x: number;
+    y: number;
+    width: number;
+    hoveredColor: string | null;
 }
 export interface ButtonHoverState {
     cell: CellPosition;
@@ -188,7 +232,7 @@ export interface InputConfig {
     value?: string;
     placeholder?: string;
     readonly?: boolean;
-    type?: 'text' | 'number' | 'password';
+    type?: "text" | "number" | "password";
     multiline?: boolean;
     maxRows?: number;
 }
@@ -222,7 +266,7 @@ export interface ImageConfig {
     /** 图片高度，默认 32 */
     height?: number;
     /** 图片适应方式，默认 'cover' */
-    fit?: 'fill' | 'contain' | 'cover' | 'none';
+    fit?: "fill" | "contain" | "cover" | "none";
     /** 圆角半径，默认 0 */
     borderRadius?: number;
     /** 是否圆形，默认 false */
@@ -288,6 +332,20 @@ export interface Column {
     rowspan?: number;
     depth?: number;
     parentKey?: string;
+    /**
+     * 渲染缓存模式
+     * - 'cell': 按 row.id + column.id 缓存（默认，安全）
+     * - 'value': 按 column.id + value 缓存（高效，但 render 必须只依赖 value）
+     * - false: 不缓存
+     */
+    cacheMode?: "cell" | "value" | false;
+    /**
+     * 是否缓存渲染结果
+     * - true: 缓存（默认）
+     * - false: 不缓存
+     * @deprecated 请使用 cacheMode 代替
+     */
+    cacheRender?: boolean;
 }
 export interface CellMerge {
     rowIndex: number;
@@ -334,7 +392,7 @@ export interface SortConfig {
     direction: SortDirection;
 }
 export interface FilterOperator {
-    type: 'text' | 'number' | 'date' | 'enum';
+    type: "text" | "number" | "date" | "enum";
     operators: string[];
 }
 export interface FilterConfig {
@@ -342,16 +400,22 @@ export interface FilterConfig {
     operator: string;
     value: unknown;
 }
+/** 筛选模式类型 */
+export type FilterMode = "search" | "select" | "range" | "dateRange" | "boolean";
 export interface ColumnFilter {
-    type: 'text' | 'number' | 'date' | 'enum';
+    type: "text" | "number" | "date" | "enum";
     options?: Array<{
         label: string;
         value: unknown;
     }>;
     custom?: (value: unknown, filterValue: unknown, row: Row) => boolean;
+    /** 筛选模式，覆盖默认推断的模式 */
+    mode?: FilterMode;
+    /** 禁用筛选 */
+    disabled?: boolean;
 }
 export interface CellEditor {
-    type: 'text' | 'number' | 'select' | 'date' | 'checkbox';
+    type: "text" | "number" | "select" | "date" | "checkbox";
     options?: Array<{
         label: string;
         value: unknown;
@@ -375,13 +439,13 @@ export interface CellRange {
     end: CellPosition;
 }
 export interface SelectionConfig {
-    mode: 'cell' | 'row' | 'column' | 'range';
+    mode: "cell" | "row" | "column" | "range";
     multi?: boolean;
     showCheckbox?: boolean;
 }
 export interface EditingConfig {
     enabled?: boolean;
-    mode?: 'click' | 'dblclick' | 'keyboard';
+    mode?: "click" | "dblclick" | "keyboard";
     validateOnChange?: boolean;
 }
 export interface WatermarkConfig {
@@ -403,6 +467,26 @@ export interface VirtualScrollConfig {
     estimatedRowHeight?: number;
     estimatedColumnWidth?: number;
 }
+/**
+ * 懒加载配置
+ */
+export interface LazyLoadConfig {
+    /** 是否启用懒加载 */
+    enabled: boolean;
+    /** 触发加载的阈值（距离底部的行数），默认 5 */
+    threshold?: number;
+}
+/**
+ * 加载更多参数
+ */
+export interface LoadMoreParams {
+    /** 当前数据量（已有行数） */
+    startIndex: number;
+    /** 当前滚动位置 */
+    scrollTop: number;
+    /** 滚动方向 */
+    direction: "down" | "up";
+}
 export interface TableTheme {
     name?: string;
     colors: {
@@ -418,6 +502,7 @@ export interface TableTheme {
         selectionBorder: string;
         linkColor: string;
         placeholderText: string;
+        primary: string;
         tagColors: Record<string, string>;
         date: {
             border: string;
@@ -515,6 +600,18 @@ export interface TableTheme {
             offsetX: number;
             offsetY: number;
         };
+        watermark: {
+            color: string;
+            fontSize: number;
+            fontFamily?: string;
+            opacity: number;
+        };
+        loading?: {
+            background: string;
+            spinnerBorder: string;
+            spinnerActive: string;
+            text: string;
+        };
     };
     font: {
         family: string;
@@ -562,14 +659,14 @@ export interface ViewConfig {
     filters: FilterConfig[];
 }
 export interface ExportOptions {
-    format: 'csv' | 'excel' | 'json';
+    format: "csv" | "excel" | "json";
     filename?: string;
     includeHeaders?: boolean;
     includeHidden?: boolean;
     selectedOnly?: boolean;
 }
 export interface Change {
-    type: 'update' | 'add' | 'delete';
+    type: "update" | "add" | "delete";
     rowIndex: number;
     column?: string;
     oldValue?: unknown;
@@ -577,10 +674,10 @@ export interface Change {
     row?: Row;
 }
 /** 历史记录操作类型 */
-export type HistoryActionType = 'update' | 'add' | 'delete';
+export type HistoryActionType = "update" | "add" | "delete";
 /** 更新操作历史数据 */
 export interface UpdateHistoryData {
-    type: 'update';
+    type: "update";
     rowId: string;
     column: string;
     oldValue: unknown;
@@ -588,14 +685,14 @@ export interface UpdateHistoryData {
 }
 /** 新增操作历史数据 */
 export interface AddHistoryData {
-    type: 'add';
+    type: "add";
     rowId: string;
     rowIndex: number;
     rowData: Row;
 }
 /** 删除操作历史数据 */
 export interface DeleteHistoryData {
-    type: 'delete';
+    type: "delete";
     rowId: string;
     rowIndex: number;
     rowData: Row;
@@ -617,21 +714,23 @@ export interface TableEventHandlers {
     onCellClick?: (cell: CellPosition, event: MouseEvent) => void;
     onCellDblClick?: (cell: CellPosition, event: MouseEvent) => void;
     onCellHover?: (cell: CellPosition | null, event: MouseEvent) => void;
-    onRowClick?: (rowIndex: number, event: MouseEvent) => void;
-    onRowDblClick?: (rowIndex: number, event: MouseEvent) => void;
+    onRowClick?: (row: Row, rowIndex: number, event: MouseEvent) => void;
+    onRowDblClick?: (row: Row, rowIndex: number, event: MouseEvent) => void;
     onHeaderClick?: (column: Column, columnIndex: number, event: MouseEvent) => void;
     onScroll?: (scrollLeft: number, scrollTop: number) => void;
-    onColumnResize?: (column: string, width: number) => void;
+    onColumnResize?: (column: Column, width: number) => void;
     onColumnReorder?: (columns: string[]) => void;
     onEditStart?: (cell: CellPosition) => void;
     onEditEnd?: (cell: CellPosition, value: unknown) => void;
-    onExpand?: (rowIndex: number, expanded: boolean) => void;
+    onExpand?: (row: Row, rowIndex: number, expanded: boolean) => void;
     onCheckboxChange?: (cell: CellPosition, checked: boolean) => void;
     onRadioChange?: (cell: CellPosition, value: unknown) => void;
     onButtonClick?: (cell: CellPosition, actionKey?: string) => void;
     onSwitchChange?: (cell: CellPosition, checked: boolean) => void;
     onSelectChange?: (cell: CellPosition, value: unknown) => void;
     onTagsChange?: (cell: CellPosition, values: unknown[]) => void;
+    onRatingChange?: (cell: CellPosition, value: number) => void;
+    onColorChange?: (cell: CellPosition, color: string) => void;
     onColumnHide?: (columnKey: string) => void;
     onColumnShow?: (columnKey: string) => void;
     onImageClick?: (cell: CellPosition, imageSrc: string, event: MouseEvent) => void;
@@ -639,10 +738,21 @@ export interface TableEventHandlers {
     onImageUpload?: (cell: CellPosition, url: string) => void;
     /** 图片删除回调 */
     onImageDelete?: (cell: CellPosition, deletedImage: string, index: number) => void;
+    /** 懒加载触发回调 */
+    onLoadMore?: (params: LoadMoreParams) => void;
 }
-export type ThemeMode = 'light' | 'dark' | 'auto';
+export type ThemeMode = "light" | "dark" | "auto";
+/**
+ * 图片加载队列配置
+ */
+export interface ImageLoadConfig {
+    /** 最大并发加载数，默认 6 */
+    maxConcurrent?: number;
+    /** 缓存最大数量，默认 200 */
+    maxCacheSize?: number;
+}
 export interface CanvasTableBaseProps {
-    data: TableData | Promise<TableData> | (() => Promise<TableData>);
+    rows: Row[] | Promise<Row[]> | (() => Promise<Row[]>);
     columns: Column[];
     width?: number | string;
     height?: number | string;
@@ -660,11 +770,17 @@ export interface CanvasTableBaseProps {
     stripeRows?: boolean;
     hoverable?: boolean;
     loading?: boolean;
+    /** Loading overlay text, default "Loading..." */
+    loadingText?: string;
     emptyText?: string;
     watermark?: WatermarkConfig;
     expandColumnKey?: string;
     defaultExpandedRowKeys?: string[];
     createRowData?: (columns: Column[]) => Record<string, unknown>;
+    /** 懒加载配置 */
+    lazyLoad?: LazyLoadConfig;
+    /** 图片加载配置 */
+    imageLoad?: ImageLoadConfig;
 }
 export type CanvasTableProps = CanvasTableBaseProps & TableEventHandlers;
 export interface LayoutInfo {
@@ -701,12 +817,13 @@ export interface InteractionState {
     isSelecting: boolean;
     selectionStart: CellPosition | null;
     isDragging: boolean;
-    dragType: 'column-resize' | 'column-reorder' | 'row-reorder' | null;
+    dragType: "column-resize" | "column-reorder" | "row-reorder" | null;
     dragTarget: unknown;
     tooltip: TooltipState | null;
     dropdown: DropdownState | null;
     filterDropdown: FilterDropdownState | null;
     dateDropdown: DateDropdownState | null;
+    colorDropdown: ColorPickerDropdownState | null;
     buttonsDropdown: ButtonsDropdownState | null;
     imageTooltip: ImageTooltipState | null;
     imageEditor: ImageEditorState | null;
@@ -748,26 +865,38 @@ export interface DropdownState {
     width: number;
     scrollTop: number;
     hoveredIndex: number;
-    type?: 'select' | 'tags';
+    type?: "select" | "tags";
     tagsConfig?: TagsConfig;
     showAbove?: boolean;
 }
 export interface FilterDropdownState {
     columnKey: string;
+    mode: FilterMode;
     x: number;
     y: number;
     width: number;
-    options: Array<{
+    scrollTop: number;
+    hoveredIndex: number;
+    options?: Array<{
         label: string;
         value: unknown;
         checked: boolean;
     }>;
-    scrollTop: number;
-    hoveredIndex: number;
     searchText: string;
+    searchValue?: string;
+    minValue?: number | string;
+    maxValue?: number | string;
+    startDate?: Date | null;
+    endDate?: Date | null;
+    activeDateField?: "startDate" | "endDate";
+    currentYear?: number;
+    currentMonth?: number;
+    hoveredDate?: Date | null;
+    boolValue?: "all" | "true" | "false";
     isScrollbarDragging?: boolean;
     scrollbarDragStartY?: number;
     scrollbarDragStartScrollTop?: number;
+    isLoading?: boolean;
 }
 export interface TooltipState {
     cell: CellPosition;
@@ -777,10 +906,10 @@ export interface TooltipState {
     content: TooltipContent;
 }
 export type TooltipContent = {
-    type: 'text';
+    type: "text";
     text: string;
 } | {
-    type: 'tags';
+    type: "tags";
     tags: TagItem[];
 };
 export interface DateDropdownState {
@@ -793,6 +922,7 @@ export interface DateDropdownState {
     currentMonth: number;
     selectedDate: Date | null;
     hoveredDate: Date | null;
+    showAbove?: boolean;
 }
 export interface ButtonsDropdownState {
     cell: CellPosition;
@@ -873,8 +1003,7 @@ export interface DataManagerState {
     error: Error | null;
 }
 export interface CanvasTableAPI {
-    setData(data: TableData): void;
-    getData(): TableData;
+    setRows(rows: Row[]): void;
     getRows(): Row[];
     getRow(rowIndex: number): Row | undefined;
     getColumns(): Column[];
@@ -895,9 +1024,9 @@ export interface CanvasTableAPI {
     addRow(data: Record<string, unknown>, index?: number): void;
     deleteRow(rowIndex: number): void;
     sort(configs: SortConfig[]): void;
-    getSort(): SortConfig[];
+    getSortConfig(): SortConfig[];
     filter(configs: FilterConfig[]): void;
-    getFilters(): FilterConfig[];
+    getFilterConfig(): FilterConfig[];
     clearFilters(): void;
     export(options: ExportOptions): Promise<Blob>;
     getViewConfig(): ViewConfig;
@@ -909,6 +1038,12 @@ export interface CanvasTableAPI {
     destroy(): void;
     getCanvas(): HTMLCanvasElement;
     getLayoutInfo(): LayoutInfo;
+    /** 追加数据行（用于懒加载） */
+    appendRows(rows: Row[]): void;
+    /** 设置加载更多状态（用于防止重复触发） */
+    setLoadingMore(loading: boolean): void;
+    /** 设置是否还有更多数据（false 表示加载完成） */
+    setHasMore(hasMore: boolean): void;
 }
 export type EventCallback<T = unknown> = (data: T) => void;
 export interface EventEmitter {
@@ -919,12 +1054,12 @@ export interface EventEmitter {
 /**
  * 鼠标区域类型
  */
-export type MouseRegion = 'left-fixed' | 'right-fixed' | 'scrollable';
+export type MouseRegion = "left-fixed" | "right-fixed" | "scrollable";
 /**
  * 滚动条信息
  */
 export interface HitTestScrollbar {
-    type: 'vertical' | 'horizontal';
+    type: "vertical" | "horizontal";
     bounds: {
         x: number;
         y: number;
@@ -937,7 +1072,7 @@ export interface HitTestScrollbar {
  */
 export interface HitTestResult {
     /** 鼠标所在的区域 */
-    region: 'scrollbar-vertical' | 'scrollbar-horizontal' | 'header' | 'cell' | 'outside';
+    region: "scrollbar-vertical" | "scrollbar-horizontal" | "header" | "cell" | "outside";
     /** 区域详细信息（固定列/滚动区域） */
     regionDetail?: MouseRegion;
     /** 滚动条信息 */

@@ -19,6 +19,7 @@ export function createMockTheme(): TableTheme {
       selectionBorder: '#1890ff',
       linkColor: '#1890ff',
       placeholderText: '#bfbfbf',
+      primary: '#1890ff',
       tagColors: {
         default: '#f0f0f0',
         primary: '#1890ff',
@@ -122,6 +123,11 @@ export function createMockTheme(): TableTheme {
         blur: 4,
         offsetX: 0,
         offsetY: 2,
+      },
+      watermark: {
+        color: 'rgba(0, 0, 0, 0.15)',
+        fontSize: 16,
+        opacity: 1,
       },
     },
     font: {

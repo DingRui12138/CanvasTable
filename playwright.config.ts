@@ -1,20 +1,24 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// 观察模式：单线程、慢动作、显示浏览器
+// 非观察模式：多线程、快速执行、无头模式
+const isWatchMode = process.env.E2E_WATCH === 'true';
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: 1,  // 单线程执行，方便观察
-  reporter: 'list',  // 终端输出详细日志
+  workers: isWatchMode ? 1 : 5,
+  reporter: 'list',
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    headless: false,  // 显示浏览器窗口
-    actionTimeout: 5000,  // 每个操作超时
+    headless: !isWatchMode,
+    actionTimeout: isWatchMode ? 5000 : 1000,
     launchOptions: {
-      slowMo: 500,  // 每个操作间隔 500ms，方便观察
+      slowMo: isWatchMode ? 500 : 0,
     },
   },
   projects: [

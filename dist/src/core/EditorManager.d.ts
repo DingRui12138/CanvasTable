@@ -1,36 +1,35 @@
-import { CellPosition, CellInfo, Column, Row, InputConfig, DateConfig, TableTheme } from '../types';
-import { LayoutManager } from './LayoutManager';
-import { EventEmitter } from './EventEmitter';
+import { CellPosition, CellInfo, InputConfig, TableTheme, Row } from "../types";
+import { LayoutManager } from "./LayoutManager";
+import { EventEmitter } from "./EventEmitter";
 interface EditorEvents {
     editStart: [CellInfo, InputConfig?];
     editEnd: [CellInfo, unknown];
-    dateEditEnd: [CellInfo, string];
     [key: string]: unknown[];
 }
+/**
+ * EditorManager - Manages DOM-based cell editors
+ *
+ * This class handles input/textarea editors for text editing.
+ * Data is accessed through a getter function to ensure fresh data.
+ */
 export declare class EditorManager {
-    private container;
-    private canvas;
+    private wrapper;
     private layoutManager;
     private eventEmitter;
     private theme;
+    private getRows;
     private inputElement;
-    private dateElement;
     private editingCell;
-    private columns;
-    private rows;
     private scrollLeft;
     private scrollTop;
-    private dpr;
     private onScrollCallback;
     private wheelHandler;
     private placeholderStyle;
-    constructor(container: HTMLElement, canvas: HTMLCanvasElement, layoutManager: LayoutManager, eventEmitter: EventEmitter<EditorEvents>, theme: TableTheme);
+    private scrollbarStyle;
+    constructor(wrapper: HTMLElement, _canvas: HTMLCanvasElement, layoutManager: LayoutManager, eventEmitter: EventEmitter<EditorEvents>, theme: TableTheme, getRows: () => Row[]);
     setOnScrollCallback(callback: (deltaX: number, deltaY: number) => void): void;
-    setColumns(columns: Column[]): void;
-    setRows(rows: Row[]): void;
     setTheme(theme: TableTheme): void;
     setScroll(scrollLeft: number, scrollTop: number): void;
-    setDpr(dpr: number): void;
     /**
      * 将 CellPosition 转换为 CellInfo，包含 row 和 column 数据
      */
@@ -38,16 +37,8 @@ export declare class EditorManager {
     startEditing(cell: CellPosition, config?: InputConfig): void;
     endEditing(save: boolean): void;
     isEditing(): boolean;
-    isDateEditing(): boolean;
     getEditingCell(): CellPosition | null;
-    startDateEditing(cell: CellPosition, config?: DateConfig): void;
-    endDateEditing(save: boolean): void;
     updatePosition(): void;
-    private handleDateBlur;
-    private handleDateChange;
-    private handleDateKeyDown;
-    private handleDateWheel;
-    private destroyDateElement;
     private handleBlur;
     private handleKeyDown;
     private handleInputWheel;

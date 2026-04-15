@@ -1,5 +1,6 @@
 import { InteractionManager } from '@/core/InteractionManager';
 import { LayoutManager } from '@/core/LayoutManager';
+import { DataManager } from '@/core/DataManager';
 import { EventEmitter } from '@/core/EventEmitter';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { SelectionConfig, EditingConfig, SortConfig, FilterConfig, CellPosition, Column } from '@/types';
@@ -42,6 +43,7 @@ describe('InteractionManager', () => {
   let interactionManager: InteractionManager;
   let canvas: HTMLCanvasElement;
   let layoutManager: LayoutManager;
+  let dataManager: DataManager;
   let eventEmitter: EventEmitter;
   let mockTheme: ReturnType<typeof createMockTheme>;
   let selectionConfig: SelectionConfig;
@@ -56,6 +58,7 @@ describe('InteractionManager', () => {
     layoutManager = new LayoutManager(undefined, mockTheme);
     layoutManager.setViewportSize(800, 600);
 
+    dataManager = new DataManager();
     eventEmitter = new EventEmitter();
     selectionConfig = { mode: 'cell', multi: true };
     editingConfig = { enabled: true, mode: 'dblclick' };
@@ -63,6 +66,7 @@ describe('InteractionManager', () => {
     interactionManager = new InteractionManager(
       canvas,
       layoutManager,
+      dataManager,
       eventEmitter as unknown as EventEmitter,
       selectionConfig,
       editingConfig
@@ -72,9 +76,8 @@ describe('InteractionManager', () => {
     const columns = createTestColumns();
     const rows = createTestRows(10);
     layoutManager.calculateLayout(columns, rows);
-    interactionManager.setColumns(columns);
-    interactionManager.setRows(rows);
-    interactionManager.setAllRows(rows);
+    dataManager.setColumns(columns);
+    dataManager.setRows(rows);
   });
 
   afterEach(() => {
@@ -159,8 +162,8 @@ describe('InteractionManager', () => {
         const rows = [{ id: '1', data: { id: 1 } }];
 
         layoutManager.calculateLayout(columns, rows);
-        interactionManager.setColumns(columns);
-        interactionManager.setRows(rows);
+        dataManager.setColumns(columns);
+        dataManager.setRows(rows);
 
         const cell: CellPosition = { rowIndex: 0, columnIndex: 0 };
         interactionManager.startEditing(cell);
@@ -174,8 +177,8 @@ describe('InteractionManager', () => {
         const rows = createTestRows(1);
 
         layoutManager.calculateLayout(columns, rows);
-        interactionManager.setColumns(columns);
-        interactionManager.setRows(rows);
+        dataManager.setColumns(columns);
+        dataManager.setRows(rows);
 
         // name 列 (columnIndex: 1) 是 editable: true
         const cell: CellPosition = { rowIndex: 0, columnIndex: 1 };
@@ -191,8 +194,8 @@ describe('InteractionManager', () => {
         const rows = createTestRows(1);
 
         layoutManager.calculateLayout(columns, rows);
-        interactionManager.setColumns(columns);
-        interactionManager.setRows(rows);
+        dataManager.setColumns(columns);
+        dataManager.setRows(rows);
 
         interactionManager.startEditing({ rowIndex: 0, columnIndex: 1 });
         interactionManager.endEditing(false);
@@ -225,34 +228,6 @@ describe('InteractionManager', () => {
       it('should return selected row indices', () => {
         const result = interactionManager.getSelectedRows();
         expect(Array.isArray(result)).toBe(true);
-      });
-    });
-  });
-
-  describe('data management', () => {
-    describe('setColumns', () => {
-      it('should update columns', () => {
-        const newColumns: Column[] = [
-          { key: 'new', title: 'New Column', width: 100 },
-        ];
-        interactionManager.setColumns(newColumns);
-        // Columns are used internally
-      });
-    });
-
-    describe('setRows', () => {
-      it('should update rows', () => {
-        const newRows = createTestRows(5);
-        interactionManager.setRows(newRows);
-        // Rows are used internally
-      });
-    });
-
-    describe('setAllRows', () => {
-      it('should update all rows', () => {
-        const newRows = createTestRows(20);
-        interactionManager.setAllRows(newRows);
-        // All rows are used internally
       });
     });
   });
@@ -454,6 +429,7 @@ describe('InteractionManager', () => {
         x: 100,
         y: 100,
         width: 150,
+        mode: 'select',
         options: [{ label: 'Test', value: 'test', checked: false }],
         scrollTop: 0,
         columnKey: 'name',
@@ -675,8 +651,8 @@ describe('InteractionManager', () => {
       const columns = createTestColumns();
       const rows = createTestRows(1);
       layoutManager.calculateLayout(columns, rows);
-      interactionManager.setColumns(columns);
-      interactionManager.setRows(rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
 
       const rect = canvas.getBoundingClientRect();
       const headerHeight = 36;
@@ -701,8 +677,8 @@ describe('InteractionManager', () => {
       const rows = [{ id: '1', data: { id: 1 } }];
 
       layoutManager.calculateLayout(columns, rows);
-      interactionManager.setColumns(columns);
-      interactionManager.setRows(rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
 
       const rect = canvas.getBoundingClientRect();
       const headerHeight = 36;
@@ -726,8 +702,8 @@ describe('InteractionManager', () => {
       const columns = createTestColumns();
       const rows = createTestRows(5);
       layoutManager.calculateLayout(columns, rows);
-      interactionManager.setColumns(columns);
-      interactionManager.setRows(rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
 
       const rect = canvas.getBoundingClientRect();
       const headerHeight = 36;
@@ -753,8 +729,8 @@ describe('InteractionManager', () => {
       const columns = createTestColumns();
       const rows = createTestRows(5);
       layoutManager.calculateLayout(columns, rows);
-      interactionManager.setColumns(columns);
-      interactionManager.setRows(rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
 
       // First select a cell
       interactionManager.setSelectedCells([{ rowIndex: 0, columnIndex: 0 }]);
@@ -972,8 +948,8 @@ describe('InteractionManager', () => {
       const columns = createTestColumns();
       const rows = createTestRows(5);
       layoutManager.calculateLayout(columns, rows);
-      interactionManager.setColumns(columns);
-      interactionManager.setRows(rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
 
       const rect = canvas.getBoundingClientRect();
       const headerHeight = 36;
@@ -1006,6 +982,7 @@ describe('InteractionManager', () => {
         x: 100,
         y: 100,
         width: 150,
+        mode: 'select',
         columnKey: 'name',
         options: Array.from({ length: 20 }, (_, i) => ({ label: `Filter ${i}`, value: `filter-${i}`, checked: false })),
         scrollTop: 0,
@@ -1071,8 +1048,8 @@ describe('InteractionManager', () => {
       const columns = createTestColumns();
       const rows = createTestRows(5);
       layoutManager.calculateLayout(columns, rows);
-      interactionManager.setColumns(columns);
-      interactionManager.setRows(rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
 
       const rect = canvas.getBoundingClientRect();
 
