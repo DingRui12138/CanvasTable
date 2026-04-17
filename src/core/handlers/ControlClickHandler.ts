@@ -61,7 +61,10 @@ export class ControlClickHandler extends BaseHandler {
 
       // Check if click is within progress bar range
       if (relativeX >= 0 && relativeX <= barWidth && relativeY >= 0 && relativeY <= barHeight) {
-        const newValue = Math.max(0, Math.min(100, (relativeX / barWidth) * 100));
+        const precision = config.precision ?? 0;
+        const rawValue = Math.max(0, Math.min(100, (relativeX / barWidth) * 100));
+        const newValue =
+          precision === 0 ? Math.round(rawValue) : Number(rawValue.toFixed(precision));
 
         // Auto update row.data
         if (column && row) {
@@ -129,6 +132,9 @@ export class ControlClickHandler extends BaseHandler {
         }
 
         newValue = Math.max(0, Math.min(100, newValue));
+
+        const precision = config.precision ?? 0;
+        newValue = precision === 0 ? Math.round(newValue) : Number(newValue.toFixed(precision));
 
         // Auto update row.data
         if (column && row) {

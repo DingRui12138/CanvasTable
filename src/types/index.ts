@@ -1,3 +1,5 @@
+import type { CTElement } from "../core/jsx/types";
+
 export type CellType =
   | "text"
   | "number"
@@ -80,6 +82,8 @@ export interface RenderResult {
   rating?: RatingConfig;
   color?: ColorPickerConfig;
   customRender?: (context: CustomRenderContext) => void;
+  /** JSX 渲染函数，返回 CTElement 树 */
+  jsxRender?: () => CTElement;
   /** Star bounds for rating click detection */
   starBounds?: Array<{ index: number; x: number; width: number }>;
 }
@@ -225,6 +229,8 @@ export interface ProgressConfig {
   // === 交互 ===
   /** 是否可交互（点击调整进度） */
   interactive?: boolean;
+  /** 小数位数，默认 0（整数百分比，如 45%），设为 1 则显示一位小数（如 45.5%） */
+  precision?: number;
 
   // === 状态 ===
   /** 进度条状态 */
@@ -303,6 +309,8 @@ export interface SelectConfig {
   options: SelectOption[];
   placeholder?: string;
   multiple?: boolean;
+  /** 多选时各项分隔符，不指定则使用表格全局配置或默认 ", " */
+  separator?: string;
 }
 
 export interface DateConfig {
@@ -830,6 +838,7 @@ export interface TableEventHandlers {
   onSwitchChange?: (cell: CellPosition, checked: boolean) => void;
   onSelectChange?: (cell: CellPosition, value: unknown) => void;
   onTagsChange?: (cell: CellPosition, values: unknown[]) => void;
+  onProgressChange?: (cell: CellPosition, value: number) => void;
   onRatingChange?: (cell: CellPosition, value: number) => void;
   onColorChange?: (cell: CellPosition, color: string) => void;
   onColumnHide?: (columnKey: string) => void;
@@ -885,6 +894,10 @@ export interface CanvasTableBaseProps {
   lazyLoad?: LazyLoadConfig;
   /** 图片加载配置 */
   imageLoad?: ImageLoadConfig;
+  /** 行高计算函数，返回每行高度。不指定则使用默认 32px */
+  rowHeight?: (row: Row, rowIndex: number) => number;
+  /** 多选列分隔符，默认 ", " */
+  multipleSelectSeparator?: string;
 }
 
 export type CanvasTableProps = CanvasTableBaseProps & TableEventHandlers;
@@ -926,8 +939,18 @@ export interface InteractionState {
   isSelecting: boolean;
   selectionStart: CellPosition | null;
   isDragging: boolean;
-  dragType: "column-resize" | "column-reorder" | "row-reorder" | null;
+  dragType: "column-resize" | "column-reorder" | "row-reorder" | "progress-drag" | null;
   dragTarget: unknown;
+  /** 进度条拖拽状态 */
+  progressDragState?: {
+    cell: CellPosition;
+    config: ProgressConfig;
+    column: Column;
+    row: Row;
+    startX: number;
+    startValue: number;
+    displayValue: number; // 拖拽过程中的临时显示值
+  };
   tooltip: TooltipState | null;
   dropdown: DropdownState | null;
   filterDropdown: FilterDropdownState | null;

@@ -10,6 +10,7 @@ pnpm-debug.log*
 .idea/
 .claude
 coverage/
+docs/plans/
 
 # Logs
 logs

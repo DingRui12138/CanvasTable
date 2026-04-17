@@ -94,6 +94,7 @@ export const TableEvents = {
   TAGS_CHANGE: "tagsChange",
   DATE_SELECT: "dateSelect",
   PROGRESS_CHANGE: "progressChange",
+  PROGRESS_DRAG: "progressDrag", // 进度条拖拽过程中的实时渲染
   RATING_CHANGE: "ratingChange",
   COLOR_CHANGE: "colorChange",
 

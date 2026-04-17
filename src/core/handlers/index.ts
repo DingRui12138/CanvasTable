@@ -16,7 +16,7 @@ export { ClipboardHandler } from "./ClipboardHandler";
 export { DragHandler, type SiblingColumnInfo } from "./DragHandler";
 export { EditingHandler } from "./EditingHandler";
 export { DropdownHandler } from "./DropdownHandler";
-export { ImageHandler } from "./ImageHandler";
+export { ImageHandler, type ImageEditorClickResult } from "./ImageHandler";
 export { ContextMenuHandler } from "./ContextMenuHandler";
 export { HeaderHandler, type SiblingColumnInfo as HeaderSiblingColumnInfo } from "./HeaderHandler";
 export { ControlClickHandler } from "./ControlClickHandler";

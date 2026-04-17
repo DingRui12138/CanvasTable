@@ -179,7 +179,9 @@ export class CanvasTable implements CanvasTableAPI {
     this.dataManager = new DataManager(props.rowKey);
     this.layoutManager = new LayoutManager(virtualScrollConfig, this.theme);
     this.layoutManager.setShowRowNumbers(props.showRowNumbers === true);
+    this.layoutManager.setRowHeightFn(props.rowHeight);
     this.renderer = new Renderer(this.canvas, this.theme, this.layoutManager);
+    this.renderer.setMultipleSelectSeparator(props.multipleSelectSeparator ?? ", ");
 
     // 初始化渲染缓存相关管理器
     this.rowIdManager = this.renderer.getRowIdManager();
@@ -414,6 +416,19 @@ export class CanvasTable implements CanvasTableAPI {
       if (this.props.onSwitchChange) {
         this.props.onSwitchChange(cell, checked);
       }
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.PROGRESS_CHANGE, (_cell: unknown, _value: unknown) => {
+      const cell = _cell as CellPosition;
+      const value = _value as number;
+      if (this.props.onProgressChange) {
+        this.props.onProgressChange(cell, value);
+      }
+      this.render();
+    });
+
+    this.eventEmitter.on(Events.PROGRESS_DRAG, () => {
       this.render();
     });
 
@@ -880,6 +895,7 @@ export class CanvasTable implements CanvasTableAPI {
         headerContextMenu: interactionState.headerContextMenu,
         hoveredImageIndex: this.interactionManager.getHoveredImageIndex(),
         hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
+        progressDragState: interactionState.progressDragState,
       },
     );
 

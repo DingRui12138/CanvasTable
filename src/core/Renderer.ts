@@ -51,6 +51,10 @@ import {
   LRUCache,
   getColumnField,
 } from "../utils";
+import { CTRenderer, LayoutEngine, MeasurementEngine, type CTElement } from "./jsx";
+
+// 标准行高（用于 UI 元素的固定尺寸计算，不随动态行高变化）
+const STANDARD_ROW_HEIGHT = 32;
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -70,6 +74,9 @@ export class Renderer {
   private hoveredPlaceholderColumnIndex: number = -1;
   private isDestroyed = false;
 
+  // 多选列分隔符
+  private multipleSelectSeparator: string = ", ";
+
   // 图片加载队列（延迟加载 + 请求取消）
   private imageLoadQueue: ImageLoadQueue;
 
@@ -83,6 +90,49 @@ export class Renderer {
   // 文本宽度缓存（用于按钮等需要测量文本宽度的场景）
   private textWidthCache: Map<string, number> = new Map();
   private textWidthCacheKey: string = ""; // 当前字体配置的 key
+
+  // 动态行高支持
+  /**
+   * 根据单元格高度计算可显示行数
+   */
+  private calculateMaxRows(cellHeight: number, lineHeight: number, padding: number = 8): number {
+    return Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
+  }
+
+  /**
+   * 多行文本换行
+   */
+  private wrapTextToLines(text: string, maxWidth: number, maxRows: number): string[] {
+    const lines: string[] = [];
+    let currentLine = "";
+
+    for (const char of text) {
+      const testLine = currentLine + char;
+      if (this.ctx.measureText(testLine).width > maxWidth) {
+        if (currentLine) lines.push(currentLine);
+        currentLine = char;
+        if (lines.length >= maxRows) break;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    if (currentLine && lines.length < maxRows) {
+      lines.push(currentLine);
+    }
+
+    // 如果超出 maxRows，最后一行添加省略号
+    if (lines.length === maxRows && text.length > lines.join("").length) {
+      const lastLine = lines[lines.length - 1]!;
+      const ellipsis = "...";
+      let truncated = lastLine;
+      while (truncated.length > 0 && this.ctx.measureText(truncated + ellipsis).width > maxWidth) {
+        truncated = truncated.slice(0, -1);
+      }
+      lines[lines.length - 1] = truncated + ellipsis;
+    }
+
+    return lines;
+  }
 
   // 性能监控
   private performanceEnabled: boolean = false;
@@ -104,6 +154,8 @@ export class Renderer {
   private currentHoveredCell: CellPosition | null = null;
   private currentHoveredImageIndex: number = -1;
   private currentHoveredButtonIndex: number = -1;
+  private currentProgressDragState: import("../types").InteractionState["progressDragState"] =
+    undefined;
 
   // 渲染缓存相关
   private renderCache: RenderCache | null = null;
@@ -142,6 +194,10 @@ export class Renderer {
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+  }
+
+  setMultipleSelectSeparator(separator: string): void {
+    this.multipleSelectSeparator = separator;
   }
 
   /**
@@ -246,6 +302,7 @@ export class Renderer {
       headerContextMenu?: HeaderContextMenuState | null;
       hoveredImageIndex?: number;
       hoveredButtonIndex?: number;
+      progressDragState?: import("../types").InteractionState["progressDragState"];
     },
   ): void {
     this.currentSwitchAnimations = options.switchAnimations;
@@ -253,6 +310,7 @@ export class Renderer {
     this.currentHoveredCell = options.hoveredCell;
     this.currentHoveredImageIndex = options.hoveredImageIndex ?? -1;
     this.currentHoveredButtonIndex = options.hoveredButtonIndex ?? -1;
+    this.currentProgressDragState = options.progressDragState;
 
     // 开始性能监控帧
     this.beginFrame();
@@ -1698,8 +1756,21 @@ export class Renderer {
       }
 
       if (type === "progress" && renderResult.progress) {
+        // 检查是否是正在拖拽的进度条
+        const isDragging =
+          rowIndex !== undefined &&
+          colIndex !== undefined &&
+          this.currentProgressDragState &&
+          this.currentProgressDragState.cell.rowIndex === rowIndex &&
+          this.currentProgressDragState.cell.columnIndex === colIndex;
+
+        // 如果正在拖拽，使用 displayValue
+        const progressConfig = isDragging
+          ? { ...renderResult.progress!, value: this.currentProgressDragState!.displayValue }
+          : renderResult.progress!;
+
         this.measureRender("progress", () =>
-          this.renderProgress(x, y, width, height, renderResult.progress!),
+          this.renderProgress(x, y, width, height, progressConfig),
         );
         return;
       }
@@ -1715,6 +1786,47 @@ export class Renderer {
         this.measureRender("color", () =>
           this.renderColorCell(x, y, width, height, renderResult.color!, isDisabled ?? false),
         );
+        return;
+      }
+
+      // JSX render handling - before customRender
+      if (type === "custom" && renderResult.jsxRender) {
+        this.measureRender("jsx", () => {
+          const elementTree = renderResult.jsxRender!();
+          const measurementEngine = new MeasurementEngine(this.ctx);
+          const layoutEngine = new LayoutEngine(measurementEngine);
+          const ctRenderer = new CTRenderer(this.ctx, layoutEngine, this.theme);
+
+          // 计算元素树尺寸，以便在单元格内垂直居中
+          const treeLayouts = layoutEngine.layout(elementTree, 0, 0);
+          let treeHeight = 0;
+          for (const layout of treeLayouts) {
+            const bottom = layout.y + layout.height;
+            if (bottom > treeHeight) treeHeight = bottom;
+          }
+
+          // 计算垂直居中偏移
+          // 如果内容高度小于可用空间（height - padding*2），则使用 padding + 居中偏移
+          // 如果内容高度大于可用空间，则忽略 padding，直接居中于整个单元格
+          const availableHeight = height - padding * 2;
+          let yOffset: number;
+          let startX: number;
+          let startY: number;
+
+          if (treeHeight <= availableHeight) {
+            // 内容在 padding 区域内居中
+            yOffset = (availableHeight - treeHeight) / 2;
+            startX = x + padding;
+            startY = y + padding + yOffset;
+          } else {
+            // 内容超出 padding 区域，居中于整个单元格
+            yOffset = (height - treeHeight) / 2;
+            startX = x + padding;
+            startY = y + yOffset;
+          }
+
+          ctRenderer.render(elementTree, startX, startY);
+        });
         return;
       }
 
@@ -1751,64 +1863,104 @@ export class Renderer {
         const align: HorizontalAlign = style?.horizontalAlign ?? defaultAlign ?? "left";
         const verticalAlign: VerticalAlign = style?.verticalAlign ?? "middle";
 
+        const fontSize = this.theme.font.size;
+        const lineHeight = fontSize * 1.5;
         const maxTextWidth = width - padding * 2;
-        const ellipsis = "...";
-        let textWidth = this.ctx.measureText(displayText).width;
 
-        if (textWidth > maxTextWidth) {
-          let truncated = displayText;
-          while (
-            truncated.length > 0 &&
-            this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
-          ) {
-            truncated = truncated.slice(0, -1);
+        // 计算可显示行数
+        const maxRows = this.calculateMaxRows(height, lineHeight, padding);
+
+        if (maxRows > 1) {
+          // 多行显示模式
+          const lines = this.wrapTextToLines(displayText, maxTextWidth, maxRows);
+          const totalHeight = lines.length * lineHeight;
+
+          // 计算起始 Y（根据 verticalAlign）
+          let startY: number;
+          if (verticalAlign === "top") {
+            startY = y + padding;
+          } else if (verticalAlign === "bottom") {
+            startY = y + height - padding - totalHeight;
+          } else {
+            // middle: 居中
+            startY = y + (height - totalHeight) / 2;
           }
-          displayText = truncated + ellipsis;
-          textWidth = this.ctx.measureText(displayText).width;
-        }
 
-        let textX: number;
-        switch (align) {
-          case "center":
-            textX = x + (width - this.ctx.measureText(displayText).width) / 2;
-            break;
-          case "right":
-            textX = x + width - padding - this.ctx.measureText(displayText).width;
-            break;
-          default:
-            textX = x + padding;
-        }
-
-        let textY: number;
-        switch (verticalAlign) {
-          case "top":
-            this.ctx.textBaseline = "top";
-            textY = y + padding;
-            break;
-          case "bottom":
-            this.ctx.textBaseline = "bottom";
-            textY = y + height - padding;
-            break;
-          default:
-            this.ctx.textBaseline = "middle";
-            textY = y + height / 2;
-        }
-
-        if (type === "tag") {
-          this.renderTag(displayText, textX, textY, fontSize);
+          this.ctx.textBaseline = "top";
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i]!;
+            let textX: number;
+            switch (align) {
+              case "center":
+                textX = x + (width - this.ctx.measureText(line).width) / 2;
+                break;
+              case "right":
+                textX = x + width - padding - this.ctx.measureText(line).width;
+                break;
+              default:
+                textX = x + padding;
+            }
+            this.ctx.fillText(line, textX, startY + i * lineHeight);
+          }
         } else {
-          this.ctx.fillText(displayText, textX, textY);
+          // 单行显示模式（原有逻辑）
+          const ellipsis = "...";
+          let textWidth = this.ctx.measureText(displayText).width;
 
-          if (type === "link") {
-            const textWidth = this.ctx.measureText(displayText).width;
-            this.ctx.strokeStyle = color;
-            this.ctx.lineWidth = 1;
-            this.ctx.beginPath();
-            this.ctx.moveTo(textX, textY + fontSize / 2 + 2);
-            this.ctx.lineTo(textX + textWidth, textY + fontSize / 2 + 2);
-            this.ctx.stroke();
+          if (textWidth > maxTextWidth) {
+            let truncated = displayText;
+            while (
+              truncated.length > 0 &&
+              this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
+            ) {
+              truncated = truncated.slice(0, -1);
+            }
+            displayText = truncated + ellipsis;
           }
-        }
+
+          let textX: number;
+          switch (align) {
+            case "center":
+              textX = x + (width - this.ctx.measureText(displayText).width) / 2;
+              break;
+            case "right":
+              textX = x + width - padding - this.ctx.measureText(displayText).width;
+              break;
+            default:
+              textX = x + padding;
+          }
+
+          let textY: number;
+          switch (verticalAlign) {
+            case "top":
+              this.ctx.textBaseline = "top";
+              textY = y + padding;
+              break;
+            case "bottom":
+              this.ctx.textBaseline = "bottom";
+              textY = y + height - padding;
+              break;
+            default:
+              this.ctx.textBaseline = "middle";
+              textY = y + height / 2;
+          }
+
+          if (type === "tag") {
+            this.renderTag(displayText, textX, textY, fontSize);
+          } else {
+            this.ctx.fillText(displayText, textX, textY);
+
+            if (type === "link") {
+              const textWidth = this.ctx.measureText(displayText).width;
+              this.ctx.strokeStyle = color;
+              this.ctx.lineWidth = 1;
+              this.ctx.beginPath();
+              this.ctx.moveTo(textX, textY + fontSize / 2 + 2);
+              this.ctx.lineTo(textX + textWidth, textY + fontSize / 2 + 2);
+              this.ctx.stroke();
+            }
+          }
+        } // end else (单行模式)
       }); // Close measureRender lambda
     } finally {
       // 确保始终恢复 canvas 状态
@@ -2918,9 +3070,9 @@ export class Renderer {
   ): void {
     const size = config.size ?? "medium";
 
-    // 根据 size 计算直径占单元格高度的比例
+    // 根据 size 计算直径，基于标准行高（不随动态行高变化）
     const sizeRatio = size === "small" ? 0.6 : size === "large" ? 0.9 : 0.75;
-    const defaultDiameter = Math.floor(cellHeight * sizeRatio);
+    const defaultDiameter = Math.floor(STANDARD_ROW_HEIGHT * sizeRatio);
     const diameter = config.width ?? defaultDiameter;
     const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.12));
 
@@ -2976,9 +3128,9 @@ export class Renderer {
   ): void {
     const size = config.size ?? "medium";
 
-    // 根据 size 计算直径占单元格高度的比例
+    // 根据 size 计算直径，基于标准行高（不随动态行高变化）
     const sizeRatio = size === "small" ? 0.7 : size === "large" ? 0.95 : 0.85;
-    const defaultDiameter = Math.floor(cellHeight * sizeRatio);
+    const defaultDiameter = Math.floor(STANDARD_ROW_HEIGHT * sizeRatio);
     const diameter = config.width ?? defaultDiameter;
     const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.1));
 
@@ -3200,7 +3352,8 @@ export class Renderer {
     isDisabled: boolean,
   ): void {
     const padding = 8;
-    const colorBoxSize = Math.min(height - padding * 2, 24);
+    // 颜色块尺寸基于标准行高（不随动态行高变化）
+    const colorBoxSize = Math.min(STANDARD_ROW_HEIGHT - padding * 2, 24);
     const colorBoxX = x + (width - colorBoxSize) / 2;
     const colorBoxY = y + (height - colorBoxSize) / 2;
 
@@ -3524,36 +3677,66 @@ export class Renderer {
     this.ctx.rect(x, y, width, height);
     this.ctx.stroke();
 
-    let displayText = "";
-    if (config.multiple && Array.isArray(config.value)) {
-      if (config.value.length > 0) {
-        const labels = config.value.map((v) => {
-          const opt = config.options.find((o) => o.value === v);
-          return opt?.label ?? String(v);
-        });
-        displayText = labels.join(", ");
+    const fontSize = this.theme.font.size;
+    const lineHeight = fontSize * 1.5;
+
+    // multiple 模式：纯文本渲染，用分隔符连接
+    if (config.multiple && Array.isArray(config.value) && config.value.length > 0) {
+      const maxRows = this.calculateMaxRows(height, lineHeight, padding);
+      const maxTextWidth = width - padding * 2 - arrowWidth;
+
+      // 收集选中值的标签文本
+      const labels = config.value.map((v) => {
+        const opt = config.options.find((o) => o.value === v);
+        return opt?.label ?? String(v);
+      });
+
+      // 使用分隔符连接成单一文本
+      const separator = config.separator ?? this.multipleSelectSeparator;
+      const fullText = labels.join(separator);
+
+      // 多行文本换行
+      const lines = this.wrapTextToLines(fullText, maxTextWidth, maxRows);
+
+      // 渲染纯文本
+      this.ctx.fillStyle = this.theme.colors.cellText;
+      this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
+      this.ctx.textBaseline = "top";
+
+      const totalHeight = lines.length * lineHeight;
+      const startY = y + (height - totalHeight) / 2;
+
+      for (let rowIdx = 0; rowIdx < lines.length; rowIdx++) {
+        const line = lines[rowIdx]!;
+        this.ctx.fillText(
+          line,
+          x + padding,
+          startY + rowIdx * lineHeight + (lineHeight - fontSize) / 2,
+        );
       }
-    } else if (config.value !== undefined && config.value !== null) {
-      const selectedOption = config.options.find((opt) => opt.value === config.value);
-      displayText = selectedOption?.label ?? String(config.value);
+    } else {
+      // 单选模式（原有逻辑）
+      let displayText = "";
+      if (config.value !== undefined && config.value !== null) {
+        const selectedOption = config.options.find((opt) => opt.value === config.value);
+        displayText = selectedOption?.label ?? String(config.value);
+      }
+
+      const placeholder = config.placeholder ?? "请选择";
+      const text = displayText || placeholder;
+
+      this.ctx.fillStyle = displayText
+        ? this.theme.colors.cellText
+        : this.theme.colors.placeholderText;
+      this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
+      this.ctx.textBaseline = "middle";
+
+      const maxTextWidth = width - padding * 2 - arrowWidth;
+      const truncatedText = truncateText(text, Math.floor(maxTextWidth / (fontSize * 0.6)));
+      this.ctx.fillText(truncatedText, x + padding, y + height / 2);
     }
 
-    const placeholder = config.placeholder ?? "请选择";
-    const text = displayText || placeholder;
-
-    this.ctx.fillStyle = displayText
-      ? this.theme.colors.cellText
-      : this.theme.colors.placeholderText;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-
-    const maxTextWidth = width - padding * 2 - arrowWidth;
-    const truncatedText = truncateText(
-      text,
-      Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
-    );
-    this.ctx.fillText(truncatedText, x + padding, y + height / 2);
-
+    // 绘制下拉箭头
     this.ctx.fillStyle = this.theme.colors.date.icon;
     this.ctx.beginPath();
     const arrowX = x + width - padding - 8;
@@ -3683,7 +3866,8 @@ export class Renderer {
     }
 
     const padding = 4; // 单元格内边距
-    const maxImgSize = Math.min(cellWidth, cellHeight) - padding * 2;
+    // 图片最大尺寸基于标准行高（不随动态行高变化）
+    const maxImgSize = Math.min(cellWidth, STANDARD_ROW_HEIGHT) - padding * 2;
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     // 限制图片大小不超过单元格可用空间
@@ -3816,7 +4000,8 @@ export class Renderer {
   ): void {
     const images = config.images!;
     const padding = 4; // 单元格内边距
-    const maxImgSize = Math.min(cellWidth, cellHeight) - padding * 2;
+    // 图片最大尺寸基于标准行高（不随动态行高变化）
+    const maxImgSize = Math.min(cellWidth, STANDARD_ROW_HEIGHT) - padding * 2;
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     // 限制图片大小不超过单元格可用空间
@@ -3828,22 +4013,23 @@ export class Renderer {
       : (config.borderRadius ?? 0);
     const showMoreCount = config.showMoreCount !== false;
 
-    // 根据单元格宽度计算能显示的图片数量
+    // 根据单元格宽度和高度计算能显示的图片数量（支持多行）
     const availableWidth = cellWidth - padding * 2;
-    const userMaxVisible = config.maxVisible;
-    let calculatedMaxVisible: number;
+    const availableHeight = cellHeight - padding * 2;
 
-    if (images.length === 1) {
-      calculatedMaxVisible = 1;
-    } else {
-      // 计算能显示几个图片（包括间距）
-      const maxByWidth = Math.floor((availableWidth + gap) / (imgWidth + gap));
-      // 如果显示 +N，需要预留一个位置
-      const reservedForMore = showMoreCount ? 1 : 0;
-      calculatedMaxVisible = Math.max(1, maxByWidth - reservedForMore);
-    }
+    // 每行能显示几个图片
+    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
+    // 能显示几行
+    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
+
+    // 总共能显示几个图片
+    const autoMaxVisible = imagesPerRow * maxRows;
+    // 如果显示 +N，需要预留一个位置
+    const reservedForMore = showMoreCount ? 1 : 0;
+    const calculatedMaxVisible = Math.max(1, autoMaxVisible - reservedForMore);
 
     // 如果用户指定了 maxVisible，取较小值
+    const userMaxVisible = config.maxVisible;
     const maxVisible =
       userMaxVisible !== undefined
         ? Math.min(userMaxVisible, calculatedMaxVisible)
@@ -3863,24 +4049,30 @@ export class Renderer {
     const displayImages = images.slice(0, displayCount);
     const moreCount = hasMore ? images.length - maxVisible : 0;
 
-    // 计算实际渲染的内容宽度
-    let contentWidth: number;
-    if (hasMore && showMoreCount) {
-      // 显示图片 + +N 块
-      contentWidth = displayCount * imgWidth + displayCount * gap + imgWidth;
-    } else {
-      contentWidth = displayImages.length * imgWidth + Math.max(0, displayImages.length - 1) * gap;
-    }
+    // 计算实际渲染的内容尺寸（支持多行）
+    const displayRows = Math.ceil(displayCount / imagesPerRow);
+    const lastRowImages = displayCount % imagesPerRow || imagesPerRow;
+    const contentWidth =
+      displayRows > 1
+        ? imagesPerRow * imgWidth + (imagesPerRow - 1) * gap
+        : displayCount * imgWidth + (displayCount - 1) * gap;
+    const contentHeight = displayRows * imgHeight + (displayRows - 1) * gap;
+    // 如果有更多，+N 块占一个图片位置
+    const totalContentWidth = hasMore && showMoreCount ? contentWidth : contentWidth;
+    const totalContentHeight = contentHeight;
 
-    // 确保起始位置不超出单元格左边界
-    let startX = x + (cellWidth - contentWidth) / 2;
+    // 居中定位
+    let startX = x + (cellWidth - totalContentWidth) / 2;
     startX = Math.max(x + padding, startX);
-    const imgY = y + (cellHeight - imgHeight) / 2;
+    const startY = y + (cellHeight - totalContentHeight) / 2;
 
-    // 渲染每张图片
+    // 渲染每张图片（多行布局）
     for (let i = 0; i < displayImages.length; i++) {
       const src = displayImages[i]!;
-      const imgX = startX + i * (imgWidth + gap);
+      const row = Math.floor(i / imagesPerRow);
+      const col = i % imagesPerRow;
+      const imgX = startX + col * (imgWidth + gap);
+      const imgY = startY + row * (imgHeight + gap);
       const isCurrentHovered =
         isHovered && config.hoverable !== false && this.currentHoveredImageIndex === i;
 
@@ -3966,12 +4158,16 @@ export class Renderer {
 
     // 渲染 +N 计数（替换最后一张图片或追加）
     if (hasMore && showMoreCount) {
-      const countX = startX + displayCount * (imgWidth + gap);
+      // 计算最后一个位置的行和列
+      const lastRow = Math.floor(displayCount / imagesPerRow);
+      const lastCol = displayCount % imagesPerRow;
+      const countX = startX + lastCol * (imgWidth + gap);
+      const countY = startY + lastRow * (imgHeight + gap);
       const isMoreHovered =
         isHovered && config.hoverable !== false && this.currentHoveredImageIndex === displayCount;
       this.renderMoreCount(
         countX,
-        imgY,
+        countY,
         imgWidth,
         imgHeight,
         borderRadius,
@@ -4889,7 +5085,9 @@ export class Renderer {
     const ellipsis = "...";
 
     const availableWidth = width - padding * 2;
-    const maxLineCount = maxRows;
+    // 根据 height 计算 maxRows，优先使用 config.maxRows 作为上限
+    const autoMaxRows = Math.max(1, Math.floor((height - padding * 2) / (tagHeight + lineGap)));
+    const maxLineCount = Math.min(config.maxRows ?? autoMaxRows, autoMaxRows);
 
     // 缓存已测量的文本宽度，避免重复调用 measureText
     const textWidthCache = new Map<string, number>();

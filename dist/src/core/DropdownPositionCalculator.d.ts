@@ -79,6 +79,10 @@ export declare class DropdownPositionCalculator {
     private static readonly EDGE_PADDING;
     constructor(layoutManager: LayoutManager, scrollState: ScrollState, canvas: HTMLCanvasElement);
     /**
+     * Get logical canvas dimensions (CSS pixels, accounting for devicePixelRatio)
+     */
+    private getLogicalCanvasSize;
+    /**
      * Calculate initial dropdown position
      */
     calculate(params: DropdownPositionParams): DropdownPositionResult;

@@ -16,6 +16,10 @@ export declare class LayoutManager {
     private cellMergeByRow;
     private mergedCellSet;
     private cellToMergeMap;
+    private rowHeightCache;
+    private rowHeightFn?;
+    private cachedRowIds;
+    private rowHeightsDirty;
     private viewportWidth;
     private viewportHeight;
     private scrollLeft;
@@ -34,6 +38,7 @@ export declare class LayoutManager {
     private createEmptyLayoutInfo;
     setViewportSize(width: number, height: number): void;
     setTheme(theme: TableTheme): void;
+    setRowHeightFn(fn?: (row: Row, rowIndex: number) => number): void;
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     getScrollLeft(): number;
     private createRowNumberColumn;

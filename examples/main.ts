@@ -1404,6 +1404,12 @@ const table = new CanvasTable(container, {
   hoverable: true,
   showRowNumbers: true,
   themeMode: "auto",
+  // 动态行高示例：每10行有100px高度，每5行有64px高度，其他为默认32px
+  rowHeight: (_row, rowIndex) => {
+    if (rowIndex % 10 === 0) return 100;
+    if (rowIndex % 5 === 0) return 64;
+    return 32;
+  },
   watermark: {
     enabled: true,
     content: "Canvas Table",

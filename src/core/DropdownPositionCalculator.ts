@@ -12,6 +12,7 @@
 
 import { CellPosition, Column, ScrollState } from "../types";
 import { LayoutManager } from "./LayoutManager";
+import { getDevicePixelRatio } from "../utils";
 
 /**
  * Dropdown anchor type - determines Y-axis positioning reference
@@ -99,13 +100,23 @@ export class DropdownPositionCalculator {
   }
 
   /**
+   * Get logical canvas dimensions (CSS pixels, accounting for devicePixelRatio)
+   */
+  private getLogicalCanvasSize(): { width: number; height: number } {
+    const dpr = getDevicePixelRatio();
+    return {
+      width: this.canvas.width / dpr,
+      height: this.canvas.height / dpr,
+    };
+  }
+
+  /**
    * Calculate initial dropdown position
    */
   calculate(params: DropdownPositionParams): DropdownPositionResult {
     const { width, height, gap = DropdownPositionCalculator.DEFAULT_GAP } = params;
 
-    const canvasWidth = this.canvas.width;
-    const canvasHeight = this.canvas.height;
+    const { width: canvasWidth, height: canvasHeight } = this.getLogicalCanvasSize();
 
     // 1. Calculate X position
     const x = this.calculateX(params, width, canvasWidth);
@@ -128,7 +139,7 @@ export class DropdownPositionCalculator {
     dropdownHeight: number,
     gap: number = DropdownPositionCalculator.DEFAULT_GAP,
   ): { y: number; showAbove: boolean; cellViewportY: number } {
-    const canvasHeight = this.canvas.height;
+    const { height: canvasHeight } = this.getLogicalCanvasSize();
     const { anchorY, cellViewportY } = this.calculateAnchorY(params);
 
     // Calculate position based on current showAbove state
@@ -163,7 +174,7 @@ export class DropdownPositionCalculator {
    * Update X position during horizontal scroll
    */
   updateX(params: DropdownUpdateParams, dropdownWidth: number): number {
-    const canvasWidth = this.canvas.width;
+    const { width: canvasWidth } = this.getLogicalCanvasSize();
     return this.calculateX(params, dropdownWidth, canvasWidth);
   }
 
@@ -353,7 +364,8 @@ export class DropdownPositionCalculator {
     const cellPos = this.getCellPosition(params);
     const cellViewportY = cellPos.y - this.scrollState.scrollTop;
     const headerHeight = this.layoutManager.getLayoutInfo().headerHeight;
+    const { height: canvasHeight } = this.getLogicalCanvasSize();
 
-    return cellViewportY >= headerHeight && cellViewportY + cellPos.height <= this.canvas.height;
+    return cellViewportY >= headerHeight && cellViewportY + cellPos.height <= canvasHeight;
   }
 }

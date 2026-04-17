@@ -1,0 +1,18 @@
+import type { CTElement, CTLayoutInfo } from './types';
+/**
+ * 尺寸测量引擎
+ * CTText: 自动测量宽度，高度由 fontSize/lineHeight 决定
+ * 其他图元: 直接读取 width/height 属性
+ */
+export declare class MeasurementEngine {
+    private ctx;
+    constructor(ctx: CanvasRenderingContext2D);
+    measureTextWidth(text: string, fontSize: number, fontFamily: string): number;
+    measureElement(element: CTElement): CTLayoutInfo;
+    private measureText;
+    private measureRect;
+    private measureCircle;
+    private measureImage;
+    private measureLine;
+}
+//# sourceMappingURL=MeasurementEngine.d.ts.map

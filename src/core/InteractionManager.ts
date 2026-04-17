@@ -440,7 +440,14 @@ export class InteractionManager {
 
     if (this.state.imageEditor) {
       const editorClick = this.imageHandler.handleImageEditorClick(e);
-      if (editorClick) return;
+      if (editorClick === "upload") {
+        this.triggerFileInput();
+        return;
+      }
+      if (editorClick === "inside") {
+        return;
+      }
+      // editorClick === "outside" - close editor
       this.imageHandler.commitImageEditorChanges();
       return;
     }
@@ -846,6 +853,16 @@ export class InteractionManager {
         this.layoutManager.setColumnWidth(column.key, newWidth);
         this.eventEmitter.emit(TableEvents.COLUMN_RESIZE, column, newWidth);
       }
+      return;
+    }
+
+    // 进度条拖拽处理
+    if (
+      this.state.isDragging &&
+      this.state.dragType === "progress-drag" &&
+      this.state.progressDragState
+    ) {
+      this.handleProgressDragMove(e);
       return;
     }
 
@@ -1791,6 +1808,29 @@ export class InteractionManager {
   }
 
   private handleMouseUp = (_e: MouseEvent): void => {
+    // 进度条拖拽结束
+    if (
+      this.state.isDragging &&
+      this.state.dragType === "progress-drag" &&
+      this.state.progressDragState
+    ) {
+      const { cell, column, row, displayValue } = this.state.progressDragState;
+
+      // 拖拽结束时才更新数据
+      if (column && row) {
+        row.data[getColumnField(column)] = displayValue;
+      }
+
+      this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell)!, displayValue);
+
+      this.state.isDragging = false;
+      this.state.dragType = null;
+      this.state.progressDragState = undefined;
+      this.canvas.style.cursor = "default";
+      this.unbindDocumentEvents();
+      return;
+    }
+
     if (
       this.state.isDragging &&
       this.state.dragType === "column-reorder" &&
@@ -1966,12 +2006,32 @@ export class InteractionManager {
     const column = leafColumns[cell.columnIndex];
     const row = this.rows[cell.rowIndex];
 
-    const controlTypes = ["checkbox", "radio", "button", "buttons", "switch", "rating", "progress"];
+    const controlTypes = ["checkbox", "radio", "button", "buttons", "switch", "rating"];
 
     if (column && row) {
       const renderResult = getRenderResult(column, row, cell.rowIndex);
 
       if (renderResult.type && controlTypes.includes(renderResult.type)) {
+        return;
+      }
+
+      // progress 类型：可交互时支持双击编辑
+      if (renderResult.type === "progress" && renderResult.progress) {
+        if (renderResult.progress.interactive !== true) return;
+        if (column.editable === false) return;
+        if (resolveDisabled(column.disabled, row, column)) return;
+
+        // 进入数值编辑模式
+        this.eventEmitter.emit(TableEvents.CELL_DBL_CLICK, this.getCellInfo(cell)!, e);
+        this.eventEmitter.emit(TableEvents.ROW_DBL_CLICK, row, cell.rowIndex, e);
+
+        if (this.editingConfig.enabled !== false) {
+          this.startEditing(cell, {
+            value: String(renderResult.progress.value),
+            type: "number",
+            placeholder: "0-100",
+          });
+        }
         return;
       }
 
@@ -2410,7 +2470,29 @@ export class InteractionManager {
     }
 
     if (renderResult.type === "progress" && renderResult.progress) {
-      return this.handleProgressClick(cell, e, renderResult.progress, column, row);
+      const result = this.handleProgressClick(cell, e, renderResult.progress, column, row);
+      if (result) {
+        // 点击成功后启动拖拽状态，只更新显示值不更新数据
+        const precision = renderResult.progress.precision ?? 0;
+        const displayValue =
+          precision === 0
+            ? Math.round(renderResult.progress.value)
+            : Number(renderResult.progress.value.toFixed(precision));
+        this.state.isDragging = true;
+        this.state.dragType = "progress-drag";
+        this.state.progressDragState = {
+          cell,
+          config: renderResult.progress,
+          column,
+          row,
+          startX: e.clientX,
+          startValue: renderResult.progress.value,
+          displayValue: displayValue,
+        };
+        this.canvas.style.cursor = "grabbing";
+        this.bindDocumentEvents();
+      }
+      return result;
     }
 
     if (renderResult.type === "rating" && renderResult.rating) {
@@ -2558,6 +2640,81 @@ export class InteractionManager {
     row: Row | undefined,
   ): boolean => {
     return this.controlClickHandler.handleProgressClick(cell, e, config, column, row);
+  };
+
+  private handleProgressDragMove = (e: MouseEvent): void => {
+    const dragState = this.state.progressDragState;
+    if (!dragState) return;
+
+    const { cell, config, column } = dragState;
+    const rect = this.canvas.getBoundingClientRect();
+    const clickViewportX = e.clientX - rect.left;
+
+    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+    const cellViewportX = this.getCellViewportX(cellPos, column);
+
+    const shape = config.shape ?? "line";
+
+    if (shape === "line") {
+      const padding = 8;
+      const textPosition = config.textPosition ?? "right";
+      const showText = config.showText ?? true;
+      const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
+      const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
+
+      const barX = cellViewportX + padding;
+      const relativeX = clickViewportX - barX;
+
+      const precision = config.precision ?? 0;
+      const rawValue = Math.max(0, Math.min(100, (relativeX / barWidth) * 100));
+      const newValue = precision === 0 ? Math.round(rawValue) : Number(rawValue.toFixed(precision));
+
+      // 只更新显示值，不更新数据
+      dragState.displayValue = newValue;
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    } else if (shape === "circle" || shape === "dashboard") {
+      const clickViewportY = e.clientY - rect.top;
+      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+
+      let centerYOffset = 0;
+      if (shape === "dashboard") {
+        centerYOffset = cellPos.height * 0.05;
+      }
+
+      const cellCenterX = cellViewportX + cellPos.width / 2;
+      const cellCenterY = cellViewportY + cellPos.height / 2 + centerYOffset;
+
+      const dx = clickViewportX - cellCenterX;
+      const dy = clickViewportY - cellCenterY;
+
+      let angle = Math.atan2(dy, dx);
+      let newValue: number;
+
+      if (shape === "circle") {
+        angle = angle + Math.PI / 2;
+        if (angle < 0) angle += Math.PI * 2;
+        newValue = (angle / (Math.PI * 2)) * 100;
+      } else {
+        const startAngle = Math.PI * 0.75;
+        const totalAngle = Math.PI * 1.5;
+
+        if (angle < 0) angle += Math.PI * 2;
+
+        let offset = angle - startAngle;
+        if (offset < 0) offset += Math.PI * 2;
+
+        newValue = (offset / totalAngle) * 100;
+      }
+
+      newValue = Math.max(0, Math.min(100, newValue));
+
+      const precision = config.precision ?? 0;
+      newValue = precision === 0 ? Math.round(newValue) : Number(newValue.toFixed(precision));
+
+      // 只更新显示值，不更新数据
+      dragState.displayValue = newValue;
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    }
   };
 
   private handleRatingClick = (
@@ -2860,15 +3017,17 @@ export class InteractionManager {
     if (rows.length === 0) return;
 
     const layoutInfo = this.layoutManager.getLayoutInfo();
-    const rowHeight = layoutInfo.rowHeight;
     const viewportHeight = layoutInfo.viewportHeight;
     const headerHeight = layoutInfo.headerHeight;
 
-    // 计算距离底部的行数
+    // 动态行高模式：使用实际的 totalHeight
+    const totalContentHeight = layoutInfo.totalHeight - headerHeight;
     const scrollBottom = newScrollTop + viewportHeight - headerHeight;
-    const totalContentHeight = rows.length * rowHeight;
     const distanceToBottom = totalContentHeight - scrollBottom;
-    const rowsToBottom = Math.ceil(distanceToBottom / rowHeight);
+
+    // 使用最后一行的高度作为估算单位
+    const lastRowHeight = this.layoutManager.getRowHeightByIndex(rows.length - 1);
+    const rowsToBottom = Math.ceil(distanceToBottom / lastRowHeight);
 
     // 当距离底部小于阈值时触发加载
     if (rowsToBottom <= this.lazyLoadThreshold) {

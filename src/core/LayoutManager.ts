@@ -37,6 +37,12 @@ export class LayoutManager {
   private mergedCellSet: Set<string> = new Set();
   private cellToMergeMap: Map<string, CellMerge> = new Map();
 
+  // 动态行高支持
+  private rowHeightCache: Map<string, number> = new Map(); // 按 row.id 缓存非标准高度
+  private rowHeightFn?: (row: Row, rowIndex: number) => number;
+  private cachedRowIds: string[] = []; // 缓存的行 ID，用于检测数据变化
+  private rowHeightsDirty: boolean = true; // 标记行高度是否需要重新计算
+
   private viewportWidth: number = 0;
   private viewportHeight: number = 0;
   private scrollLeft: number = 0;
@@ -121,6 +127,10 @@ export class LayoutManager {
     this.theme = theme;
     this.layoutInfo.headerHeight = this.theme.row.headerHeight * this.headerDepth;
     this.layoutInfo.rowHeight = this.theme.row.height;
+  }
+
+  setRowHeightFn(fn?: (row: Row, rowIndex: number) => number): void {
+    this.rowHeightFn = fn;
   }
 
   setScrollPosition(scrollLeft: number, scrollTop: number): void {
@@ -528,15 +538,45 @@ export class LayoutManager {
 
   private calculateRowLayout(rows: Row[]): void {
     const rowCount = rows.length;
-    const rowHeight = this.theme.row.height;
+    const defaultHeight = this.theme.row.height;
 
-    // 优化：当前使用统一行高，使用公式计算偏移量
-    // 如果将来需要支持可变行高，需要恢复遍历计算
-    this.rowHeights = Array.from({ length: rowCount }, () => rowHeight);
+    // 检查数据是否变化：比较行数和行 ID
+    const currentRowIds = rows.map((r) => r.id);
+    const rowsChanged =
+      rowCount !== this.cachedRowIds.length ||
+      currentRowIds.some((id, i) => id !== this.cachedRowIds[i]);
+
+    // 如果数据未变化且高度未标记为脏，跳过计算
+    if (!rowsChanged && !this.rowHeightsDirty && this.rowHeights.length === rowCount) {
+      return;
+    }
+
+    // 更新缓存
+    this.cachedRowIds = currentRowIds;
+    this.rowHeightsDirty = false;
+
+    // 计算每行高度
+    if (this.rowHeightFn) {
+      // 动态高度模式
+      const fn = this.rowHeightFn;
+      this.rowHeights = rows.map((row, index) => {
+        const height = fn(row, index);
+        // 缓存非标准高度（与 row.id 关联）
+        if (height !== defaultHeight) {
+          this.rowHeightCache.set(row.id, height);
+        }
+        return height;
+      });
+    } else {
+      // 统一高度模式
+      this.rowHeights = Array.from({ length: rowCount }, () => defaultHeight);
+    }
+
+    // 累加计算 offsets
     this.rowOffsets = Array.from({ length: rowCount });
-
-    for (let i = 0; i < rowCount; i++) {
-      this.rowOffsets[i] = this.layoutInfo.headerHeight + i * rowHeight;
+    this.rowOffsets[0] = this.layoutInfo.headerHeight;
+    for (let i = 1; i < rowCount; i++) {
+      this.rowOffsets[i] = this.rowOffsets[i - 1]! + this.rowHeights[i - 1]!;
     }
 
     this.layoutInfo.rowOffsets = [...this.rowOffsets];
@@ -652,7 +692,12 @@ export class LayoutManager {
   }
 
   private calculateTotalHeight(rowCount: number): number {
-    return this.layoutInfo.headerHeight + rowCount * this.theme.row.height;
+    // 动态行高模式：累加所有行高度
+    let total = this.layoutInfo.headerHeight;
+    for (let i = 0; i < rowCount && i < this.rowHeights.length; i++) {
+      total += this.rowHeights[i]!;
+    }
+    return total;
   }
 
   private updateVisibleRange(): void {
@@ -1010,13 +1055,26 @@ export class LayoutManager {
   }
 
   private findRowIndexAtPosition(y: number): number {
-    for (let i = 0; i < this.rowOffsets.length; i++) {
-      const offset = this.rowOffsets[i]!;
-      const height = this.rowHeights[i]!;
+    // 二分查找优化（动态行高模式下更高效）
+    let left = 0;
+    let right = this.rowOffsets.length - 1;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const offset = this.rowOffsets[mid]!;
+      const height = this.rowHeights[mid]!;
+
       if (y >= offset && y < offset + height) {
-        return i;
+        return mid;
+      }
+
+      if (y < offset) {
+        right = mid - 1;
+      } else {
+        left = mid + 1;
       }
     }
+
     return -1;
   }
 

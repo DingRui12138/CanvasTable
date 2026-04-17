@@ -6,6 +6,8 @@
  */
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
+/** Image editor click result */
+export type ImageEditorClickResult = "outside" | "upload" | "inside";
 export declare class ImageHandler extends BaseHandler {
     private static readonly IMAGE_SIZE;
     private static readonly IMAGE_PADDING;
@@ -28,7 +30,7 @@ export declare class ImageHandler extends BaseHandler {
     /**
      * Handle image editor click
      */
-    handleImageEditorClick(e: MouseEvent): boolean;
+    handleImageEditorClick(e: MouseEvent): ImageEditorClickResult;
     /**
      * Handle file upload
      */

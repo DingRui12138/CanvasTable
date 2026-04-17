@@ -11,6 +11,9 @@ import { EventEmitter } from "../EventEmitter";
 import { getColumnField } from "../../utils";
 import { TableEvents } from "../../constants/events";
 
+/** Image editor click result */
+export type ImageEditorClickResult = "outside" | "upload" | "inside";
+
 export class ImageHandler extends BaseHandler {
   private static readonly IMAGE_SIZE = 64;
   private static readonly IMAGE_PADDING = 8;
@@ -235,8 +238,8 @@ export class ImageHandler extends BaseHandler {
   /**
    * Handle image editor click
    */
-  handleImageEditorClick(e: MouseEvent): boolean {
-    if (!this.state.imageEditor) return false;
+  handleImageEditorClick(e: MouseEvent): ImageEditorClickResult {
+    if (!this.state.imageEditor) return "outside";
 
     const { x, y, images, cell, scrollTop, maxRows } = this.state.imageEditor;
     const coords2 = this.getViewportCoords(e);
@@ -261,12 +264,12 @@ export class ImageHandler extends BaseHandler {
       viewportY > y + editorHeight
     ) {
       // Save changes and close
-      return false; // Signal to close
+      return "outside"; // Signal to close
     }
 
     // Click in upload area
     if (viewportY >= y && viewportY <= y + uploadAreaHeight) {
-      return true; // Signal to trigger file input
+      return "upload"; // Signal to trigger file input
     }
 
     // Calculate click position for image
@@ -299,12 +302,12 @@ export class ImageHandler extends BaseHandler {
               index,
             );
           }
-          return true;
+          return "inside";
         }
       }
     }
 
-    return true;
+    return "inside";
   }
 
   /**

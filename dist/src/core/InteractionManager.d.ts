@@ -160,6 +160,7 @@ export declare class InteractionManager {
     private handleDblClick;
     private handleControlClick;
     private handleProgressClick;
+    private handleProgressDragMove;
     private handleRatingClick;
     private handleExpandIconClick;
     private getClickedRadioOption;

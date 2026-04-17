@@ -115,21 +115,25 @@ export class EditorManager {
     const inputX = cellViewportX - 1;
     const inputY = cellViewportY - 1;
     const inputWidth = cellPos.width + 2;
-    const inputHeight = cellPos.height + 2;
+
+    const lineHeight = 14 * 1.5;
+    const padding = 8;
 
     const isMultiline = config?.multiline ?? false;
-    const maxRows = config?.maxRows ?? 5;
 
     if (isMultiline) {
+      // 多行编辑：根据单元格高度计算 maxRows
+      const autoMaxRows = Math.max(1, Math.floor((cellPos.height - padding * 2) / lineHeight));
+      const maxRows = Math.min(config?.maxRows ?? autoMaxRows, autoMaxRows);
+      const maxHeight = lineHeight * maxRows + padding * 2;
+      const inputHeight = Math.min(cellPos.height + 2, maxHeight + 2);
+
       this.inputElement = document.createElement("textarea");
       const cellValue = String(row.data[getColumnField(column)] ?? "");
       this.inputElement.value = config?.value !== undefined ? config.value : cellValue;
       this.inputElement.placeholder = config?.placeholder ?? "";
       this.inputElement.disabled = resolveDisabled(column.disabled, row, column);
       this.inputElement.readOnly = config?.readonly ?? false;
-
-      const lineHeight = 14 * 1.5;
-      const maxHeight = lineHeight * maxRows + 12;
 
       this.inputElement.style.cssText = `
         position: absolute;
@@ -223,6 +227,9 @@ export class EditorManager {
 
       adjustHeight();
     } else {
+      // 单行编辑：输入框覆盖整个单元格高度
+      const inputHeight = cellPos.height + 2;
+
       this.inputElement = document.createElement("input");
       this.inputElement.type = config?.type ?? "text";
       const cellValue = String(row.data[getColumnField(column)] ?? "");

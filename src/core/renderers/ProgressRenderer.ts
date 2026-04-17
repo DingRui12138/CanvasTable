@@ -70,7 +70,10 @@ export class ProgressRenderer extends BaseCellRenderer {
     }
 
     if (showText) {
-      const text = config.format ? config.format(clampedValue) : `${Math.round(clampedValue)}%`;
+      const precision = config.precision ?? 0;
+      const text = config.format
+        ? config.format(clampedValue)
+        : `${precision === 0 ? Math.round(clampedValue) : clampedValue.toFixed(precision)}%`;
 
       let fontSize: number;
       if (textPosition === "inside") {
@@ -142,7 +145,10 @@ export class ProgressRenderer extends BaseCellRenderer {
     }
 
     if (config.showText ?? true) {
-      const text = config.format ? config.format(clampedValue) : `${Math.round(clampedValue)}%`;
+      const precision = config.precision ?? 0;
+      const text = config.format
+        ? config.format(clampedValue)
+        : `${precision === 0 ? Math.round(clampedValue) : clampedValue.toFixed(precision)}%`;
       ctx.fillStyle = config.textColor ?? theme.colors.cellText;
       const fontSize = Math.max(8, Math.round(diameter * 0.32));
       ctx.font = `bold ${fontSize}px ${theme.font.family}`;
@@ -202,7 +208,10 @@ export class ProgressRenderer extends BaseCellRenderer {
     }
 
     if (config.showText ?? true) {
-      const text = config.format ? config.format(clampedValue) : `${Math.round(clampedValue)}%`;
+      const precision = config.precision ?? 0;
+      const text = config.format
+        ? config.format(clampedValue)
+        : `${precision === 0 ? Math.round(clampedValue) : clampedValue.toFixed(precision)}%`;
       ctx.fillStyle = config.textColor ?? theme.colors.cellText;
       const fontSize = Math.max(8, Math.round(diameter * 0.28));
       ctx.font = `bold ${fontSize}px ${theme.font.family}`;

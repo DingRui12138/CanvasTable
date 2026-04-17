@@ -16,6 +16,7 @@ export declare class Renderer {
     private currentButtonHoverStates;
     private hoveredPlaceholderColumnIndex;
     private isDestroyed;
+    private multipleSelectSeparator;
     private imageLoadQueue;
     /** 当前帧收集的可见图片 URL */
     private frameVisibleUrls;
@@ -23,6 +24,14 @@ export declare class Renderer {
     private hexToRgbCache;
     private textWidthCache;
     private textWidthCacheKey;
+    /**
+     * 根据单元格高度计算可显示行数
+     */
+    private calculateMaxRows;
+    /**
+     * 多行文本换行
+     */
+    private wrapTextToLines;
     private performanceEnabled;
     private performanceStats;
     private frameStartTime;
@@ -36,6 +45,7 @@ export declare class Renderer {
     private currentHoveredCell;
     private currentHoveredImageIndex;
     private currentHoveredButtonIndex;
+    private currentProgressDragState;
     private renderCache;
     private rowIdManager;
     private columnIdManager;
@@ -44,6 +54,7 @@ export declare class Renderer {
     private getContext;
     setCanvas(canvas: HTMLCanvasElement): void;
     setTheme(theme: TableTheme): void;
+    setMultipleSelectSeparator(separator: string): void;
     /**
      * 设置图片加载配置
      */
@@ -93,6 +104,7 @@ export declare class Renderer {
         headerContextMenu?: HeaderContextMenuState | null;
         hoveredImageIndex?: number;
         hoveredButtonIndex?: number;
+        progressDragState?: import("../types").InteractionState["progressDragState"];
     }): void;
     private renderCenterHeader;
     private renderHeaderCellMultiLevel;

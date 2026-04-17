@@ -65,6 +65,7 @@ export declare const TableEvents: {
     readonly TAGS_CHANGE: "tagsChange";
     readonly DATE_SELECT: "dateSelect";
     readonly PROGRESS_CHANGE: "progressChange";
+    readonly PROGRESS_DRAG: "progressDrag";
     readonly RATING_CHANGE: "ratingChange";
     readonly COLOR_CHANGE: "colorChange";
     readonly IMAGE_CLICK: "imageClick";

@@ -32,7 +32,7 @@ export declare class ImageLoadQueue {
     private destroyed;
     constructor(options?: ImageLoadQueueOptions);
     /**
-   * 请求加载图片
+     * 请求加载图片
      * @param src 图片 URL
      * @param targetSize 需要的渲染尺寸（像素），默认 64
      * @param callback 加载完成回调
