@@ -2,6 +2,7 @@ import {
   Column,
   Row,
   TableTheme,
+  CellType,
   VisibleRange,
   CellPosition,
   CellRange,
@@ -10,15 +11,6 @@ import {
   HorizontalAlign,
   VerticalAlign,
   RenderResult,
-  CheckboxConfig,
-  RadioConfig,
-  ButtonConfig,
-  ButtonsConfig,
-  InputConfig,
-  SelectConfig,
-  DateConfig,
-  TagsConfig,
-  TagItem,
   TooltipState,
   DropdownState,
   ScrollbarState,
@@ -31,27 +23,26 @@ import {
   ImageEditorState,
   ButtonHoverState,
   DisabledValue,
-  SwitchConfig,
   DateDropdownState,
   ContextMenuState,
   HeaderContextMenuState,
   ImageConfig,
-  RatingConfig,
-  ColorPickerConfig,
   ColorPickerDropdownState,
   ImageLoadConfig,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
 import { ImageLoadQueue } from "./ImageLoadQueue";
+import { DropdownRenderer } from "./renderers/DropdownRenderer";
+import { FilterDropdownRenderer } from "./renderers/FilterDropdownRenderer";
+import { ImageOverlayRenderer } from "./renderers/ImageOverlayRenderer";
+import { OverlayRenderer } from "./renderers/OverlayRenderer";
 import {
-  truncateText,
-  getDevicePixelRatio,
-  resolveDisabled,
-  LRUCache,
-  getColumnField,
-} from "../utils";
-import { CTRenderer, LayoutEngine, MeasurementEngine, type CTElement } from "./jsx";
+  CellRendererRegistry,
+  type CellRenderResult as StrategyCellRenderResult,
+} from "./renderers";
+import { truncateText, getDevicePixelRatio, resolveDisabled, getColumnField } from "../utils";
+import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
 
 // 标准行高（用于 UI 元素的固定尺寸计算，不随动态行高变化）
 const STANDARD_ROW_HEIGHT = 32;
@@ -65,6 +56,11 @@ export class Renderer {
 
   private offscreenCanvas: HTMLCanvasElement;
   private offscreenCtx: CanvasRenderingContext2D;
+  private cellRendererRegistry: CellRendererRegistry;
+  private dropdownRenderer: DropdownRenderer;
+  private filterDropdownRenderer: FilterDropdownRenderer;
+  private imageOverlayRenderer: ImageOverlayRenderer;
+  private overlayRenderer: OverlayRenderer;
 
   private dirtyRegions: Array<{ x: number; y: number; width: number; height: number }> = [];
   private watermarkConfig: WatermarkConfig | null = null;
@@ -82,10 +78,6 @@ export class Renderer {
 
   /** 当前帧收集的可见图片 URL */
   private frameVisibleUrls: Set<string> = new Set();
-
-  // 颜色计算缓存
-  private colorRangeCache: Map<string, { value: number; color: string }[]> = new Map();
-  private hexToRgbCache: Map<string, { r: number; g: number; b: number }> = new Map();
 
   // 文本宽度缓存（用于按钮等需要测量文本宽度的场景）
   private textWidthCache: Map<string, number> = new Map();
@@ -174,6 +166,24 @@ export class Renderer {
 
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCtx = this.getContext(this.offscreenCanvas);
+    this.cellRendererRegistry = new CellRendererRegistry();
+    this.dropdownRenderer = new DropdownRenderer(this.ctx, this.theme, (text) =>
+      this.measureTextWidth(text),
+    );
+    this.filterDropdownRenderer = new FilterDropdownRenderer(this.ctx, this.theme);
+    this.imageOverlayRenderer = new ImageOverlayRenderer(this.ctx, this.theme, {
+      get: (src, minSize) => this.imageLoadQueue.get(src, minSize),
+      isLoading: (src) => this.imageLoadQueue.isLoading(src),
+      load: (src, targetSize) => this.loadImage(src, targetSize),
+      collectVisible: (src) => this.collectVisibleImage(src),
+    });
+    this.overlayRenderer = new OverlayRenderer(
+      this.canvas,
+      this.ctx,
+      this.theme,
+      this.layoutManager,
+      this.dpr,
+    );
 
     // 初始化图片加载队列（使用默认配置）
     this.imageLoadQueue = new ImageLoadQueue();
@@ -190,10 +200,18 @@ export class Renderer {
   setCanvas(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
     this.ctx = this.getContext(canvas);
+    this.dropdownRenderer.setContext(this.ctx);
+    this.filterDropdownRenderer.setContext(this.ctx);
+    this.imageOverlayRenderer.setContext(this.ctx);
+    this.overlayRenderer.setCanvas(this.canvas, this.ctx);
   }
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+    this.dropdownRenderer.setTheme(theme);
+    this.filterDropdownRenderer.setTheme(theme);
+    this.imageOverlayRenderer.setTheme(theme);
+    this.overlayRenderer.setTheme(theme);
   }
 
   setMultipleSelectSeparator(separator: string): void {
@@ -212,6 +230,7 @@ export class Renderer {
 
   setWatermarkConfig(config: WatermarkConfig | null): void {
     this.watermarkConfig = config;
+    this.overlayRenderer.setWatermarkConfig(config);
   }
 
   setExpandColumnKey(key: string | null): void {
@@ -250,6 +269,7 @@ export class Renderer {
     const newDpr = getDevicePixelRatio();
     if (newDpr !== this.dpr) {
       this.dpr = newDpr;
+      this.overlayRenderer.setDpr(newDpr);
     }
 
     this.canvas.width = width * this.dpr;
@@ -265,6 +285,10 @@ export class Renderer {
 
   updateTheme(theme: TableTheme): void {
     this.theme = theme;
+    this.dropdownRenderer.setTheme(theme);
+    this.filterDropdownRenderer.setTheme(theme);
+    this.imageOverlayRenderer.setTheme(theme);
+    this.overlayRenderer.setTheme(theme);
   }
 
   markDirty(x: number, y: number, width: number, height: number): void {
@@ -1627,6 +1651,55 @@ export class Renderer {
     }
   }
 
+  private renderWithCellRenderer(
+    type: CellType,
+    value: unknown,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    options: {
+      rowIndex?: number;
+      colIndex?: number;
+      isDisabled?: boolean;
+      switchAnimation?: SwitchAnimationState;
+      buttonHoverState?: ButtonHoverState;
+      multipleSelectSeparator?: string;
+      hoveredButtonIndex?: number;
+      isHovered?: boolean;
+    } = {},
+  ): StrategyCellRenderResult | null {
+    const renderer = this.cellRendererRegistry.get(type);
+    if (!renderer) {
+      return null;
+    }
+
+    return renderer.render(
+      this.cellRendererRegistry.createContext({
+        ctx: this.ctx,
+        theme: this.theme,
+        layoutManager: this.layoutManager,
+        x,
+        y,
+        width,
+        height,
+        column: { key: type, title: type, type } as Column,
+        row: { id: "", data: {} } as Row,
+        rowIndex: options.rowIndex ?? -1,
+        colIndex: options.colIndex ?? -1,
+        value,
+        isDisabled: options.isDisabled ?? false,
+        isHovered: options.isHovered ?? false,
+        isSelected: false,
+        dpr: this.dpr,
+        switchAnimation: options.switchAnimation,
+        buttonHoverState: options.buttonHoverState,
+        multipleSelectSeparator: options.multipleSelectSeparator,
+        hoveredButtonIndex: options.hoveredButtonIndex,
+      }),
+    );
+  }
+
   private renderCellContentInternal(
     renderResult: RenderResult,
     x: number,
@@ -1652,94 +1725,130 @@ export class Renderer {
       this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
       if (type === "checkbox" && checkbox) {
-        this.measureRender("checkbox", () =>
-          this.renderCheckbox(x, y, width, height, checkbox, isDisabled),
-        );
+        this.measureRender("checkbox", () => {
+          this.renderWithCellRenderer("checkbox", checkbox, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
       if (type === "radio" && radio) {
-        this.measureRender("radio", () => this.renderRadio(x, y, width, height, radio, isDisabled));
+        this.measureRender("radio", () => {
+          this.renderWithCellRenderer("radio", radio, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
       if (type === "button" && button) {
-        let hoverProgress: number | undefined;
+        let buttonHoverState: ButtonHoverState | undefined;
         if (rowIndex !== undefined && colIndex !== undefined && this.currentButtonHoverStates) {
           const cellKey = `${rowIndex}-${colIndex}`;
           const hoverState = this.currentButtonHoverStates.get(cellKey);
           if (hoverState) {
-            hoverProgress = hoverState.progress;
+            buttonHoverState = hoverState;
           }
         }
-        this.measureRender("button", () =>
-          this.renderButton(x, y, width, height, button, isDisabled, hoverProgress),
-        );
+        this.measureRender("button", () => {
+          this.renderWithCellRenderer("button", button, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+            buttonHoverState,
+          });
+        });
         return;
       }
 
       if (type === "buttons" && renderResult.buttons) {
-        this.measureRender("buttons", () =>
-          this.renderButtons(
-            x,
-            y,
-            width,
-            height,
-            renderResult.buttons!,
+        let hoveredButtonIndex = -1;
+        if (rowIndex !== undefined && colIndex !== undefined) {
+          const isCurrentCellHovered =
+            this.currentHoveredCell?.rowIndex === rowIndex &&
+            this.currentHoveredCell?.columnIndex === colIndex;
+          if (isCurrentCellHovered) {
+            hoveredButtonIndex = this.currentHoveredButtonIndex;
+          }
+        }
+        this.measureRender("buttons", () => {
+          this.renderWithCellRenderer("buttons", renderResult.buttons!, x, y, width, height, {
             rowIndex,
             colIndex,
             isDisabled,
-          ),
-        );
+            hoveredButtonIndex,
+          });
+        });
         return;
       }
 
       if (type === "switch" && renderResult.switch) {
-        let animationProgress: number | undefined;
+        let switchAnimation: SwitchAnimationState | undefined;
         if (rowIndex !== undefined && colIndex !== undefined && this.currentSwitchAnimations) {
           const cellKey = `${rowIndex}-${colIndex}`;
           const animation = this.currentSwitchAnimations.get(cellKey);
           if (animation) {
-            animationProgress = animation.progress;
+            switchAnimation = animation;
           }
         }
-        this.measureRender("switch", () =>
-          this.renderSwitch(
-            x,
-            y,
-            width,
-            height,
-            renderResult.switch!,
+        this.measureRender("switch", () => {
+          this.renderWithCellRenderer("switch", renderResult.switch!, x, y, width, height, {
+            rowIndex,
+            colIndex,
             isDisabled,
-            animationProgress,
-          ),
-        );
+            switchAnimation,
+          });
+        });
         return;
       }
 
       if (type === "input" && input) {
-        this.measureRender("input", () => this.renderInput(x, y, width, height, input, isDisabled));
+        this.measureRender("input", () => {
+          this.renderWithCellRenderer("input", input, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
       if (type === "select" && renderResult.select) {
-        this.measureRender("select", () =>
-          this.renderSelect(x, y, width, height, renderResult.select!, isDisabled),
-        );
+        this.measureRender("select", () => {
+          this.renderWithCellRenderer("select", renderResult.select!, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+            multipleSelectSeparator: this.multipleSelectSeparator,
+          });
+        });
         return;
       }
 
       if (type === "date" && renderResult.date) {
-        this.measureRender("date", () =>
-          this.renderDate(x, y, width, height, renderResult.date!, isDisabled),
-        );
+        this.measureRender("date", () => {
+          this.renderWithCellRenderer("date", renderResult.date!, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
       if (type === "tag" && tags) {
-        this.measureRender("tags", () =>
-          this.renderTags(x, y, width, height, padding, tags, isDisabled),
-        );
+        this.measureRender("tags", () => {
+          this.renderWithCellRenderer("tag", tags, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
@@ -1769,23 +1878,47 @@ export class Renderer {
           ? { ...renderResult.progress!, value: this.currentProgressDragState!.displayValue }
           : renderResult.progress!;
 
-        this.measureRender("progress", () =>
-          this.renderProgress(x, y, width, height, progressConfig),
-        );
+        this.measureRender("progress", () => {
+          this.renderWithCellRenderer("progress", progressConfig, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
       if (type === "rating" && renderResult.rating) {
-        this.measureRender("rating", () =>
-          this.renderRating(x, y, width, height, renderResult.rating!, isDisabled ?? false),
-        );
+        let starBounds: StrategyCellRenderResult["starBounds"] | undefined;
+        this.measureRender("rating", () => {
+          starBounds = this.renderWithCellRenderer(
+            "rating",
+            renderResult.rating!,
+            x,
+            y,
+            width,
+            height,
+            {
+              rowIndex,
+              colIndex,
+              isDisabled,
+            },
+          )?.starBounds;
+        });
+        if (starBounds) {
+          renderResult.starBounds = starBounds;
+        }
         return;
       }
 
       if (type === "color" && renderResult.color) {
-        this.measureRender("color", () =>
-          this.renderColorCell(x, y, width, height, renderResult.color!, isDisabled ?? false),
-        );
+        this.measureRender("color", () => {
+          this.renderWithCellRenderer("color", renderResult.color!, x, y, width, height, {
+            rowIndex,
+            colIndex,
+            isDisabled,
+          });
+        });
         return;
       }
 
@@ -1999,935 +2132,16 @@ export class Renderer {
     this.ctx.fill();
   }
 
-  private renderCheckbox(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: CheckboxConfig,
-    isDisabled?: boolean,
-  ): void {
-    const size = 16;
-    const checkboxX = x + (width - size) / 2;
-    const checkboxY = y + (height - size) / 2;
-    const disabled = isDisabled ?? false;
-
-    this.ctx.fillStyle = disabled
-      ? this.theme.colors.checkbox.disabledBg
-      : this.theme.colors.button.background;
-    this.ctx.strokeStyle = this.theme.colors.checkbox.border;
-    this.ctx.lineWidth = 1;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(checkboxX, checkboxY, size, size, 3);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    if (config.indeterminate) {
-      this.ctx.strokeStyle = disabled
-        ? this.theme.colors.checkbox.border
-        : this.theme.colors.checkbox.checkedBg;
-      this.ctx.lineWidth = 2;
-      this.ctx.beginPath();
-      this.ctx.moveTo(checkboxX + 4, checkboxY + size / 2);
-      this.ctx.lineTo(checkboxX + size - 4, checkboxY + size / 2);
-      this.ctx.stroke();
-    } else if (config.checked) {
-      this.ctx.strokeStyle = disabled
-        ? this.theme.colors.checkbox.border
-        : this.theme.colors.checkbox.checkedBg;
-      this.ctx.lineWidth = 2;
-      this.ctx.lineCap = "round";
-      this.ctx.lineJoin = "round";
-
-      this.ctx.beginPath();
-      this.ctx.moveTo(checkboxX + 4, checkboxY + size / 2);
-      this.ctx.lineTo(checkboxX + size / 2 - 1, checkboxY + size - 5);
-      this.ctx.lineTo(checkboxX + size - 3, checkboxY + 4);
-      this.ctx.stroke();
-    }
-  }
-
-  private renderRadio(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: RadioConfig,
-    isDisabled?: boolean,
-  ): void {
-    const size = 16;
-    const padding = 8;
-    const gap = 4;
-    const columnDisabled = isDisabled ?? false;
-
-    this.ctx.save();
-    this.ctx.beginPath();
-    this.ctx.rect(x, y, width, height);
-    this.ctx.clip();
-
-    if (config.options && config.options.length > 0) {
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-      const optionWidths: number[] = config.options.map((option) => {
-        const textWidth = this.ctx.measureText(option.label).width;
-        return size + gap + textWidth + padding;
-      });
-
-      let currentX = x + padding;
-      const maxX = x + width - padding;
-
-      for (let i = 0; i < config.options.length; i++) {
-        const option = config.options[i]!;
-        const optionWidth = optionWidths[i]!;
-
-        if (currentX + optionWidth - padding > maxX) {
-          break;
-        }
-
-        const radioX = currentX;
-        const radioY = y + (height - size) / 2;
-        const centerX = radioX + size / 2;
-        const centerY = radioY + size / 2;
-        const optionDisabled = option.disabled || columnDisabled;
-        const isChecked = config.value === option.value;
-
-        this.ctx.fillStyle = optionDisabled
-          ? this.theme.colors.radio.disabledBg
-          : this.theme.colors.button.background;
-        this.ctx.strokeStyle = this.theme.colors.radio.border;
-        this.ctx.lineWidth = 1;
-
-        this.ctx.beginPath();
-        this.ctx.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.stroke();
-
-        if (isChecked) {
-          this.ctx.fillStyle = optionDisabled
-            ? this.theme.colors.radio.border
-            : this.theme.colors.radio.checkedBg;
-          this.ctx.beginPath();
-          this.ctx.arc(centerX, centerY, size / 2 - 4, 0, Math.PI * 2);
-          this.ctx.fill();
-        }
-
-        this.ctx.fillStyle = optionDisabled
-          ? this.theme.colors.placeholderText
-          : this.theme.colors.cellText;
-        this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-        this.ctx.textBaseline = "middle";
-        const textX = radioX + size + gap;
-        this.ctx.fillText(option.label, textX, centerY);
-
-        currentX += optionWidth;
-      }
-    } else {
-      const radioX = x + (width - size) / 2;
-      const radioY = y + (height - size) / 2;
-      const centerX = radioX + size / 2;
-      const centerY = radioY + size / 2;
-
-      this.ctx.fillStyle = columnDisabled
-        ? this.theme.colors.radio.disabledBg
-        : this.theme.colors.button.background;
-      this.ctx.strokeStyle = this.theme.colors.radio.border;
-      this.ctx.lineWidth = 1;
-
-      this.ctx.beginPath();
-      this.ctx.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
-      this.ctx.fill();
-      this.ctx.stroke();
-
-      if (config.checked) {
-        this.ctx.fillStyle = columnDisabled
-          ? this.theme.colors.radio.border
-          : this.theme.colors.radio.checkedBg;
-        this.ctx.beginPath();
-        this.ctx.arc(centerX, centerY, size / 2 - 4, 0, Math.PI * 2);
-        this.ctx.fill();
-      }
-    }
-
-    this.ctx.restore();
-  }
-
-  private renderButton(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: ButtonConfig,
-    isDisabled?: boolean,
-    hoverProgress?: number,
-  ): void {
-    const cellPadding = 8;
-    const buttonHeight = config.size === "small" ? 24 : config.size === "large" ? 40 : 32;
-    const buttonY = y + (height - buttonHeight) / 2;
-    const disabled = isDisabled ?? false;
-
-    // 计算按钮宽度：根据文本内容（使用缓存）
-    const text = config.text ?? "Button";
-    const textWidth = this.measureTextWidth(text);
-    const buttonPadding = 16; // 按钮内边距
-    const buttonWidth = Math.min(
-      Math.max(textWidth + buttonPadding * 2, 60), // 最小 60px
-      width - cellPadding * 2, // 最大不超过单元格宽度
-    );
-    // 水平居中
-    const buttonX = x + (width - buttonWidth) / 2;
-
-    const progress = hoverProgress ?? 0;
-
-    let bgColor: string;
-    let textColor: string;
-    let borderColor: string;
-
-    if (disabled) {
-      // 禁用状态统一使用灰色样式
-      bgColor = this.theme.colors.button.disabledBg;
-      textColor = this.theme.colors.button.disabledText;
-      borderColor = this.theme.colors.button.disabledBorder;
-    } else {
-      switch (config.variant) {
-        case "primary":
-          bgColor = this.theme.colors.button.primaryBg;
-          textColor = this.theme.colors.button.primaryText;
-          borderColor = bgColor;
-          break;
-        case "danger":
-          bgColor = this.theme.colors.button.dangerBg;
-          textColor = this.theme.colors.button.dangerText;
-          borderColor = bgColor;
-          break;
-        case "warning":
-          bgColor = this.theme.colors.button.warningBg;
-          textColor = this.theme.colors.button.warningText;
-          borderColor = bgColor;
-          break;
-        case "link":
-          bgColor = "transparent";
-          textColor = this.theme.colors.button.linkText;
-          borderColor = "transparent";
-          break;
-        default:
-          bgColor = this.theme.colors.button.background;
-          textColor = this.theme.colors.button.text;
-          borderColor = this.theme.colors.button.border;
-      }
-    }
-
-    if (!disabled && progress > 0 && config.variant !== "link") {
-      if (config.variant === "default" || !config.variant) {
-        const bgRgb = this.hexToRgb(this.theme.colors.button.background);
-        const brightness = (bgRgb.r * 299 + bgRgb.g * 587 + bgRgb.b * 114) / 1000;
-
-        if (brightness > 128) {
-          const hoverGray = Math.round(bgRgb.r - progress * 0.2 * bgRgb.r);
-          bgColor = `rgb(${hoverGray}, ${hoverGray}, ${hoverGray})`;
-        } else {
-          const hoverGray = Math.round(bgRgb.r + progress * 0.2 * (255 - bgRgb.r));
-          bgColor = `rgb(${hoverGray}, ${hoverGray}, ${hoverGray})`;
-        }
-      } else {
-        this.ctx.globalAlpha = 1 - progress * 0.2;
-      }
-    }
-
-    this.ctx.fillStyle = bgColor;
-    this.ctx.strokeStyle = borderColor;
-    this.ctx.lineWidth = 1;
-
-    const radius = 4;
-    this.ctx.beginPath();
-    this.ctx.roundRect(buttonX, buttonY, buttonWidth, buttonHeight, radius);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    if (!disabled && progress > 0 && config.variant !== "link") {
-      this.ctx.globalAlpha = 1;
-    }
-
-    this.ctx.fillStyle = textColor;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-    this.ctx.textAlign = "center";
-    this.ctx.fillText(text, buttonX + buttonWidth / 2, buttonY + buttonHeight / 2);
-    this.ctx.textAlign = "left";
-  }
-
-  private renderButtons(
-    x: number,
-    y: number,
-    _width: number,
-    height: number,
-    config: ButtonsConfig,
-    rowIndex?: number,
-    colIndex?: number,
-    isDisabled?: boolean,
-  ): void {
-    const padding = 8;
-    const gap = config.gap ?? 4;
-    const maxVisible = config.maxVisible ?? 3;
-    const buttonHeight = 24;
-    const buttonY = y + (height - buttonHeight) / 2;
-
-    const visibleButtons = config.buttons.filter((btn) => btn.visible !== false);
-
-    const displayButtons = visibleButtons.slice(0, maxVisible);
-    const moreButtons = visibleButtons.slice(maxVisible);
-
-    // 检查当前单元格是否悬浮，并获取悬浮的按钮索引
-    let hoveredIndex = -1;
-    if (rowIndex !== undefined && colIndex !== undefined) {
-      const isCurrentCellHovered =
-        this.currentHoveredCell?.rowIndex === rowIndex &&
-        this.currentHoveredCell?.columnIndex === colIndex;
-      if (isCurrentCellHovered) {
-        hoveredIndex = this.currentHoveredButtonIndex;
-      }
-    }
-
-    let currentX = x + padding;
-
-    for (let i = 0; i < displayButtons.length; i++) {
-      const btn = displayButtons[i]!;
-      const text = btn.text ?? "Button";
-      const textWidth = this.measureTextWidth(text);
-      const buttonWidth = Math.max(textWidth + 16, 40);
-
-      const isHovered = i === hoveredIndex && !isDisabled;
-      this.renderSingleButton(
-        currentX,
-        buttonY,
-        buttonWidth,
-        buttonHeight,
-        btn,
-        isHovered,
-        isDisabled,
-      );
-
-      currentX += buttonWidth + gap;
-    }
-
-    if (moreButtons.length > 0) {
-      const moreText = config.moreButtonText ?? "···";
-      const textWidth = this.measureTextWidth(moreText);
-      const buttonWidth = Math.max(textWidth + 16, 32);
-
-      // "更多"按钮的索引是 maxVisible
-      const moreBtnIndex = maxVisible;
-      const isMoreHovered = moreBtnIndex === hoveredIndex;
-
-      const moreBtn: ButtonConfig = {
-        text: moreText,
-        variant: "default",
-        size: "small",
-      };
-
-      this.renderSingleButton(
-        currentX,
-        buttonY,
-        buttonWidth,
-        buttonHeight,
-        moreBtn,
-        isMoreHovered,
-        isDisabled,
-      );
-    }
-  }
-
-  private renderSingleButton(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: ButtonConfig,
-    isHovered?: boolean,
-    isDisabled?: boolean,
-  ): void {
-    const disabled = isDisabled ?? false;
-    let bgColor: string;
-    let textColor: string;
-    let borderColor: string;
-
-    if (disabled) {
-      // 禁用状态统一使用灰色样式
-      bgColor = this.theme.colors.button.disabledBg;
-      textColor = this.theme.colors.button.disabledText;
-      borderColor = this.theme.colors.button.disabledBorder;
-    } else {
-      switch (config.variant) {
-        case "primary":
-          bgColor = this.theme.colors.button.primaryBg;
-          textColor = this.theme.colors.button.primaryText;
-          borderColor = bgColor;
-          break;
-        case "danger":
-          bgColor = this.theme.colors.button.dangerBg;
-          textColor = this.theme.colors.button.dangerText;
-          borderColor = bgColor;
-          break;
-        case "warning":
-          bgColor = this.theme.colors.button.warningBg;
-          textColor = this.theme.colors.button.warningText;
-          borderColor = bgColor;
-          break;
-        case "link":
-          bgColor = "transparent";
-          textColor = this.theme.colors.button.linkText;
-          borderColor = "transparent";
-          break;
-        default:
-          bgColor = this.theme.colors.button.background;
-          textColor = this.theme.colors.button.text;
-          borderColor = this.theme.colors.button.border;
-      }
-    }
-
-    // 应用 hover 效果
-    if (isHovered && !disabled && config.variant !== "link") {
-      if (config.variant === "default" || !config.variant) {
-        // default 按钮：背景变暗
-        const bgRgb = this.hexToRgb(bgColor);
-        if (bgRgb) {
-          const brightness = (bgRgb.r * 299 + bgRgb.g * 587 + bgRgb.b * 114) / 1000;
-          if (brightness > 128) {
-            const hoverGray = Math.round(bgRgb.r * 0.88);
-            bgColor = `rgb(${hoverGray}, ${hoverGray}, ${hoverGray})`;
-          } else {
-            const hoverGray = Math.round(bgRgb.r + 0.12 * (255 - bgRgb.r));
-            bgColor = `rgb(${hoverGray}, ${hoverGray}, ${hoverGray})`;
-          }
-        }
-      } else {
-        // 其他变体：透明度变化
-        this.ctx.globalAlpha = 0.85;
-      }
-    }
-
-    this.ctx.fillStyle = bgColor;
-    this.ctx.strokeStyle = borderColor;
-    this.ctx.lineWidth = 1;
-
-    const radius = 4;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, height, radius);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    // 恢复透明度
-    if (isHovered && !disabled && config.variant !== "default" && config.variant) {
-      this.ctx.globalAlpha = 1;
-    }
-
-    const text = config.text ?? "Button";
-    this.ctx.fillStyle = textColor;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-    this.ctx.textAlign = "center";
-    this.ctx.fillText(text, x + width / 2, y + height / 2);
-    this.ctx.textAlign = "left";
-  }
-
   renderButtonsDropdown(dropdown: ButtonsDropdownState): void {
-    const itemHeight = 32;
-    const minWidth = 100;
-    const padding = 8;
-
-    let maxWidth = minWidth;
-    for (const btn of dropdown.buttons) {
-      const text = btn.text ?? "Button";
-      const textWidth = this.measureTextWidth(text);
-      maxWidth = Math.max(maxWidth, textWidth + padding * 2 + 16);
-    }
-
-    const dropdownHeight = dropdown.buttons.length * itemHeight;
-
-    this.ctx.save();
-
-    this.ctx.fillStyle = this.theme.colors.background;
-    this.ctx.strokeStyle = this.theme.colors.cellBorder;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(dropdown.x, dropdown.y, maxWidth, dropdownHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    for (let i = 0; i < dropdown.buttons.length; i++) {
-      const btn = dropdown.buttons[i]!;
-      const itemY = dropdown.y + i * itemHeight;
-      const isHovered = i === dropdown.hoveredIndex;
-
-      if (isHovered) {
-        this.ctx.fillStyle = this.theme.colors.rowHoverBackground;
-        this.ctx.fillRect(dropdown.x, itemY, maxWidth, itemHeight);
-      }
-
-      let textColor: string;
-      switch (btn.variant) {
-        case "primary":
-          textColor = this.theme.colors.button.primaryBg;
-          break;
-        case "danger":
-          textColor = this.theme.colors.button.dangerBg;
-          break;
-        case "warning":
-          textColor = this.theme.colors.button.warningBg;
-          break;
-        case "link":
-          textColor = this.theme.colors.button.linkText;
-          break;
-        default:
-          textColor = this.theme.colors.cellText;
-      }
-
-      this.ctx.fillStyle = textColor;
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(btn.text ?? "Button", dropdown.x + padding, itemY + itemHeight / 2);
-    }
-
-    this.ctx.restore();
+    this.dropdownRenderer.renderButtonsDropdown(dropdown);
   }
 
   renderImageTooltip(imageTooltip: ImageTooltipState): void {
-    const imgSize = 64;
-    const padding = 8;
-    const gap = 8;
-    const imagesPerRow = 4;
-    const rowHeight = imgSize + gap;
-    const scrollbarWidth = 4;
-    const scrollbarGap = 4; // 滚动条与内容区域的间隙
-    const tooltipWidth =
-      imagesPerRow * imgSize +
-      (imagesPerRow - 1) * gap +
-      padding * 2 +
-      scrollbarGap +
-      scrollbarWidth;
-    const visibleHeight = imageTooltip.maxRows * rowHeight + padding * 2 - gap;
-    const totalRows = Math.ceil(imageTooltip.images.length / imagesPerRow);
-    const contentHeight = totalRows * rowHeight - gap;
-
-    this.ctx.save();
-
-    // 先绘制带阴影的背景形状（在 clip 之前）
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-    this.ctx.fillStyle = this.theme.colors.tooltip.background;
-    this.ctx.beginPath();
-    this.ctx.roundRect(imageTooltip.x, imageTooltip.y, tooltipWidth, visibleHeight, 6);
-    this.ctx.fill();
-
-    // 清除阴影后裁剪
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-    this.ctx.beginPath();
-    this.ctx.roundRect(imageTooltip.x, imageTooltip.y, tooltipWidth, visibleHeight, 6);
-    this.ctx.clip();
-
-    // 边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.stroke();
-
-    // 绘制图片
-    const startRow = Math.floor(imageTooltip.scrollTop / rowHeight);
-    const endRow = Math.min(totalRows, startRow + imageTooltip.maxRows + 1);
-
-    for (let row = startRow; row < endRow; row++) {
-      for (let col = 0; col < imagesPerRow; col++) {
-        const index = row * imagesPerRow + col;
-        if (index >= imageTooltip.images.length) break;
-
-        const imgSrc = imageTooltip.images[index];
-        if (!imgSrc) continue;
-
-        const x = imageTooltip.x + padding + col * (imgSize + gap);
-        const y = imageTooltip.y + padding + row * rowHeight - imageTooltip.scrollTop;
-
-        // 检查是否在可见区域内
-        if (y + imgSize < imageTooltip.y || y > imageTooltip.y + visibleHeight) continue;
-
-        const isHovered = index === imageTooltip.hoveredIndex;
-
-        // 尝试获取缓存的图片（需要指定最小尺寸）
-        const cachedImg = this.imageLoadQueue.get(imgSrc, imgSize);
-        if (cachedImg) {
-          // 绘制图片
-          this.ctx.save();
-          if (isHovered) {
-            // hover 效果
-            this.ctx.strokeStyle = this.theme.colors.image.hoverBorder;
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeRect(x - 1, y - 1, imgSize + 2, imgSize + 2);
-          }
-          this.ctx.drawImage(cachedImg, x, y, imgSize, imgSize);
-          this.ctx.restore();
-
-          // 收集可见图片
-          this.collectVisibleImage(imgSrc);
-        } else {
-          // 绘制占位符
-          this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
-          this.ctx.fillRect(x, y, imgSize, imgSize);
-          this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-          this.ctx.lineWidth = 1;
-          this.ctx.strokeRect(x, y, imgSize, imgSize);
-
-          // 加载图片（如果未在加载中）
-          if (!this.imageLoadQueue.isLoading(imgSrc)) {
-            this.loadImage(imgSrc, imgSize); // tooltip 图片尺寸
-          }
-        }
-      }
-    }
-
-    // 滚动条
-    if (contentHeight > visibleHeight - padding * 2) {
-      const scrollbarTrackHeight = visibleHeight - padding * 2;
-      const scrollbarThumbHeight = Math.max(
-        30,
-        (visibleHeight / contentHeight) * scrollbarTrackHeight,
-      );
-      const scrollbarThumbY =
-        imageTooltip.y +
-        padding +
-        (imageTooltip.scrollTop / (contentHeight - scrollbarTrackHeight + padding * 2)) *
-          (scrollbarTrackHeight - scrollbarThumbHeight);
-
-      // 滚动条轨道
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = this.theme.colors.scrollbar.track;
-      this.ctx.fillRect(
-        imageTooltip.x + tooltipWidth - padding - scrollbarWidth,
-        imageTooltip.y + padding,
-        scrollbarWidth,
-        scrollbarTrackHeight,
-      );
-
-      // 滚动条滑块
-      this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
-      this.ctx.fillRect(
-        imageTooltip.x + tooltipWidth - padding - scrollbarWidth,
-        scrollbarThumbY,
-        scrollbarWidth,
-        scrollbarThumbHeight,
-      );
-      this.ctx.globalAlpha = prevAlpha;
-    }
-
-    this.ctx.restore();
+    this.imageOverlayRenderer.renderImageTooltip(imageTooltip);
   }
 
   renderImageEditor(editor: ImageEditorState): void {
-    // 防御性检查
-    const images = editor.images ?? [];
-    const pendingImages = editor.pendingImages ?? [];
-
-    const imgSize = 64;
-    const padding = 8;
-    const gap = 8;
-    const imagesPerRow = 4;
-    const uploadAreaHeight = 60;
-    const rowHeight = imgSize + gap;
-    const scrollbarWidth = 4;
-    const scrollbarGap = 4;
-    const editorWidth =
-      imagesPerRow * imgSize +
-      (imagesPerRow - 1) * gap +
-      padding * 2 +
-      scrollbarGap +
-      scrollbarWidth;
-    const imagesHeight = editor.maxRows * rowHeight + padding * 2 - gap;
-    const editorHeight = uploadAreaHeight + imagesHeight;
-
-    this.ctx.save();
-
-    // 先绘制带阴影的背景形状
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.beginPath();
-    this.ctx.roundRect(editor.x, editor.y, editorWidth, editorHeight, 6);
-    this.ctx.fill();
-
-    // 清除阴影
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    // 边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.stroke();
-
-    // 上传区域
-    const uploadY = editor.y;
-    const uploadHeight = uploadAreaHeight;
-    const isDragging = editor.isDragging;
-
-    // 上传区域背景
-    this.ctx.fillStyle = isDragging
-      ? this.theme.colors.dropdown.selectedBg
-      : this.theme.colors.image.placeholderBg;
-    this.ctx.fillRect(
-      editor.x + padding,
-      uploadY + padding,
-      editorWidth - padding * 2,
-      uploadHeight - padding * 2,
-    );
-
-    // 上传区域边框（虚线）
-    this.ctx.strokeStyle = isDragging
-      ? this.theme.colors.checkbox.checkedBg
-      : this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.setLineDash([4, 4]);
-    this.ctx.strokeRect(
-      editor.x + padding,
-      uploadY + padding,
-      editorWidth - padding * 2,
-      uploadHeight - padding * 2,
-    );
-    this.ctx.setLineDash([]);
-
-    // 上传区域文字
-    this.ctx.fillStyle = this.theme.colors.dropdown.text;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textAlign = "center";
-    this.ctx.textBaseline = "middle";
-    const uploadText = isDragging ? "释放以上传图片" : "点击上传或拖拽图片到此处";
-    this.ctx.fillText(uploadText, editor.x + editorWidth / 2, uploadY + uploadHeight / 2);
-
-    // 图片列表区域
-    const imagesY = uploadY + uploadHeight;
-    const totalRows = Math.ceil((images.length + pendingImages.length) / imagesPerRow);
-    const contentHeight = totalRows * rowHeight - gap;
-    const visibleHeight = imagesHeight - padding * 2;
-
-    // 裁剪图片区域
-    this.ctx.beginPath();
-    this.ctx.rect(editor.x, imagesY, editorWidth, imagesHeight);
-    this.ctx.clip();
-
-    // 绘制已有图片
-    const startRow = Math.floor(editor.scrollTop / rowHeight);
-    const endRow = Math.min(totalRows, startRow + editor.maxRows + 1);
-
-    const allImages = [...images, ...pendingImages.map((p) => p.preview)];
-
-    for (let row = startRow; row < endRow; row++) {
-      for (let col = 0; col < imagesPerRow; col++) {
-        const index = row * imagesPerRow + col;
-        if (index >= allImages.length) break;
-
-        const imgSrc = allImages[index];
-        if (!imgSrc) continue;
-
-        const imgX = editor.x + padding + col * (imgSize + gap);
-        const imgY = imagesY + padding + row * rowHeight - editor.scrollTop;
-
-        // 检查是否在可见区域内
-        if (imgY + imgSize < imagesY || imgY > imagesY + imagesHeight) continue;
-
-        const isHovered = index === editor.hoveredIndex;
-        const isPending = index >= images.length;
-
-        // 尝试获取缓存的图片（需要指定最小尺寸）
-        const cachedImg = this.imageLoadQueue.get(imgSrc, imgSize);
-        if (cachedImg) {
-          // 绘制图片
-          this.ctx.save();
-          if (isHovered) {
-            // hover 效果
-            this.ctx.strokeStyle = this.theme.colors.image.hoverBorder;
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeRect(imgX - 1, imgY - 1, imgSize + 2, imgSize + 2);
-          }
-          this.ctx.drawImage(cachedImg, imgX, imgY, imgSize, imgSize);
-          this.ctx.restore();
-
-          // 收集可见图片
-          this.collectVisibleImage(imgSrc);
-        } else {
-          // 绘制占位符
-          this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
-          this.ctx.fillRect(imgX, imgY, imgSize, imgSize);
-          this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-          this.ctx.lineWidth = 1;
-          this.ctx.strokeRect(imgX, imgY, imgSize, imgSize);
-
-          // 加载图片
-          if (!this.imageLoadQueue.isLoading(imgSrc)) {
-            this.loadImage(imgSrc, imgSize); // editor 图片尺寸
-          }
-        }
-
-        // 待上传图片标识
-        if (isPending) {
-          this.ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-          this.ctx.fillRect(imgX, imgY + imgSize - 20, imgSize, 20);
-          this.ctx.fillStyle = "#ffffff";
-          this.ctx.font = `${this.theme.font.size - 2}px ${this.theme.font.family}`;
-          this.ctx.textAlign = "center";
-          this.ctx.fillText("上传中...", imgX + imgSize / 2, imgY + imgSize - 10);
-        }
-
-        // hover 时显示删除按钮
-        if (isHovered && !isPending) {
-          const deleteBtnSize = 16;
-          const deleteBtnX = imgX + imgSize - deleteBtnSize / 2 - 2;
-          const deleteBtnY = imgY + deleteBtnSize / 2 + 2;
-
-          this.ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-          this.ctx.beginPath();
-          this.ctx.arc(deleteBtnX, deleteBtnY, deleteBtnSize / 2, 0, Math.PI * 2);
-          this.ctx.fill();
-
-          // X 图标
-          this.ctx.strokeStyle = "#ffffff";
-          this.ctx.lineWidth = 1.5;
-          this.ctx.beginPath();
-          this.ctx.moveTo(deleteBtnX - 3, deleteBtnY - 3);
-          this.ctx.lineTo(deleteBtnX + 3, deleteBtnY + 3);
-          this.ctx.moveTo(deleteBtnX + 3, deleteBtnY - 3);
-          this.ctx.lineTo(deleteBtnX - 3, deleteBtnY + 3);
-          this.ctx.stroke();
-        }
-      }
-    }
-
-    // 滚动条
-    if (contentHeight > visibleHeight) {
-      const scrollbarTrackHeight = visibleHeight;
-      const scrollbarThumbHeight = Math.max(
-        30,
-        (visibleHeight / contentHeight) * scrollbarTrackHeight,
-      );
-      const scrollbarThumbY =
-        imagesY +
-        padding +
-        (editor.scrollTop / (contentHeight - visibleHeight + padding * 2)) *
-          (scrollbarTrackHeight - scrollbarThumbHeight);
-
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = this.theme.colors.scrollbar.track;
-      this.ctx.fillRect(
-        editor.x + editorWidth - padding - scrollbarWidth,
-        imagesY + padding,
-        scrollbarWidth,
-        scrollbarTrackHeight,
-      );
-
-      this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
-      this.ctx.fillRect(
-        editor.x + editorWidth - padding - scrollbarWidth,
-        scrollbarThumbY,
-        scrollbarWidth,
-        scrollbarThumbHeight,
-      );
-      this.ctx.globalAlpha = prevAlpha;
-    }
-
-    this.ctx.restore();
-  }
-
-  private interpolateColor(color1: string, color2: string, progress: number): string {
-    const rgb1 = this.hexToRgb(color1);
-    const rgb2 = this.hexToRgb(color2);
-
-    const r = Math.round(rgb1.r + (rgb2.r - rgb1.r) * progress);
-    const g = Math.round(rgb1.g + (rgb2.g - rgb1.g) * progress);
-    const b = Math.round(rgb1.b + (rgb2.b - rgb1.b) * progress);
-
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-
-  private renderSwitch(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: SwitchConfig,
-    isDisabled?: boolean,
-    animationProgress?: number,
-  ): void {
-    const switchWidth = 44;
-    const switchHeight = 22;
-    const thumbSize = 18;
-    const switchX = x + (width - switchWidth) / 2;
-    const switchY = y + (height - switchHeight) / 2;
-    const radius = switchHeight / 2;
-
-    const isChecked = config.checked ?? false;
-    const disabled = isDisabled ?? false;
-
-    const progress = animationProgress ?? (isChecked ? 1 : 0);
-    const thumbTravel = switchWidth - thumbSize - 4;
-    const thumbX = switchX + 2 + progress * thumbTravel;
-    const thumbY = switchY + (switchHeight - thumbSize) / 2;
-
-    this.ctx.save();
-
-    const offColor = disabled
-      ? this.theme.colors.switch.disabledOffBg
-      : this.theme.colors.switch.offBg;
-    const onColor = disabled
-      ? this.theme.colors.switch.disabledOnBg
-      : this.theme.colors.switch.onBg;
-
-    const offRGB = this.hexToRgb(offColor);
-    const onRGB = this.hexToRgb(onColor);
-
-    const r = Math.round(offRGB.r + (onRGB.r - offRGB.r) * progress);
-    const g = Math.round(offRGB.g + (onRGB.g - offRGB.g) * progress);
-    const b = Math.round(offRGB.b + (onRGB.b - offRGB.b) * progress);
-
-    this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(switchX, switchY, switchWidth, switchHeight, radius);
-    this.ctx.fill();
-
-    this.ctx.fillStyle = this.theme.colors.switch.thumb;
-    this.ctx.beginPath();
-    this.ctx.arc(thumbX + thumbSize / 2, thumbY + thumbSize / 2, thumbSize / 2, 0, Math.PI * 2);
-    this.ctx.fill();
-
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.restore();
-  }
-
-  private hexToRgb(hex: string): { r: number; g: number; b: number } {
-    // 使用缓存避免重复解析
-    let cached = this.hexToRgbCache.get(hex);
-    if (cached) return cached;
-
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    cached = result
-      ? {
-          r: parseInt(result[1]!, 16),
-          g: parseInt(result[2]!, 16),
-          b: parseInt(result[3]!, 16),
-        }
-      : { r: 0, g: 0, b: 0 };
-
-    this.hexToRgbCache.set(hex, cached);
-    return cached;
+    this.imageOverlayRenderer.renderImageEditor(editor);
   }
 
   /**
@@ -2956,893 +2170,8 @@ export class Renderer {
     return width;
   }
 
-  // === 进度条渲染方法 ===
-
-  private renderProgress(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: import("../types").ProgressConfig,
-  ): void {
-    const shape = config.shape ?? "line";
-
-    if (shape === "line") {
-      this.renderLineProgress(x, y, width, height, config);
-    } else if (shape === "circle") {
-      this.renderCircleProgress(x, y, width, height, config);
-    } else if (shape === "dashboard") {
-      this.renderDashboardProgress(x, y, width, height, config);
-    }
-  }
-
-  private renderLineProgress(
-    x: number,
-    y: number,
-    cellWidth: number,
-    cellHeight: number,
-    config: import("../types").ProgressConfig,
-  ): void {
-    const padding = 8;
-    const textPosition = config.textPosition ?? "right";
-    const showText = config.showText ?? true;
-    const size = config.size ?? "medium";
-
-    // 计算进度条尺寸
-    const barHeight = config.height ?? (size === "small" ? 6 : size === "large" ? 16 : 10);
-    const textGap = 8;
-    const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
-    const barWidth = config.width ?? cellWidth - padding * 2 - textReservedWidth;
-
-    const barX = x + padding;
-    const barY = y + (cellHeight - barHeight) / 2;
-
-    // 限制值在 [0, 100] 范围内
-    const clampedValue = Math.min(100, Math.max(0, config.value));
-
-    // 获取进度颜色
-    const progressColor = this.getProgressColor(config, clampedValue);
-    const trackColor = config.trackColor ?? this.theme.colors.progress.track;
-    // 圆角半径：默认为高度的一半（完全圆角）
-    const radius = config.borderRadius ?? barHeight / 2;
-
-    // 绘制轨道 - 使用 fillRect 代替 roundRect 以提升性能
-    this.ctx.fillStyle = trackColor;
-    if (radius > 0) {
-      this.ctx.beginPath();
-      this.ctx.roundRect(barX, barY, barWidth, barHeight, radius);
-      this.ctx.fill();
-    } else {
-      this.ctx.fillRect(barX, barY, barWidth, barHeight);
-    }
-
-    // 绘制进度
-    const progressWidth = (clampedValue / 100) * barWidth;
-    if (progressWidth > 0) {
-      this.ctx.fillStyle = progressColor;
-      const actualProgressWidth = Math.max(progressWidth, radius * 2);
-      if (radius > 0) {
-        this.ctx.beginPath();
-        this.ctx.roundRect(barX, barY, actualProgressWidth, barHeight, radius);
-        this.ctx.fill();
-      } else {
-        this.ctx.fillRect(barX, barY, actualProgressWidth, barHeight);
-      }
-    }
-
-    // 绘制文本
-    if (showText) {
-      const text = config.format ? config.format(clampedValue) : `${Math.round(clampedValue)}%`;
-
-      // 根据 size 和 textPosition 计算文字大小
-      let fontSize: number;
-      if (textPosition === "inside") {
-        // inside 模式：文字大小不能超过进度条高度
-        fontSize = Math.min(this.theme.font.size, Math.max(10, barHeight - 2));
-      } else {
-        // right 模式：根据 size 调整文字大小
-        fontSize = size === "small" ? 11 : size === "large" ? 14 : this.theme.font.size;
-      }
-
-      this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
-      this.ctx.textBaseline = "middle";
-
-      if (textPosition === "right") {
-        // 文字显示在进度条右侧
-        this.ctx.textAlign = "left";
-        this.ctx.fillStyle = config.textColor ?? this.theme.colors.cellText;
-        this.ctx.fillText(text, barX + barWidth + textGap, y + cellHeight / 2);
-      } else {
-        // inside - 文字在进度条内部，居中显示
-        this.ctx.textAlign = "center";
-        this.ctx.fillStyle = config.textColor ?? this.theme.colors.cellText;
-        this.ctx.fillText(text, barX + barWidth / 2, y + cellHeight / 2);
-      }
-    }
-  }
-
-  private renderCircleProgress(
-    x: number,
-    y: number,
-    cellWidth: number,
-    cellHeight: number,
-    config: import("../types").ProgressConfig,
-  ): void {
-    const size = config.size ?? "medium";
-
-    // 根据 size 计算直径，基于标准行高（不随动态行高变化）
-    const sizeRatio = size === "small" ? 0.6 : size === "large" ? 0.9 : 0.75;
-    const defaultDiameter = Math.floor(STANDARD_ROW_HEIGHT * sizeRatio);
-    const diameter = config.width ?? defaultDiameter;
-    const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.12));
-
-    const centerX = x + cellWidth / 2;
-    const centerY = y + cellHeight / 2;
-    const radius = (diameter - strokeWidth) / 2;
-
-    // 限制值在 [0, 100] 范围内
-    const clampedValue = Math.min(100, Math.max(0, config.value));
-
-    const progressColor = this.getProgressColor(config, clampedValue);
-    const trackColor = config.trackColor ?? this.theme.colors.progress.track;
-
-    // 绘制轨道圆环
-    this.ctx.strokeStyle = trackColor;
-    this.ctx.lineWidth = strokeWidth;
-    this.ctx.beginPath();
-    this.ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-    this.ctx.stroke();
-
-    // 绘制进度圆环
-    const progress = clampedValue / 100;
-    const startAngle = -Math.PI / 2; // 从顶部开始
-    const endAngle = startAngle + progress * Math.PI * 2;
-
-    if (progress > 0) {
-      this.ctx.strokeStyle = progressColor;
-      this.ctx.lineCap = config.strokeLinecap ?? "round";
-      this.ctx.beginPath();
-      this.ctx.arc(centerX, centerY, radius, startAngle, endAngle);
-      this.ctx.stroke();
-    }
-
-    // 绘制中心文本
-    if (config.showText ?? true) {
-      const text = config.format ? config.format(clampedValue) : `${Math.round(clampedValue)}%`;
-      this.ctx.fillStyle = config.textColor ?? this.theme.colors.cellText;
-      // 文字大小根据圆环直径自适应，但不小于 8px
-      const fontSize = Math.max(8, Math.round(diameter * 0.32));
-      this.ctx.font = `bold ${fontSize}px ${this.theme.font.family}`;
-      this.ctx.textAlign = "center";
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(text, centerX, centerY);
-    }
-  }
-
-  private renderDashboardProgress(
-    x: number,
-    y: number,
-    cellWidth: number,
-    cellHeight: number,
-    config: import("../types").ProgressConfig,
-  ): void {
-    const size = config.size ?? "medium";
-
-    // 根据 size 计算直径，基于标准行高（不随动态行高变化）
-    const sizeRatio = size === "small" ? 0.7 : size === "large" ? 0.95 : 0.85;
-    const defaultDiameter = Math.floor(STANDARD_ROW_HEIGHT * sizeRatio);
-    const diameter = config.width ?? defaultDiameter;
-    const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.1));
-
-    const centerX = x + cellWidth / 2;
-    // 仪表盘是半圆，需要稍微下移让它在单元格中视觉居中
-    const centerY = y + cellHeight / 2 + cellHeight * 0.05;
-    const radius = (diameter - strokeWidth) / 2;
-
-    // 限制值在 [0, 100] 范围内
-    const clampedValue = Math.min(100, Math.max(0, config.value));
-
-    const progressColor = this.getProgressColor(config, clampedValue);
-    const trackColor = config.trackColor ?? this.theme.colors.progress.track;
-
-    // 仪表盘角度范围: 270° (3/4 圆)，缺口在底部中间
-    const startAngle = Math.PI * 0.75; // 135°
-    const totalAngle = Math.PI * 1.5; // 270°
-
-    // 绘制轨道 - 顺时针画 270°
-    this.ctx.strokeStyle = trackColor;
-    this.ctx.lineWidth = strokeWidth;
-    this.ctx.lineCap = config.strokeLinecap ?? "round";
-    this.ctx.beginPath();
-    this.ctx.arc(centerX, centerY, radius, startAngle, startAngle + totalAngle, false);
-    this.ctx.stroke();
-
-    // 绘制进度 - 顺时针，角度增加
-    const progress = clampedValue / 100;
-    if (progress > 0) {
-      const progressEndAngle = startAngle + progress * totalAngle;
-
-      this.ctx.strokeStyle = progressColor;
-      this.ctx.beginPath();
-      this.ctx.arc(centerX, centerY, radius, startAngle, progressEndAngle, false);
-      this.ctx.stroke();
-    }
-
-    // 绘制中心文本
-    if (config.showText ?? true) {
-      const text = config.format ? config.format(clampedValue) : `${Math.round(clampedValue)}%`;
-      this.ctx.fillStyle = config.textColor ?? this.theme.colors.cellText;
-      // 文字大小根据直径自适应，但不小于 8px
-      const fontSize = Math.max(8, Math.round(diameter * 0.28));
-      this.ctx.font = `bold ${fontSize}px ${this.theme.font.family}`;
-      this.ctx.textAlign = "center";
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(text, centerX, centerY);
-    }
-  }
-
-  private getProgressColor(config: import("../types").ProgressConfig, value: number): string {
-    const { color, status } = config;
-
-    // 状态优先
-    if (status === "success") return this.theme.colors.progress.success;
-    if (status === "warning") return this.theme.colors.progress.warning;
-    if (status === "error") return this.theme.colors.progress.error;
-
-    // 单色
-    if (typeof color === "string") return color;
-
-    // 函数动态计算（无法缓存）
-    if (typeof color === "function") return color(value);
-
-    // 渐变区间
-    if (Array.isArray(color) && color.length > 0) {
-      // 使用缓存避免每次排序
-      const cacheKey = color.map((c) => `${c.value}-${c.color}`).join("|");
-      let sorted = this.colorRangeCache.get(cacheKey);
-      if (!sorted) {
-        sorted = [...color].sort((a, b) => a.value - b.value);
-        this.colorRangeCache.set(cacheKey, sorted);
-      }
-
-      if (value <= sorted[0]!.value) return sorted[0]!.color;
-      if (value >= sorted[sorted.length - 1]!.value) return sorted[sorted.length - 1]!.color;
-
-      // 颜色区间通常很少（2-5个），线性查找足够
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const curr = sorted[i]!;
-        const next = sorted[i + 1]!;
-        if (value >= curr.value && value <= next.value) {
-          const ratio = (value - curr.value) / (next.value - curr.value);
-          return this.interpolateColor(curr.color, next.color, ratio);
-        }
-      }
-    }
-
-    // 默认主题色
-    return this.theme.colors.progress.default;
-  }
-
-  // === 评分渲染方法 ===
-
-  private renderRating(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: RatingConfig,
-    isDisabled: boolean,
-  ): void {
-    const ratingValue = config.value ?? 0;
-    const max = config.max ?? 5;
-    const starSize = config.starSize ?? 16;
-    const allowHalf = config.allowHalf ?? false;
-
-    // Default colors
-    const activeColor = config.color ?? "#FFD700";
-    const inactiveColor = config.inactiveColor ?? "#E0E0E0";
-    const disabledColor = config.disabledColor ?? "#BDBDBD";
-
-    // Use disabled color if cell is disabled
-    const fillColor = isDisabled ? disabledColor : activeColor;
-    const emptyColor = isDisabled ? disabledColor : inactiveColor;
-
-    // Calculate star positions (centered in cell)
-    const totalWidth = max * starSize;
-    const startX = x + (width - totalWidth) / 2;
-    const startY = y + (height - starSize) / 2;
-
-    for (let i = 0; i < max; i++) {
-      const starX = startX + i * starSize;
-
-      // Calculate fill amount for this star
-      const starValue = ratingValue - i;
-      let fillAmount = 0;
-
-      if (starValue >= 1) {
-        fillAmount = 1; // Full star
-      } else if (starValue > 0) {
-        fillAmount = allowHalf ? starValue : 0; // Half star or empty
-      }
-
-      // Draw the star
-      this.drawStar(starX, startY, starSize, fillAmount, fillColor, emptyColor);
-    }
-  }
-
-  private drawStar(
-    x: number,
-    y: number,
-    size: number,
-    fillAmount: number,
-    fillColor: string,
-    emptyColor: string,
-  ): void {
-    const centerX = x + size / 2;
-    const centerY = y + size / 2;
-    const outerRadius = size / 2;
-    const innerRadius = outerRadius * 0.4; // Inner radius ratio
-
-    // Star points (5-pointed star)
-    const points = this.getStarPoints(centerX, centerY, outerRadius, innerRadius);
-
-    // Draw empty star background first
-    this.ctx.beginPath();
-    this.ctx.moveTo(points[0]!.x, points[0]!.y);
-    for (let i = 1; i < points.length; i++) {
-      this.ctx.lineTo(points[i]!.x, points[i]!.y);
-    }
-    this.ctx.closePath();
-    this.ctx.fillStyle = emptyColor;
-    this.ctx.fill();
-
-    // Draw filled portion
-    if (fillAmount > 0) {
-      this.ctx.save();
-
-      // Create clipping path for filled portion
-      this.ctx.beginPath();
-      this.ctx.rect(x, y, size * fillAmount, size);
-      this.ctx.clip();
-
-      // Draw filled star
-      this.ctx.beginPath();
-      this.ctx.moveTo(points[0]!.x, points[0]!.y);
-      for (let i = 1; i < points.length; i++) {
-        this.ctx.lineTo(points[i]!.x, points[i]!.y);
-      }
-      this.ctx.closePath();
-      this.ctx.fillStyle = fillColor;
-      this.ctx.fill();
-
-      this.ctx.restore();
-    }
-  }
-
-  private getStarPoints(
-    centerX: number,
-    centerY: number,
-    outerRadius: number,
-    innerRadius: number,
-  ): Array<{ x: number; y: number }> {
-    const points: Array<{ x: number; y: number }> = [];
-    const angleStep = Math.PI / 5; // 36 degrees
-    const startAngle = -Math.PI / 2; // Start from top
-
-    for (let i = 0; i < 10; i++) {
-      const angle = startAngle + i * angleStep;
-      const radius = i % 2 === 0 ? outerRadius : innerRadius;
-      points.push({
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-      });
-    }
-
-    return points;
-  }
-
-  // === 颜色选择器渲染方法 ===
-
-  private renderColorCell(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: ColorPickerConfig,
-    isDisabled: boolean,
-  ): void {
-    const padding = 8;
-    // 颜色块尺寸基于标准行高（不随动态行高变化）
-    const colorBoxSize = Math.min(STANDARD_ROW_HEIGHT - padding * 2, 24);
-    const colorBoxX = x + (width - colorBoxSize) / 2;
-    const colorBoxY = y + (height - colorBoxSize) / 2;
-
-    // 绘制颜色块
-    this.ctx.fillStyle = config.value || "#ffffff";
-    this.ctx.fillRect(colorBoxX, colorBoxY, colorBoxSize, colorBoxSize);
-
-    // 绘制边框
-    this.ctx.strokeStyle = isDisabled ? "#bdbdbd" : "#d9d9d9";
-    this.ctx.lineWidth = 1;
-    this.ctx.strokeRect(colorBoxX, colorBoxY, colorBoxSize, colorBoxSize);
-
-    // 可选：显示颜色值文本
-    if (config.showText) {
-      const textColor = this.getContrastColor(config.value || "#ffffff");
-      this.ctx.fillStyle = textColor;
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-      this.ctx.textAlign = "center";
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(
-        config.value || "",
-        colorBoxX + colorBoxSize / 2,
-        colorBoxY + colorBoxSize / 2,
-      );
-    }
-  }
-
   renderColorDropdown(dropdown: ColorPickerDropdownState): void {
-    const { config, x, y, width, hoveredColor } = dropdown;
-    const presetColors = config.presetColors || this.getDefaultPresetColors();
-
-    const columns = 8;
-    const cellSize = 24;
-    const gap = 4;
-    const padding = 8;
-
-    // 计算下拉框高度
-    const rows = Math.ceil(presetColors.length / columns);
-    const dropdownHeight = padding * 2 + rows * (cellSize + gap) - gap;
-
-    // 绘制背景
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-
-    // 绘制颜色格子
-    for (let i = 0; i < presetColors.length; i++) {
-      const color = presetColors[i]!;
-      const col = i % columns;
-      const row = Math.floor(i / columns);
-      const cellX = x + padding + col * (cellSize + gap);
-      const cellY = y + padding + row * (cellSize + gap);
-
-      // 绘制颜色块
-      this.ctx.fillStyle = color;
-      this.ctx.fillRect(cellX, cellY, cellSize, cellSize);
-
-      // hover 效果
-      if (color === hoveredColor) {
-        this.ctx.strokeStyle = "#1890ff";
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(cellX - 1, cellY - 1, cellSize + 2, cellSize + 2);
-      } else {
-        // 绘制格子边框
-        this.ctx.strokeStyle = "#d9d9d9";
-        this.ctx.lineWidth = 1;
-        this.ctx.strokeRect(cellX, cellY, cellSize, cellSize);
-      }
-    }
-  }
-
-  private getDefaultPresetColors(): string[] {
-    return [
-      "#ff4d4f",
-      "#ff7a45",
-      "#ffa940",
-      "#ffc53d",
-      "#bae637",
-      "#73d13d",
-      "#36cfc9",
-      "#40a9ff",
-      "#597ef7",
-      "#9254de",
-      "#f759ab",
-      "#ff85c0",
-      "#a0d911",
-      "#13c2c2",
-      "#1890ff",
-      "#722ed1",
-      "#eb2f96",
-      "#faad14",
-      "#52c41a",
-      "#2f54eb",
-      "#ffffff",
-      "#f5f5f5",
-      "#d9d9d9",
-      "#8c8c8c",
-      "#595959",
-      "#262626",
-      "#000000",
-      "#f50",
-    ];
-  }
-
-  private getContrastColor(bgColor: string): string {
-    const rgb = this.hexToRgb(bgColor);
-    const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
-    return brightness > 128 ? "#000000" : "#ffffff";
-  }
-
-  private renderInput(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: InputConfig,
-    _isDisabled?: boolean,
-  ): void {
-    const padding = 8;
-
-    this.ctx.strokeStyle = this.theme.colors.input.border;
-    this.ctx.lineWidth = 1;
-
-    this.ctx.beginPath();
-    this.ctx.rect(x, y, width, height);
-    this.ctx.stroke();
-
-    const displayText = config.value ?? "";
-    const placeholder = config.placeholder ?? "";
-    const text = displayText || placeholder;
-
-    this.ctx.fillStyle = displayText
-      ? this.theme.colors.cellText
-      : this.theme.colors.placeholderText;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-
-    const maxTextWidth = width - padding * 2;
-
-    if (config.multiline) {
-      const lineHeight = this.theme.font.size * 1.5;
-      const maxRows = config.maxRows ?? 5;
-      const maxVisibleHeight = height - padding * 2;
-      const maxVisibleRows = Math.max(1, Math.floor(maxVisibleHeight / lineHeight));
-      const actualMaxRows = Math.min(maxRows, maxVisibleRows);
-
-      const lines = this.wrapText(text, maxTextWidth);
-      const visibleLines = lines.slice(0, actualMaxRows);
-
-      let textY = y + padding + lineHeight / 2;
-
-      for (let i = 0; i < visibleLines.length; i++) {
-        let lineText = visibleLines[i]!;
-        const isLastVisibleLine = i === visibleLines.length - 1;
-        const hasMoreLines = lines.length > visibleLines.length;
-
-        if (isLastVisibleLine) {
-          lineText = this.truncateTextWithEllipsis(lineText, maxTextWidth, hasMoreLines);
-        }
-        this.ctx.fillText(lineText, x + padding, textY);
-        textY += lineHeight;
-      }
-    } else {
-      const truncatedText = this.truncateTextWithEllipsis(text, maxTextWidth);
-      this.ctx.fillText(truncatedText, x + padding, y + height / 2);
-    }
-  }
-
-  private wrapText(text: string, maxWidth: number): string[] {
-    const lines: string[] = [];
-    const paragraphs = text.split("\n");
-
-    for (const paragraph of paragraphs) {
-      if (paragraph === "") {
-        lines.push("");
-        continue;
-      }
-
-      let remaining = paragraph;
-
-      while (remaining.length > 0) {
-        // 使用二分查找找到当前行能放下的最大字符数
-        const breakPoint = this.findLineBreakPoint(remaining, maxWidth);
-
-        if (breakPoint === 0) {
-          // 第一个字符都放不下，强制放一个字符
-          lines.push(remaining[0]!);
-          remaining = remaining.slice(1);
-        } else {
-          lines.push(remaining.slice(0, breakPoint));
-          remaining = remaining.slice(breakPoint);
-        }
-      }
-    }
-
-    return lines;
-  }
-
-  /**
-   * 二分查找找到能放入 maxWidth 的最大字符数
-   */
-  private findLineBreakPoint(text: string, maxWidth: number): number {
-    const len = text.length;
-
-    // 边界检查
-    if (len === 0) return 0;
-
-    // 先检查整段是否能放下
-    if (this.ctx.measureText(text).width <= maxWidth) {
-      return len;
-    }
-
-    // 二分查找
-    let left = 1;
-    let right = len;
-    let result = 0;
-
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const substr = text.slice(0, mid);
-      const width = this.ctx.measureText(substr).width;
-
-      if (width <= maxWidth) {
-        result = mid;
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
-    }
-
-    return result;
-  }
-
-  private truncateTextWithEllipsis(
-    text: string,
-    maxWidth: number,
-    forceEllipsis: boolean = false,
-  ): string {
-    const ellipsis = "...";
-    const ellipsisWidth = this.ctx.measureText(ellipsis).width;
-
-    // 先检查整段是否能放下
-    const textWidth = this.ctx.measureText(text).width;
-
-    if (textWidth <= maxWidth) {
-      if (forceEllipsis) {
-        // 需要添加省略号，检查是否能放下文本+省略号
-        if (textWidth + ellipsisWidth <= maxWidth) {
-          return text + ellipsis;
-        }
-        // 需要截断以放下省略号
-        return this.truncateWithEllipsisBinary(text, maxWidth, ellipsis, ellipsisWidth);
-      }
-      return text;
-    }
-
-    return this.truncateWithEllipsisBinary(text, maxWidth, ellipsis, ellipsisWidth);
-  }
-
-  /**
-   * 二分查找截断文本并添加省略号
-   */
-  private truncateWithEllipsisBinary(
-    text: string,
-    maxWidth: number,
-    ellipsis: string,
-    ellipsisWidth: number,
-  ): string {
-    const targetWidth = maxWidth - ellipsisWidth;
-
-    if (targetWidth <= 0) {
-      return ellipsis;
-    }
-
-    const len = text.length;
-
-    // 二分查找能放下的最大长度
-    let left = 0;
-    let right = len;
-    let result = 0;
-
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const substr = text.slice(0, mid);
-      const width = this.ctx.measureText(substr).width;
-
-      if (width <= targetWidth) {
-        result = mid;
-        left = mid + 1;
-      } else {
-        right = mid - 1;
-      }
-    }
-
-    return text.slice(0, result) + ellipsis;
-  }
-
-  private renderSelect(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: SelectConfig,
-    _isDisabled?: boolean,
-  ): void {
-    const padding = 8;
-    const arrowWidth = 20;
-
-    this.ctx.strokeStyle = this.theme.colors.input.border;
-    this.ctx.lineWidth = 1;
-
-    this.ctx.beginPath();
-    this.ctx.rect(x, y, width, height);
-    this.ctx.stroke();
-
-    const fontSize = this.theme.font.size;
-    const lineHeight = fontSize * 1.5;
-
-    // multiple 模式：纯文本渲染，用分隔符连接
-    if (config.multiple && Array.isArray(config.value) && config.value.length > 0) {
-      const maxRows = this.calculateMaxRows(height, lineHeight, padding);
-      const maxTextWidth = width - padding * 2 - arrowWidth;
-
-      // 收集选中值的标签文本
-      const labels = config.value.map((v) => {
-        const opt = config.options.find((o) => o.value === v);
-        return opt?.label ?? String(v);
-      });
-
-      // 使用分隔符连接成单一文本
-      const separator = config.separator ?? this.multipleSelectSeparator;
-      const fullText = labels.join(separator);
-
-      // 多行文本换行
-      const lines = this.wrapTextToLines(fullText, maxTextWidth, maxRows);
-
-      // 渲染纯文本
-      this.ctx.fillStyle = this.theme.colors.cellText;
-      this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
-      this.ctx.textBaseline = "top";
-
-      const totalHeight = lines.length * lineHeight;
-      const startY = y + (height - totalHeight) / 2;
-
-      for (let rowIdx = 0; rowIdx < lines.length; rowIdx++) {
-        const line = lines[rowIdx]!;
-        this.ctx.fillText(
-          line,
-          x + padding,
-          startY + rowIdx * lineHeight + (lineHeight - fontSize) / 2,
-        );
-      }
-    } else {
-      // 单选模式（原有逻辑）
-      let displayText = "";
-      if (config.value !== undefined && config.value !== null) {
-        const selectedOption = config.options.find((opt) => opt.value === config.value);
-        displayText = selectedOption?.label ?? String(config.value);
-      }
-
-      const placeholder = config.placeholder ?? "请选择";
-      const text = displayText || placeholder;
-
-      this.ctx.fillStyle = displayText
-        ? this.theme.colors.cellText
-        : this.theme.colors.placeholderText;
-      this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
-      this.ctx.textBaseline = "middle";
-
-      const maxTextWidth = width - padding * 2 - arrowWidth;
-      const truncatedText = truncateText(text, Math.floor(maxTextWidth / (fontSize * 0.6)));
-      this.ctx.fillText(truncatedText, x + padding, y + height / 2);
-    }
-
-    // 绘制下拉箭头
-    this.ctx.fillStyle = this.theme.colors.date.icon;
-    this.ctx.beginPath();
-    const arrowX = x + width - padding - 8;
-    const arrowY = y + height / 2;
-    this.ctx.moveTo(arrowX - 4, arrowY - 2);
-    this.ctx.lineTo(arrowX, arrowY + 3);
-    this.ctx.lineTo(arrowX + 4, arrowY - 2);
-    this.ctx.closePath();
-    this.ctx.fill();
-  }
-
-  private renderDate(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    config: DateConfig,
-    _isDisabled?: boolean,
-  ): void {
-    const padding = 8;
-    const iconWidth = 20;
-
-    this.ctx.strokeStyle = this.theme.colors.date.border;
-    this.ctx.lineWidth = 1;
-
-    this.ctx.beginPath();
-    this.ctx.rect(x, y, width, height);
-    this.ctx.stroke();
-
-    let displayText = "";
-    if (config.value) {
-      const date = config.value instanceof Date ? config.value : new Date(config.value);
-      if (!isNaN(date.getTime())) {
-        const format = config.format ?? "YYYY-MM-DD";
-        displayText = this.formatDate(date, format);
-      }
-    }
-
-    const placeholder = config.placeholder ?? "选择日期";
-    const text = displayText || placeholder;
-
-    this.ctx.fillStyle = displayText
-      ? this.theme.colors.cellText
-      : this.theme.colors.placeholderText;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-
-    const maxTextWidth = width - padding * 2 - iconWidth;
-    const ellipsis = "...";
-    let finalText = text;
-    if (this.ctx.measureText(text).width > maxTextWidth) {
-      let truncated = text;
-      while (
-        truncated.length > 0 &&
-        this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
-      ) {
-        truncated = truncated.slice(0, -1);
-      }
-      finalText = truncated + ellipsis;
-    }
-    this.ctx.fillText(finalText, x + padding, y + height / 2);
-
-    this.ctx.strokeStyle = this.theme.colors.date.icon;
-    this.ctx.lineWidth = 1.5;
-    const iconX = x + width - padding - 10;
-    const iconY = y + height / 2;
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(iconX - 6, iconY - 6);
-    this.ctx.lineTo(iconX - 6, iconY + 6);
-    this.ctx.lineTo(iconX + 6, iconY + 6);
-    this.ctx.lineTo(iconX + 6, iconY - 6);
-    this.ctx.closePath();
-    this.ctx.stroke();
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(iconX - 6, iconY - 2);
-    this.ctx.lineTo(iconX + 6, iconY - 2);
-    this.ctx.stroke();
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(iconX - 3, iconY - 8);
-    this.ctx.lineTo(iconX - 3, iconY - 5);
-    this.ctx.stroke();
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(iconX + 3, iconY - 8);
-    this.ctx.lineTo(iconX + 3, iconY - 5);
-    this.ctx.stroke();
-  }
-
-  private formatDate(date: Date, format: string): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const seconds = String(date.getSeconds()).padStart(2, "0");
-
-    return format
-      .replace("YYYY", String(year))
-      .replace("MM", month)
-      .replace("DD", day)
-      .replace("HH", hours)
-      .replace("mm", minutes)
-      .replace("ss", seconds);
+    this.overlayRenderer.renderColorDropdown(dropdown);
   }
 
   private renderImage(
@@ -4051,7 +2380,6 @@ export class Renderer {
 
     // 计算实际渲染的内容尺寸（支持多行）
     const displayRows = Math.ceil(displayCount / imagesPerRow);
-    const lastRowImages = displayCount % imagesPerRow || imagesPerRow;
     const contentWidth =
       displayRows > 1
         ? imagesPerRow * imgWidth + (imagesPerRow - 1) * gap
@@ -4771,276 +3099,7 @@ export class Renderer {
   }
 
   renderDropdown(dropdown: DropdownState): void {
-    if (dropdown.type === "tags" && dropdown.tagsConfig) {
-      this.renderTagsDropdown(dropdown);
-      return;
-    }
-
-    const { config, x, y, width, scrollTop, hoveredIndex } = dropdown;
-    const itemHeight = 32;
-    const maxVisibleItems = 8;
-    const visibleCount = Math.min(config.options.length, maxVisibleItems);
-    const dropdownHeight = visibleCount * itemHeight;
-
-    this.ctx.save();
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    this.ctx.beginPath();
-    this.ctx.rect(x, y, width, dropdownHeight);
-    this.ctx.clip();
-
-    const selectedValues =
-      config.multiple && Array.isArray(config.value)
-        ? config.value
-        : config.value !== undefined
-          ? [config.value]
-          : [];
-
-    for (let i = 0; i < config.options.length; i++) {
-      const option = config.options[i]!;
-      const itemY = y + i * itemHeight - scrollTop;
-
-      if (itemY + itemHeight < y || itemY > y + dropdownHeight) continue;
-
-      if (i === hoveredIndex) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-        this.ctx.fillRect(x, itemY, width, itemHeight);
-      }
-
-      const isSelected = selectedValues.includes(option.value);
-
-      if (isSelected && !config.multiple) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.selectedBg;
-        this.ctx.fillRect(x, itemY, width, itemHeight);
-      }
-
-      if (config.multiple) {
-        const checkboxSize = 14;
-        const checkboxX = x + 10;
-        const checkboxY = itemY + (itemHeight - checkboxSize) / 2;
-
-        this.ctx.strokeStyle = isSelected
-          ? this.theme.colors.checkbox.checkedBg
-          : this.theme.colors.checkbox.border;
-        this.ctx.lineWidth = 1;
-        this.ctx.beginPath();
-        this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
-        this.ctx.stroke();
-
-        if (isSelected) {
-          this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
-          this.ctx.beginPath();
-          this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
-          this.ctx.fill();
-
-          this.ctx.strokeStyle = this.theme.colors.checkbox.checkmark;
-          this.ctx.lineWidth = 2;
-          this.ctx.lineCap = "round";
-          this.ctx.lineJoin = "round";
-          this.ctx.beginPath();
-          this.ctx.moveTo(checkboxX + 3, checkboxY + checkboxSize / 2);
-          this.ctx.lineTo(checkboxX + checkboxSize / 2, checkboxY + checkboxSize - 4);
-          this.ctx.lineTo(checkboxX + checkboxSize - 3, checkboxY + 4);
-          this.ctx.stroke();
-        }
-
-        this.ctx.fillStyle = option.disabled
-          ? this.theme.colors.placeholderText
-          : this.theme.colors.dropdown.text;
-        this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-        this.ctx.textBaseline = "middle";
-        const textX = checkboxX + checkboxSize + 8;
-        const textY = itemY + itemHeight / 2;
-        const maxTextWidth = width - (checkboxSize + 28);
-        const truncatedText = truncateText(
-          option.label,
-          Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
-        );
-        this.ctx.fillText(truncatedText, textX, textY);
-      } else {
-        if (isSelected) {
-          this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
-          this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`;
-        } else {
-          this.ctx.fillStyle = option.disabled
-            ? this.theme.colors.placeholderText
-            : this.theme.colors.dropdown.text;
-          this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-        }
-
-        this.ctx.textBaseline = "middle";
-        const textX = x + 12;
-        const textY = itemY + itemHeight / 2;
-        const maxTextWidth = width - 24;
-        const truncatedText = truncateText(
-          option.label,
-          Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
-        );
-        this.ctx.fillText(truncatedText, textX, textY);
-
-        if (isSelected) {
-          this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
-          this.ctx.beginPath();
-          const checkX = x + width - 20;
-          const checkY = textY;
-          this.ctx.moveTo(checkX - 6, checkY);
-          this.ctx.lineTo(checkX - 2, checkY + 4);
-          this.ctx.lineTo(checkX + 6, checkY - 4);
-          this.ctx.strokeStyle = this.theme.colors.checkbox.checkedBg;
-          this.ctx.lineWidth = 2;
-          this.ctx.stroke();
-        }
-      }
-    }
-
-    if (config.options.length > maxVisibleItems) {
-      const scrollbarWidth = 6;
-      const scrollbarX = x + width - scrollbarWidth - 2;
-      const totalHeight = config.options.length * itemHeight;
-      const scrollbarHeight = Math.max(20, (dropdownHeight / totalHeight) * dropdownHeight);
-      const scrollbarY = y + (scrollTop / totalHeight) * dropdownHeight;
-
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
-      this.ctx.beginPath();
-      this.ctx.roundRect(scrollbarX, scrollbarY, scrollbarWidth, scrollbarHeight, 3);
-      this.ctx.fill();
-      this.ctx.globalAlpha = prevAlpha;
-    }
-
-    this.ctx.restore();
-  }
-
-  private renderTagsDropdown(dropdown: DropdownState): void {
-    const { x, y, width, scrollTop, hoveredIndex, tagsConfig } = dropdown;
-    if (!tagsConfig || !tagsConfig.options) return;
-
-    const { options, selectedValues = [] } = tagsConfig;
-    const itemHeight = 32;
-    const maxVisibleItems = 8;
-    const visibleCount = Math.min(options.length, maxVisibleItems);
-    const dropdownHeight = visibleCount * itemHeight;
-
-    this.ctx.save();
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    this.ctx.beginPath();
-    this.ctx.rect(x, y, width, dropdownHeight);
-    this.ctx.clip();
-
-    for (let i = 0; i < options.length; i++) {
-      const option = options[i]!;
-      const itemY = y + i * itemHeight - scrollTop;
-
-      if (itemY + itemHeight < y || itemY > y + dropdownHeight) continue;
-
-      const isSelected = selectedValues.includes(option.value ?? option.text);
-
-      if (i === hoveredIndex) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-        this.ctx.fillRect(x, itemY, width, itemHeight);
-      }
-
-      if (isSelected) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.selectedBg;
-        this.ctx.fillRect(x, itemY, width, itemHeight);
-      }
-
-      const checkboxSize = 14;
-      const checkboxX = x + 10;
-      const checkboxY = itemY + (itemHeight - checkboxSize) / 2;
-
-      this.ctx.fillStyle = isSelected
-        ? this.theme.colors.checkbox.checkedBg
-        : this.theme.colors.button.background;
-      this.ctx.strokeStyle = isSelected
-        ? this.theme.colors.checkbox.checkedBg
-        : this.theme.colors.checkbox.border;
-      this.ctx.lineWidth = 1;
-
-      this.ctx.beginPath();
-      this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
-      this.ctx.fill();
-      this.ctx.stroke();
-
-      if (isSelected) {
-        this.ctx.strokeStyle = this.theme.colors.checkbox.checkmark;
-        this.ctx.lineWidth = 2;
-        this.ctx.beginPath();
-        this.ctx.moveTo(checkboxX + 3, checkboxY + 7);
-        this.ctx.lineTo(checkboxX + 6, checkboxY + 10);
-        this.ctx.lineTo(checkboxX + 11, checkboxY + 4);
-        this.ctx.stroke();
-      }
-
-      this.ctx.fillStyle = option.disabled
-        ? this.theme.colors.placeholderText
-        : this.theme.colors.dropdown.text;
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-      this.ctx.textBaseline = "middle";
-
-      const textX = checkboxX + checkboxSize + 8;
-      const textY = itemY + itemHeight / 2;
-      const maxTextWidth = width - (checkboxSize + 28);
-      const truncatedText = truncateText(
-        option.text,
-        Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
-      );
-      this.ctx.fillText(truncatedText, textX, textY);
-    }
-
-    if (options.length > maxVisibleItems) {
-      const scrollbarWidth = 6;
-      const scrollbarX = x + width - scrollbarWidth - 2;
-      const totalHeight = options.length * itemHeight;
-      const scrollbarHeight = Math.max(20, (dropdownHeight / totalHeight) * dropdownHeight);
-      const scrollbarY = y + (scrollTop / totalHeight) * dropdownHeight;
-
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
-      this.ctx.beginPath();
-      this.ctx.roundRect(scrollbarX, scrollbarY, scrollbarWidth, scrollbarHeight, 3);
-      this.ctx.fill();
-      this.ctx.globalAlpha = prevAlpha;
-    }
-
-    this.ctx.restore();
+    this.dropdownRenderer.renderDropdown(dropdown);
   }
 
   private renderTag(text: string, x: number, y: number, fontSize: number): void {
@@ -5063,175 +3122,6 @@ export class Renderer {
 
     this.ctx.fillStyle = this.theme.colors.cellText;
     this.ctx.fillText(text, x, y);
-  }
-
-  private renderTags(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    padding: number,
-    config: TagsConfig,
-    _isDisabled?: boolean,
-  ): void {
-    const { tags, maxRows = 1 } = config;
-    if (!tags || tags.length === 0) return;
-
-    const tagPadding = 4;
-    const tagHeight = this.theme.font.size + tagPadding * 2;
-    const tagRadius = 4;
-    const gap = 4;
-    const lineGap = 2;
-    const ellipsis = "...";
-
-    const availableWidth = width - padding * 2;
-    // 根据 height 计算 maxRows，优先使用 config.maxRows 作为上限
-    const autoMaxRows = Math.max(1, Math.floor((height - padding * 2) / (tagHeight + lineGap)));
-    const maxLineCount = Math.min(config.maxRows ?? autoMaxRows, autoMaxRows);
-
-    // 缓存已测量的文本宽度，避免重复调用 measureText
-    const textWidthCache = new Map<string, number>();
-    const measureTextCached = (text: string): number => {
-      let w = textWidthCache.get(text);
-      if (w === undefined) {
-        w = this.ctx.measureText(text).width;
-        textWidthCache.set(text, w);
-      }
-      return w;
-    };
-
-    const moreTagWidth = (count: number): number => {
-      return measureTextCached(`+${count}`) + tagPadding * 2;
-    };
-
-    const calculateTagWidth = (tag: TagItem): number => {
-      return measureTextCached(tag.text) + tagPadding * 2;
-    };
-
-    const ellipsisWidth = measureTextCached(ellipsis);
-
-    const lines: { tag: TagItem; displayText: string; width: number }[][] = [];
-    let currentLine: { tag: TagItem; displayText: string; width: number }[] = [];
-    let currentLineWidth = 0;
-    let processedTags = 0;
-
-    for (let i = 0; i < tags.length; i++) {
-      const tag = tags[i]!;
-      const tagWidth = calculateTagWidth(tag);
-
-      const isLastLine = lines.length >= maxLineCount - 1;
-      const remainingTags = tags.length - i;
-
-      if (isLastLine) {
-        const moreWidth = remainingTags > 1 ? moreTagWidth(remainingTags - 1) + gap : 0;
-        const remainingSpace = availableWidth - currentLineWidth - moreWidth;
-
-        if (tagWidth <= remainingSpace) {
-          currentLine.push({ tag, displayText: tag.text, width: tagWidth });
-          currentLineWidth += tagWidth + gap;
-          processedTags++;
-        } else {
-          const truncatedTagSpace = availableWidth - currentLineWidth - moreWidth;
-          if (truncatedTagSpace >= tagPadding * 2 + ellipsisWidth + 10) {
-            const maxTextWidth = truncatedTagSpace - tagPadding * 2 - ellipsisWidth;
-            // 优化：使用二分查找代替逐字符测量
-            let truncatedText = "";
-            const tagText = tag.text;
-            let left = 0;
-            let right = tagText.length;
-
-            while (left < right) {
-              const mid = Math.floor((left + right + 1) / 2);
-              const testText = tagText.slice(0, mid);
-              const testWidth = measureTextCached(testText);
-              if (testWidth <= maxTextWidth) {
-                left = mid;
-                truncatedText = testText;
-              } else {
-                right = mid - 1;
-              }
-            }
-
-            if (truncatedText.length > 0) {
-              const displayText = truncatedText + ellipsis;
-              const truncatedWidth = measureTextCached(displayText) + tagPadding * 2;
-              currentLine.push({ tag, displayText, width: truncatedWidth });
-              processedTags++;
-            }
-          }
-          break;
-        }
-      } else {
-        if (tagWidth <= availableWidth - currentLineWidth) {
-          currentLine.push({ tag, displayText: tag.text, width: tagWidth });
-          currentLineWidth += tagWidth + gap;
-          processedTags++;
-        } else {
-          if (currentLine.length > 0) {
-            lines.push(currentLine);
-          }
-          currentLine = [{ tag, displayText: tag.text, width: tagWidth }];
-          currentLineWidth = tagWidth + gap;
-          processedTags++;
-
-          if (lines.length >= maxLineCount) {
-            break;
-          }
-        }
-      }
-    }
-
-    if (currentLine.length > 0 && lines.length < maxLineCount) {
-      lines.push(currentLine);
-    }
-
-    const totalHeight = lines.length * tagHeight + (lines.length - 1) * lineGap;
-    const startY = y + (height - totalHeight) / 2;
-
-    // 预设字体，避免每个标签都设置
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      const line = lines[lineIndex]!;
-      const lineY = startY + lineIndex * (tagHeight + lineGap);
-      let currentX = x + padding;
-
-      for (const { tag, displayText, width: tagWidth } of line) {
-        const bgColor = tag.bgColor ?? (this.theme.colors.tagColors.default || "#f0f0f0");
-        const textColor = tag.color ?? this.theme.colors.cellText;
-
-        this.ctx.fillStyle = bgColor;
-        this.ctx.beginPath();
-        this.ctx.roundRect(currentX, lineY, tagWidth, tagHeight, tagRadius);
-        this.ctx.fill();
-
-        this.ctx.fillStyle = textColor;
-        const textY = lineY + tagHeight / 2;
-        const textX = currentX + (tagWidth - measureTextCached(displayText)) / 2;
-        this.ctx.fillText(displayText, textX, textY);
-
-        currentX += tagWidth + gap;
-      }
-
-      if (lineIndex === lines.length - 1) {
-        const remainingCount = tags.length - processedTags;
-        if (remainingCount > 0) {
-          const moreText = `+${remainingCount}`;
-          const moreWidth = moreTagWidth(remainingCount);
-
-          this.ctx.fillStyle = this.theme.colors.moreCount.background;
-          this.ctx.beginPath();
-          this.ctx.roundRect(currentX, lineY, moreWidth, tagHeight, tagRadius);
-          this.ctx.fill();
-
-          this.ctx.fillStyle = this.theme.colors.moreCount.text;
-          const textY = lineY + tagHeight / 2;
-          const textX = currentX + (moreWidth - measureTextCached(moreText)) / 2;
-          this.ctx.fillText(moreText, textX, textY);
-        }
-      }
-    }
   }
 
   private resolveDisabled(disabled: DisabledValue | undefined, row: Row, column: Column): boolean {
@@ -5648,141 +3538,7 @@ export class Renderer {
   }
 
   renderTooltip(tooltip: TooltipState): void {
-    const { x, y, width: cellWidth, content } = tooltip;
-    const padding = 8;
-    const lineHeight = 20;
-    const tagGap = 4;
-    const tagPadding = 4;
-    const tagRadius = 4;
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    let tooltipHeight = padding * 2;
-    let lines: string[] = [];
-    let tagLines: TagItem[][] = [];
-
-    const minTooltipWidth = 140;
-    const maxTooltipWidth = 300;
-    const availableWidth = cellWidth ?? maxTooltipWidth;
-
-    let contentWidth = 0;
-
-    if (content.type === "text") {
-      const textWidth = this.ctx.measureText(content.text).width;
-      contentWidth = Math.min(textWidth + padding * 2, maxTooltipWidth);
-
-      const maxWidth = Math.max(minTooltipWidth, Math.min(contentWidth, availableWidth));
-
-      const words = content.text.split("");
-      let currentLine = "";
-
-      for (const char of words) {
-        const testLine = currentLine + char;
-        const testWidth = this.ctx.measureText(testLine).width;
-
-        if (testWidth > maxWidth - padding * 2) {
-          if (currentLine) {
-            lines.push(currentLine);
-          }
-          currentLine = char;
-        } else {
-          currentLine = testLine;
-        }
-      }
-      if (currentLine) {
-        lines.push(currentLine);
-      }
-
-      tooltipHeight += lines.length * lineHeight;
-    } else if (content.type === "tags") {
-      const tags = content.tags;
-      let currentTagLine: TagItem[] = [];
-      let currentLineWidth = padding;
-
-      for (const tag of tags) {
-        const tagWidth = this.ctx.measureText(tag.text).width + tagPadding * 2;
-        contentWidth = Math.max(contentWidth, currentLineWidth + tagWidth + padding);
-
-        if (currentLineWidth + tagWidth + tagGap > availableWidth - padding) {
-          if (currentTagLine.length > 0) {
-            tagLines.push(currentTagLine);
-            currentTagLine = [];
-            currentLineWidth = padding;
-          }
-        }
-
-        currentTagLine.push(tag);
-        currentLineWidth += tagWidth + tagGap;
-      }
-
-      if (currentTagLine.length > 0) {
-        tagLines.push(currentTagLine);
-      }
-
-      tooltipHeight +=
-        tagLines.length * (this.theme.font.size + tagPadding * 2) + (tagLines.length - 1) * tagGap;
-    }
-
-    const tooltipWidth = Math.max(minTooltipWidth, Math.min(contentWidth, availableWidth));
-
-    let tooltipX = x + (availableWidth - tooltipWidth) / 2;
-    const viewportWidth = this.canvas.width / this.dpr;
-    if (tooltipX < 0) {
-      tooltipX = 4;
-    } else if (tooltipX + tooltipWidth > viewportWidth) {
-      tooltipX = viewportWidth - tooltipWidth - 4;
-    }
-    const tooltipY = y - tooltipHeight - this.theme.colors.tooltip.gap;
-
-    this.ctx.save();
-    this.ctx.fillStyle = this.theme.colors.tooltip.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight, 6);
-    this.ctx.fill();
-
-    this.ctx.restore();
-
-    this.ctx.fillStyle = this.theme.colors.tooltip.text;
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "top";
-
-    if (content.type === "text") {
-      let textY = tooltipY + padding;
-      for (const line of lines) {
-        this.ctx.fillText(line, tooltipX + padding, textY);
-        textY += lineHeight;
-      }
-    } else if (content.type === "tags") {
-      let tagY = tooltipY + padding;
-      const tagHeight = this.theme.font.size + tagPadding * 2;
-
-      for (const tagLine of tagLines) {
-        let tagX = tooltipX + padding;
-
-        for (const tag of tagLine) {
-          const tagWidth = this.ctx.measureText(tag.text).width + tagPadding * 2;
-
-          this.ctx.fillStyle = tag.bgColor ?? (this.theme.colors.tagColors.default || "#f0f0f0");
-          this.ctx.beginPath();
-          this.ctx.roundRect(tagX, tagY, tagWidth, tagHeight, tagRadius);
-          this.ctx.fill();
-
-          this.ctx.fillStyle = tag.color ?? this.theme.colors.cellText ?? "#333";
-          this.ctx.textBaseline = "middle";
-          const textX = tagX + (tagWidth - this.ctx.measureText(tag.text).width) / 2;
-          this.ctx.fillText(tag.text, textX, tagY + tagHeight / 2);
-
-          tagX += tagWidth + tagGap;
-        }
-
-        tagY += tagHeight + tagGap;
-      }
-    }
+    this.overlayRenderer.renderTooltip(tooltip);
   }
 
   renderScrollbars(
@@ -5792,125 +3548,17 @@ export class Renderer {
     maxScrollTop: number,
     scrollbarState: ScrollbarState,
   ): void {
-    const viewportWidth = this.canvas.width / this.dpr;
-    const viewportHeight = this.canvas.height / this.dpr;
-    const layoutInfo = this.layoutManager.getLayoutInfo();
-    const headerHeight = layoutInfo.headerHeight;
-
-    const scrollbarWidth = 10;
-    const scrollbarMinSize = 30;
-
-    if (maxScrollTop > 0) {
-      const trackHeight = viewportHeight - headerHeight;
-      const thumbHeight = Math.max(
-        scrollbarMinSize,
-        (viewportHeight / layoutInfo.totalHeight) * trackHeight,
-      );
-      const thumbY = headerHeight + (scrollTop / maxScrollTop) * (trackHeight - thumbHeight);
-      const thumbX = viewportWidth - scrollbarWidth;
-
-      const isHovered = scrollbarState.verticalHovered;
-      const isDragging = scrollbarState.verticalDragging;
-
-      let thumbColor = this.theme.colors.scrollbar.thumb;
-      if (isDragging) {
-        thumbColor = this.theme.colors.scrollbar.thumbActive;
-      } else if (isHovered) {
-        thumbColor = this.theme.colors.scrollbar.thumbHover;
-      }
-
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = thumbColor;
-      this.ctx.beginPath();
-      this.ctx.roundRect(thumbX, thumbY, scrollbarWidth - 2, thumbHeight, 4);
-      this.ctx.fill();
-      this.ctx.globalAlpha = prevAlpha;
-    }
-
-    if (maxScrollLeft > 0) {
-      const trackWidth = viewportWidth;
-      const thumbWidth = Math.max(
-        scrollbarMinSize,
-        (viewportWidth / layoutInfo.totalWidth) * trackWidth,
-      );
-      const thumbX = (scrollLeft / maxScrollLeft) * (trackWidth - thumbWidth);
-      const thumbY = viewportHeight - scrollbarWidth;
-
-      const isHovered = scrollbarState.horizontalHovered;
-      const isDragging = scrollbarState.horizontalDragging;
-
-      let thumbColor = this.theme.colors.scrollbar.thumb;
-      if (isDragging) {
-        thumbColor = this.theme.colors.scrollbar.thumbActive;
-      } else if (isHovered) {
-        thumbColor = this.theme.colors.scrollbar.thumbHover;
-      }
-
-      const prevAlpha = this.ctx.globalAlpha;
-      this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-      this.ctx.fillStyle = thumbColor;
-      this.ctx.beginPath();
-      this.ctx.roundRect(thumbX, thumbY, thumbWidth, scrollbarWidth - 2, 4);
-      this.ctx.fill();
-      this.ctx.globalAlpha = prevAlpha;
-    }
+    this.overlayRenderer.renderScrollbars(
+      scrollLeft,
+      scrollTop,
+      maxScrollLeft,
+      maxScrollTop,
+      scrollbarState,
+    );
   }
 
   renderWatermark(): void {
-    if (!this.watermarkConfig) return;
-
-    const enabled = this.watermarkConfig.enabled ?? true;
-    if (!enabled) return;
-
-    const content = this.watermarkConfig.content ?? "Watermark";
-    if (!content) return;
-
-    const viewportWidth = this.canvas.width / this.dpr;
-    const viewportHeight = this.canvas.height / this.dpr;
-
-    // 从 theme 中获取默认值，WatermarkConfig 可覆盖
-    const themeWatermark = this.theme.colors.watermark;
-    const fontSize = this.watermarkConfig.fontSize ?? themeWatermark.fontSize;
-    const fontFamily =
-      this.watermarkConfig.fontFamily ?? themeWatermark.fontFamily ?? this.theme.font.family;
-    const color = this.watermarkConfig.color ?? themeWatermark.color;
-    const rotation = this.watermarkConfig.rotation ?? -22;
-    const gapX = this.watermarkConfig.gapX ?? 100;
-    const gapY = this.watermarkConfig.gapY ?? 100;
-    const opacity = this.watermarkConfig.opacity ?? themeWatermark.opacity;
-
-    this.ctx.save();
-    this.ctx.globalAlpha = opacity;
-
-    this.ctx.font = `${fontSize}px ${fontFamily}`;
-    this.ctx.fillStyle = color;
-    this.ctx.textAlign = "center";
-    this.ctx.textBaseline = "middle";
-
-    const radians = (rotation * Math.PI) / 180;
-
-    const textWidth = this.ctx.measureText(content).width;
-    const cellWidth = textWidth + gapX;
-    const cellHeight = fontSize + gapY;
-
-    const cols = Math.ceil(viewportWidth / cellWidth) + 2;
-    const rows = Math.ceil(viewportHeight / cellHeight) + 2;
-
-    for (let row = -1; row <= rows; row++) {
-      for (let col = -1; col <= cols; col++) {
-        const x = col * cellWidth + (row % 2 === 0 ? 0 : cellWidth / 2);
-        const y = row * cellHeight;
-
-        this.ctx.save();
-        this.ctx.translate(x, y);
-        this.ctx.rotate(radians);
-        this.ctx.fillText(content, 0, 0);
-        this.ctx.restore();
-      }
-    }
-
-    this.ctx.restore();
+    this.overlayRenderer.renderWatermark();
   }
 
   getScrollbarBounds(
@@ -5922,1081 +3570,28 @@ export class Renderer {
     vertical: { x: number; y: number; width: number; height: number } | null;
     horizontal: { x: number; y: number; width: number; height: number } | null;
   } {
-    const viewportWidth = this.canvas.width / this.dpr;
-    const viewportHeight = this.canvas.height / this.dpr;
-    const layoutInfo = this.layoutManager.getLayoutInfo();
-    const headerHeight = layoutInfo.headerHeight;
-
-    const scrollbarWidth = 10;
-    const scrollbarMinSize = 30;
-
-    let vertical: { x: number; y: number; width: number; height: number } | null = null;
-    let horizontal: { x: number; y: number; width: number; height: number } | null = null;
-
-    if (maxScrollTop > 0) {
-      const trackHeight = viewportHeight - headerHeight;
-      const thumbHeight = Math.max(
-        scrollbarMinSize,
-        (viewportHeight / layoutInfo.totalHeight) * trackHeight,
-      );
-      const thumbY = headerHeight + (scrollTop / maxScrollTop) * (trackHeight - thumbHeight);
-      const thumbX = viewportWidth - scrollbarWidth;
-
-      vertical = {
-        x: thumbX,
-        y: thumbY,
-        width: scrollbarWidth - 2,
-        height: thumbHeight,
-      };
-    }
-
-    if (maxScrollLeft > 0) {
-      const trackWidth = viewportWidth;
-      const thumbWidth = Math.max(
-        scrollbarMinSize,
-        (viewportWidth / layoutInfo.totalWidth) * trackWidth,
-      );
-      const thumbX = (scrollLeft / maxScrollLeft) * (trackWidth - thumbWidth);
-      const thumbY = viewportHeight - scrollbarWidth;
-
-      horizontal = {
-        x: thumbX,
-        y: thumbY,
-        width: thumbWidth,
-        height: scrollbarWidth - 2,
-      };
-    }
-
-    return { vertical, horizontal };
+    return this.overlayRenderer.getScrollbarBounds(
+      scrollLeft,
+      scrollTop,
+      maxScrollLeft,
+      maxScrollTop,
+    );
   }
 
   renderFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { mode } = filterDropdown;
-
-    // 根据模式调用不同的渲染函数
-    switch (mode) {
-      case "search":
-        this.renderSearchFilterDropdown(filterDropdown);
-        break;
-      case "select":
-        this.renderSelectFilterDropdown(filterDropdown);
-        break;
-      case "range":
-        this.renderRangeFilterDropdown(filterDropdown);
-        break;
-      case "boolean":
-        this.renderBooleanFilterDropdown(filterDropdown);
-        break;
-      case "dateRange":
-        // dateRange 模式可以复用现有的日期选择器
-        this.renderDateRangeFilterDropdown(filterDropdown);
-        // 日历作为独立层级渲染在 filter dropdown 之上
-        if (
-          filterDropdown.activeDateField &&
-          filterDropdown.currentYear !== undefined &&
-          filterDropdown.currentMonth !== undefined
-        ) {
-          this.renderDateRangeCalendarPopover(filterDropdown);
-        }
-        break;
-    }
-  }
-
-  /**
-   * 渲染关键字搜索筛选下拉框
-   */
-  private renderSearchFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { x, y, width, searchValue } = filterDropdown;
-    const padding = 8;
-    const gap = 4; // Reduced gap between input and buttons
-    const inputHeight = 36;
-    const buttonHeight = 36;
-    const dropdownHeight = padding + inputHeight + gap + buttonHeight;
-
-    // 绘制背景
-    this.ctx.save();
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-    this.ctx.restore();
-
-    // 绘制输入框背景
-    const inputY = y + padding;
-    this.ctx.fillStyle = this.theme.colors.input.background;
-    this.ctx.strokeStyle = this.theme.colors.input.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x + padding, inputY, width - padding * 2, inputHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    // 绘制输入框文本或占位符
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-    const textY = inputY + inputHeight / 2;
-    const textX = x + padding + 12;
-
-    if (searchValue) {
-      this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      this.ctx.fillText(searchValue, textX, textY);
-    } else {
-      this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("输入关键字筛选...", textX, textY);
-    }
-
-    // 绘制按钮区域
-    this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-  }
-
-  /**
-   * 渲染多选筛选下拉框（原有逻辑）
-   */
-  private renderSelectFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { x, y, width, options, scrollTop, hoveredIndex, isLoading } = filterDropdown;
-    if (!options && !isLoading) return;
-
-    const padding = 8;
-    const gap = 4; // Reduced gap
-    const searchHeight = 32;
-    const itemHeight = 32;
-    const maxVisibleItems = 8;
-    const buttonHeight = 36;
-
-    // 计算实际显示的选项数量
-    const visibleOptions = options?.length ?? 0;
-    const visibleCount = Math.min(visibleOptions, maxVisibleItems);
-    const listHeight = visibleCount * itemHeight;
-    const dropdownHeight = padding + searchHeight + gap + listHeight + gap + buttonHeight;
-
-    // 绘制背景
-    this.ctx.save();
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-    this.ctx.restore();
-
-    // 绘制搜索框
-    const searchY = y + padding;
-    this.ctx.fillStyle = this.theme.colors.input.background;
-    this.ctx.strokeStyle = this.theme.colors.input.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x + padding, searchY, width - padding * 2, searchHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    // 搜索框文本
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textBaseline = "middle";
-    if (filterDropdown.searchText) {
-      this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      this.ctx.fillText(filterDropdown.searchText, x + padding + 12, searchY + searchHeight / 2);
-    } else {
-      this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("搜索...", x + padding + 12, searchY + searchHeight / 2);
-    }
-
-    // 绘制选项列表区域
-    const listY = y + padding + searchHeight + gap;
-    if (isLoading) {
-      // 加载状态
-      this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("加载中...", x + padding, listY + itemHeight / 2);
-    } else if (options && options.length > 0) {
-      // 绘制选项列表
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(x, listY, width, listHeight);
-      this.ctx.clip();
-
-      const checkboxSize = 14;
-      const checkboxGap = 8;
-      const startIndex = Math.floor(scrollTop / itemHeight);
-      const offsetY = -(scrollTop % itemHeight);
-
-      for (let i = 0; i <= visibleCount + 1; i++) {
-        const optionIndex = startIndex + i;
-        if (optionIndex < 0 || optionIndex >= options.length) continue;
-
-        const option = options[optionIndex];
-        if (!option) continue;
-
-        const itemY = listY + i * itemHeight + offsetY;
-
-        if (optionIndex === hoveredIndex) {
-          this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-          this.ctx.fillRect(x, itemY, width, itemHeight);
-        }
-
-        const checkboxX = x + padding;
-        const checkboxY = itemY + (itemHeight - checkboxSize) / 2;
-
-        this.ctx.strokeStyle = option.checked
-          ? this.theme.colors.checkbox.checkedBg
-          : this.theme.colors.checkbox.border;
-        this.ctx.lineWidth = 1;
-        this.ctx.beginPath();
-        this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
-        this.ctx.stroke();
-
-        if (option.checked) {
-          this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
-          this.ctx.beginPath();
-          this.ctx.roundRect(checkboxX, checkboxY, checkboxSize, checkboxSize, 2);
-          this.ctx.fill();
-
-          this.ctx.strokeStyle = this.theme.colors.checkbox.checkmark;
-          this.ctx.lineWidth = 2;
-          this.ctx.beginPath();
-          this.ctx.moveTo(checkboxX + 3, checkboxY + 7);
-          this.ctx.lineTo(checkboxX + 6, checkboxY + 10);
-          this.ctx.lineTo(checkboxX + 11, checkboxY + 4);
-          this.ctx.stroke();
-        }
-
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-        this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-        this.ctx.textBaseline = "middle";
-        const textX = checkboxX + checkboxSize + checkboxGap;
-        const maxTextWidth = width - padding * 2 - checkboxSize - checkboxGap;
-
-        // 检查是否是颜色值 (hex 格式 #RRGGBB)
-        const colorValue = String(option.value);
-        const isColorOption = /^#[0-9A-Fa-f]{6}$/.test(colorValue);
-
-        if (isColorOption) {
-          // 渲染颜色方块
-          const colorBoxSize = 16;
-          const colorBoxY = itemY + (itemHeight - colorBoxSize) / 2;
-          const colorBoxX = textX;
-
-          // 绘制颜色方块
-          this.ctx.fillStyle = colorValue;
-          this.ctx.beginPath();
-          this.ctx.roundRect(colorBoxX, colorBoxY, colorBoxSize, colorBoxSize, 2);
-          this.ctx.fill();
-
-          // 绘制边框
-          this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-          this.ctx.lineWidth = 1;
-          this.ctx.stroke();
-
-          // 颜色值文本
-          this.ctx.fillStyle = this.theme.colors.dropdown.text;
-          const colorTextX = colorBoxX + colorBoxSize + 6;
-          const colorMaxWidth = maxTextWidth - colorBoxSize - 6;
-          const colorText = truncateText(
-            colorValue.toUpperCase(),
-            Math.floor(colorMaxWidth / (this.theme.font.size * 0.6)),
-          );
-          this.ctx.fillText(colorText, colorTextX, itemY + itemHeight / 2);
-        } else {
-          // 普通文本选项
-          const text = truncateText(
-            option.label,
-            Math.floor(maxTextWidth / (this.theme.font.size * 0.6)),
-          );
-          this.ctx.fillText(text, textX, itemY + itemHeight / 2);
-        }
-      }
-
-      this.ctx.restore();
-
-      // 绘制滚动条
-      if (options.length > maxVisibleItems) {
-        const scrollbarWidth = 6;
-        const totalHeight = options.length * itemHeight;
-        const thumbHeight = Math.max(20, (listHeight / totalHeight) * listHeight);
-        const maxThumbY = listHeight - thumbHeight;
-        const thumbY = (scrollTop / (totalHeight - listHeight)) * maxThumbY;
-
-        const prevAlpha = this.ctx.globalAlpha;
-        this.ctx.globalAlpha = this.theme.colors.scrollbar.opacity;
-        this.ctx.fillStyle = this.theme.colors.scrollbar.thumb;
-        this.ctx.beginPath();
-        this.ctx.roundRect(
-          x + width - scrollbarWidth - 2,
-          listY + thumbY + 2,
-          scrollbarWidth,
-          thumbHeight,
-          3,
-        );
-        this.ctx.fill();
-        this.ctx.globalAlpha = prevAlpha;
-      }
-    } else {
-      // 无选项
-      this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("暂无数据", x + padding, listY + itemHeight / 2);
-    }
-
-    // 绘制按钮区域
-    this.renderFilterButtons(
-      x,
-      y + padding + searchHeight + gap + listHeight + gap,
-      width,
-      buttonHeight,
-    );
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-  }
-
-  /**
-   * 渲染范围筛选下拉框
-   */
-  private renderRangeFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { x, y, width, minValue, maxValue } = filterDropdown;
-    const padding = 8;
-    const gap = 4; // Reduced gap
-    const inputHeight = 32;
-    const inputGap = 8;
-    const buttonHeight = 36;
-    // 删除标题，直接放输入框
-    const dropdownHeight = padding + inputHeight + gap + buttonHeight;
-
-    // 绘制背景
-    this.ctx.save();
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-    this.ctx.restore();
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    // 绘制最小值输入框
-    const input1Y = y + padding;
-    const inputWidth = (width - padding * 3) / 2;
-    this.ctx.fillStyle = this.theme.colors.input.background;
-    this.ctx.strokeStyle = this.theme.colors.input.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x + padding, input1Y, inputWidth, inputHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.fillStyle = minValue
-      ? this.theme.colors.dropdown.text
-      : this.theme.colors.placeholderText;
-    this.ctx.textBaseline = "middle";
-    this.ctx.fillText(
-      minValue ? String(minValue) : "最小值",
-      x + padding + 8,
-      input1Y + inputHeight / 2,
-    );
-
-    // 绘制最大值输入框
-    const input2X = x + padding + inputWidth + inputGap;
-    this.ctx.fillStyle = this.theme.colors.input.background;
-    this.ctx.strokeStyle = this.theme.colors.input.border;
-    this.ctx.beginPath();
-    this.ctx.roundRect(input2X, input1Y, inputWidth, inputHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.fillStyle = maxValue
-      ? this.theme.colors.dropdown.text
-      : this.theme.colors.placeholderText;
-    this.ctx.fillText(
-      maxValue ? String(maxValue) : "最大值",
-      input2X + 8,
-      input1Y + inputHeight / 2,
-    );
-
-    // 绘制按钮区域
-    this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-  }
-
-  /**
-   * 渲染布尔筛选下拉框
-   */
-  private renderBooleanFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { x, y, width, boolValue } = filterDropdown;
-    const padding = 8;
-    const gap = 4; // Reduced gap
-    const itemHeight = 32;
-    const buttonHeight = 36;
-    const dropdownHeight = padding + itemHeight * 3 + gap + buttonHeight;
-
-    // 绘制背景
-    this.ctx.save();
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-    this.ctx.restore();
-
-    const options = [
-      { value: "all", label: "全部" },
-      { value: "true", label: "已选" },
-      { value: "false", label: "未选" },
-    ];
-
-    const radioSize = 14;
-    const radioGap = 8;
-
-    for (let i = 0; i < options.length; i++) {
-      const option = options[i]!;
-      const itemY = y + padding + i * itemHeight;
-      const isSelected = boolValue === option.value;
-
-      if (isSelected) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-        this.ctx.fillRect(x, itemY, width, itemHeight);
-      }
-
-      const radioX = x + padding;
-      const radioY = itemY + (itemHeight - radioSize) / 2;
-
-      // 绘制圆形外框
-      this.ctx.strokeStyle = isSelected
-        ? this.theme.colors.button.primaryBg
-        : this.theme.colors.checkbox.border;
-      this.ctx.lineWidth = 1;
-      this.ctx.beginPath();
-      this.ctx.arc(radioX + radioSize / 2, radioY + radioSize / 2, radioSize / 2, 0, Math.PI * 2);
-      this.ctx.stroke();
-
-      // 选中时绘制内部圆点
-      if (isSelected) {
-        this.ctx.fillStyle = this.theme.colors.button.primaryBg;
-        this.ctx.beginPath();
-        this.ctx.arc(radioX + radioSize / 2, radioY + radioSize / 2, radioSize / 4, 0, Math.PI * 2);
-        this.ctx.fill();
-      }
-
-      // 绘制文本
-      this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(option.label, radioX + radioSize + radioGap, itemY + itemHeight / 2);
-    }
-
-    // 绘制按钮区域
-    this.renderFilterButtons(x, y + padding + itemHeight * 3 + gap, width, buttonHeight);
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-  }
-
-  /**
-   * 渲染日期范围筛选下拉框
-   */
-  private renderDateRangeFilterDropdown(filterDropdown: FilterDropdownState): void {
-    const { x, y, width, startDate, endDate, activeDateField } = filterDropdown;
-    const padding = 8;
-    const gap = 4; // Reduced gap
-    const inputHeight = 32;
-    const inputGap = 8;
-    const buttonHeight = 36;
-
-    // 删除标题，直接放输入框
-    const dropdownHeight = padding + inputHeight + gap + buttonHeight;
-
-    // 绘制背景
-    this.ctx.save();
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-    this.ctx.restore();
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    // 绘制开始日期输入框
-    const input1Y = y + padding;
-    const inputWidth = (width - padding * 3) / 2;
-    const input1X = x + padding;
-
-    // 高亮当前激活的输入框
-    const isStartActive = activeDateField === "startDate";
-    this.ctx.fillStyle = this.theme.colors.input.background;
-    this.ctx.strokeStyle = isStartActive
-      ? this.theme.colors.primary
-      : this.theme.colors.input.border;
-    this.ctx.lineWidth = isStartActive ? 2 : 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(input1X, input1Y, inputWidth, inputHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    const startText = startDate ? this.formatDate(startDate, "YYYY-MM-DD") : "";
-    this.ctx.fillStyle = startText
-      ? this.theme.colors.dropdown.text
-      : this.theme.colors.placeholderText;
-    this.ctx.textBaseline = "middle";
-    this.ctx.fillText(startText || "开始日期", input1X + 8, input1Y + inputHeight / 2);
-
-    // 绘制结束日期输入框
-    const input2X = x + padding + inputWidth + inputGap;
-    const isEndActive = activeDateField === "endDate";
-
-    this.ctx.fillStyle = this.theme.colors.input.background;
-    this.ctx.strokeStyle = isEndActive ? this.theme.colors.primary : this.theme.colors.input.border;
-    this.ctx.lineWidth = isEndActive ? 2 : 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(input2X, input1Y, inputWidth, inputHeight, 4);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    const endText = endDate ? this.formatDate(endDate, "YYYY-MM-DD") : "";
-    this.ctx.fillStyle = endText
-      ? this.theme.colors.dropdown.text
-      : this.theme.colors.placeholderText;
-    this.ctx.fillText(endText || "结束日期", input2X + 8, input1Y + inputHeight / 2);
-
-    // 绘制按钮区域
-    this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-  }
-
-  /**
-   * 渲染日期范围筛选的日历弹出层（独立层级）
-   */
-  private renderDateRangeCalendarPopover(filterDropdown: FilterDropdownState): void {
-    const {
-      x,
-      y,
-      width,
-      startDate,
-      endDate,
-      activeDateField,
-      currentYear,
-      currentMonth,
-      hoveredDate,
-    } = filterDropdown;
-
-    if (!activeDateField || currentYear === undefined || currentMonth === undefined) return;
-
-    const padding = 8;
-    const inputHeight = 32;
-    const gap = 8;
-
-    // 日历尺寸
-    const headerHeight = 40;
-    const weekdayHeight = 28;
-    const dayHeight = 28;
-    const rowPadding = 8;
-    const calendarRows = 6;
-    const calendarHeight = headerHeight + weekdayHeight + calendarRows * dayHeight + rowPadding * 2;
-    const calendarWidth = 240;
-
-    const inputWidth = (width - padding * 3) / 2;
-    const input1X = x + padding;
-    const input2X = x + padding + inputWidth + gap;
-    const input1Y = y + padding;
-
-    // 计算日历位置（居中对齐激活的输入框）
-    const activeInputX = activeDateField === "startDate" ? input1X : input2X;
-    const activeInputCenterX = activeInputX + inputWidth / 2;
-    let calendarX = activeInputCenterX - calendarWidth / 2;
-
-    // 边界检测
-    if (calendarX < x) {
-      calendarX = x;
-    }
-    if (calendarX + calendarWidth > x + width) {
-      calendarX = x + width - calendarWidth;
-    }
-
-    // 日历显示在输入框下方
-    const calendarY = input1Y + inputHeight + gap;
-
-    // 当前选中的日期
-    const selectedDate = activeDateField === "startDate" ? startDate : endDate;
-
-    this.ctx.save();
-
-    // 绘制日历背景（带阴影，独立层级效果）
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(calendarX, calendarY, calendarWidth, calendarHeight, 6);
-    this.ctx.fill();
-
-    // 重置阴影
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    // 绘制边框
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.stroke();
-
-    // 绘制月份标题
-    const monthNames = [
-      "1月",
-      "2月",
-      "3月",
-      "4月",
-      "5月",
-      "6月",
-      "7月",
-      "8月",
-      "9月",
-      "10月",
-      "11月",
-      "12月",
-    ];
-    const headerText = `${currentYear}年 ${monthNames[currentMonth]}`;
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.text;
-    this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textAlign = "center";
-    this.ctx.textBaseline = "middle";
-    this.ctx.fillText(headerText, calendarX + calendarWidth / 2, calendarY + headerHeight / 2);
-
-    // 绘制左右箭头
-    const arrowSize = 6;
-    const leftArrowX = calendarX + 20;
-    const rightArrowX = calendarX + calendarWidth - 20;
-    const arrowY = calendarY + headerHeight / 2;
-
-    this.ctx.fillStyle = this.theme.colors.placeholderText;
-    this.ctx.beginPath();
-    this.ctx.moveTo(leftArrowX + arrowSize, arrowY - arrowSize);
-    this.ctx.lineTo(leftArrowX - arrowSize, arrowY);
-    this.ctx.lineTo(leftArrowX + arrowSize, arrowY + arrowSize);
-    this.ctx.closePath();
-    this.ctx.fill();
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(rightArrowX - arrowSize, arrowY - arrowSize);
-    this.ctx.lineTo(rightArrowX + arrowSize, arrowY);
-    this.ctx.lineTo(rightArrowX - arrowSize, arrowY + arrowSize);
-    this.ctx.closePath();
-    this.ctx.fill();
-
-    // 绘制星期标题
-    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
-    const dayWidth = (calendarWidth - rowPadding * 2) / 7;
-
-    this.ctx.font = `${this.theme.font.size - 1}px ${this.theme.font.family}`;
-    this.ctx.fillStyle = this.theme.colors.placeholderText;
-
-    for (let i = 0; i < 7; i++) {
-      const dayX = calendarX + rowPadding + i * dayWidth + dayWidth / 2;
-      const dayY = calendarY + headerHeight + weekdayHeight / 2;
-      this.ctx.fillText(weekdays[i]!, dayX, dayY);
-    }
-
-    // 绘制日期格子
-    const firstDay = new Date(currentYear, currentMonth, 1);
-    const startWeekday = firstDay.getDay();
-    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const index = startWeekday + day - 1;
-      const row = Math.floor(index / 7);
-      const col = index % 7;
-
-      const cellX = calendarX + rowPadding + col * dayWidth;
-      const cellY = calendarY + headerHeight + weekdayHeight + row * dayHeight;
-      const cellCenterX = cellX + dayWidth / 2;
-      const cellCenterY = cellY + dayHeight / 2;
-
-      const currentDate = new Date(currentYear, currentMonth, day);
-      const isSelected = selectedDate && currentDate.getTime() === selectedDate.getTime();
-      const isHovered = hoveredDate && currentDate.getTime() === hoveredDate.getTime();
-      const isToday = currentDate.getTime() === today.getTime();
-
-      // 绘制选中或 hover 背景
-      if (isSelected) {
-        this.ctx.fillStyle = this.theme.colors.primary;
-        this.ctx.beginPath();
-        this.ctx.arc(cellCenterX, cellCenterY, dayHeight / 2 - 2, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.fillStyle = "#ffffff";
-      } else if (isHovered) {
-        this.ctx.fillStyle = this.theme.colors.rowHoverBackground;
-        this.ctx.beginPath();
-        this.ctx.arc(cellCenterX, cellCenterY, dayHeight / 2 - 2, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      } else if (isToday) {
-        this.ctx.fillStyle = this.theme.colors.primary;
-        this.ctx.fillText(String(day), cellCenterX, cellCenterY);
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-        continue;
-      } else {
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      }
-
-      this.ctx.textAlign = "center";
-      this.ctx.fillText(String(day), cellCenterX, cellCenterY);
-    }
-
-    this.ctx.restore();
-  }
-
-  /**
-   * 渲染筛选下拉框的按钮区域
-   */
-  private renderFilterButtons(x: number, y: number, width: number, buttonHeight: number): void {
-    const padding = 8;
-    const fontSize = 14;
-
-    // 绘制按钮区域背景和分隔线
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.fillRect(x, y, width, buttonHeight);
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.moveTo(x, y);
-    this.ctx.lineTo(x + width, y);
-    this.ctx.stroke();
-
-    // 绘制按钮文本
-    this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
-    const resetText = "重置";
-    const confirmText = "确定";
-    const confirmWidth = this.ctx.measureText(confirmText).width;
-
-    const resetX = x + padding;
-    const confirmX = x + width - padding - confirmWidth;
-    const textY = y + buttonHeight / 2;
-
-    this.ctx.fillStyle = this.theme.colors.placeholderText;
-    this.ctx.textBaseline = "middle";
-    this.ctx.fillText(resetText, resetX, textY);
-
-    this.ctx.fillStyle = this.theme.colors.linkColor;
-    this.ctx.fillText(confirmText, confirmX, textY);
+    this.filterDropdownRenderer.render(filterDropdown);
   }
 
   renderDateDropdown(dateDropdown: DateDropdownState): void {
-    const { x, y, width, currentYear, currentMonth, selectedDate, hoveredDate } = dateDropdown;
-
-    const headerHeight = 40;
-    const weekdayHeight = 28;
-    const dayHeight = 28;
-    const rowPadding = 8;
-    const rows = 6;
-    const dropdownHeight = headerHeight + weekdayHeight + rows * dayHeight + rowPadding * 2;
-
-    this.ctx.save();
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.fillRect(x, y, width, dropdownHeight);
-
-    const monthNames = [
-      "1月",
-      "2月",
-      "3月",
-      "4月",
-      "5月",
-      "6月",
-      "7月",
-      "8月",
-      "9月",
-      "10月",
-      "11月",
-      "12月",
-    ];
-    const headerText = `${currentYear}年 ${monthNames[currentMonth]}`;
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.text;
-    this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`;
-    this.ctx.textAlign = "center";
-    this.ctx.textBaseline = "middle";
-    this.ctx.fillText(headerText, x + width / 2, y + headerHeight / 2);
-
-    const arrowSize = 6;
-    const leftArrowX = x + 20;
-    const rightArrowX = x + width - 20;
-    const arrowY = y + headerHeight / 2;
-
-    this.ctx.fillStyle = this.theme.colors.placeholderText;
-    this.ctx.beginPath();
-    this.ctx.moveTo(leftArrowX + arrowSize, arrowY - arrowSize);
-    this.ctx.lineTo(leftArrowX - arrowSize, arrowY);
-    this.ctx.lineTo(leftArrowX + arrowSize, arrowY + arrowSize);
-    this.ctx.closePath();
-    this.ctx.fill();
-
-    this.ctx.beginPath();
-    this.ctx.moveTo(rightArrowX - arrowSize, arrowY - arrowSize);
-    this.ctx.lineTo(rightArrowX + arrowSize, arrowY);
-    this.ctx.lineTo(rightArrowX - arrowSize, arrowY + arrowSize);
-    this.ctx.closePath();
-    this.ctx.fill();
-
-    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
-    const dayWidth = (width - rowPadding * 2) / 7;
-
-    this.ctx.font = `${this.theme.font.size - 1}px ${this.theme.font.family}`;
-    this.ctx.fillStyle = this.theme.colors.placeholderText;
-
-    for (let i = 0; i < 7; i++) {
-      const dayX = x + rowPadding + i * dayWidth + dayWidth / 2;
-      const dayY = y + headerHeight + weekdayHeight / 2;
-      this.ctx.fillText(weekdays[i]!, dayX, dayY);
-    }
-
-    const firstDay = new Date(currentYear, currentMonth, 1);
-    const startWeekday = firstDay.getDay();
-    const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      const index = startWeekday + day - 1;
-      const row = Math.floor(index / 7);
-      const col = index % 7;
-
-      const cellX = x + rowPadding + col * dayWidth;
-      const cellY = y + headerHeight + weekdayHeight + row * dayHeight;
-
-      const date = new Date(currentYear, currentMonth, day);
-      const isToday = date.getTime() === today.getTime();
-      const isSelected =
-        selectedDate &&
-        date.getFullYear() === selectedDate.getFullYear() &&
-        date.getMonth() === selectedDate.getMonth() &&
-        date.getDate() === selectedDate.getDate();
-      const isHovered =
-        hoveredDate &&
-        date.getFullYear() === hoveredDate.getFullYear() &&
-        date.getMonth() === hoveredDate.getMonth() &&
-        date.getDate() === hoveredDate.getDate();
-
-      if (isSelected) {
-        this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
-        this.ctx.beginPath();
-        this.ctx.arc(
-          cellX + dayWidth / 2,
-          cellY + dayHeight / 2,
-          Math.min(dayWidth, dayHeight) / 2 - 2,
-          0,
-          Math.PI * 2,
-        );
-        this.ctx.fill();
-        this.ctx.fillStyle = "#ffffff";
-      } else if (isHovered) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-        this.ctx.beginPath();
-        this.ctx.arc(
-          cellX + dayWidth / 2,
-          cellY + dayHeight / 2,
-          Math.min(dayWidth, dayHeight) / 2 - 2,
-          0,
-          Math.PI * 2,
-        );
-        this.ctx.fill();
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      } else if (isToday) {
-        this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg;
-        this.ctx.beginPath();
-        this.ctx.arc(
-          cellX + dayWidth / 2,
-          cellY + dayHeight / 2,
-          Math.min(dayWidth, dayHeight) / 2 - 2,
-          0,
-          Math.PI * 2,
-        );
-        this.ctx.fill();
-        this.ctx.fillStyle = "#ffffff";
-      } else {
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      }
-
-      this.ctx.fillText(String(day), cellX + dayWidth / 2, cellY + dayHeight / 2);
-    }
-
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, width, dropdownHeight, 6);
-    this.ctx.stroke();
-
-    this.ctx.restore();
+    this.overlayRenderer.renderDateDropdown(dateDropdown);
   }
 
   renderContextMenu(contextMenu: ContextMenuState): void {
-    const { x, y, hoveredIndex } = contextMenu;
-    const menuWidth = 140;
-    const itemHeight = 32;
-    const menuItems = [
-      { text: "上方添加行", icon: "+" },
-      { text: "下方添加行", icon: "+" },
-      { text: "删除行", icon: "-" },
-    ];
-    const menuHeight = menuItems.length * itemHeight;
-
-    this.ctx.save();
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, menuWidth, menuHeight, 6);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    for (let i = 0; i < menuItems.length; i++) {
-      const item = menuItems[i]!;
-      const itemY = y + i * itemHeight;
-
-      if (i === hoveredIndex) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-        this.ctx.fillRect(x, itemY, menuWidth, itemHeight);
-      }
-
-      if (i === 2) {
-        this.ctx.fillStyle = "#f56c6c";
-      } else {
-        this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      }
-
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(item.text, x + 12, itemY + itemHeight / 2);
-    }
-
-    this.ctx.restore();
+    this.overlayRenderer.renderContextMenu(contextMenu);
   }
 
   renderHeaderContextMenu(headerContextMenu: HeaderContextMenuState): void {
-    const { x, y, hoveredIndex } = headerContextMenu;
-    const menuWidth = 120;
-    const itemHeight = 32;
-    const menuItems = [{ text: "隐藏此列" }];
-    const menuHeight = menuItems.length * itemHeight;
-
-    this.ctx.save();
-
-    this.ctx.fillStyle = this.theme.colors.dropdown.background;
-    this.ctx.strokeStyle = this.theme.colors.dropdown.border;
-    this.ctx.lineWidth = 1;
-    this.ctx.shadowColor = this.theme.colors.shadow.color;
-    this.ctx.shadowBlur = this.theme.colors.shadow.blur;
-    this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX;
-    this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY;
-
-    this.ctx.beginPath();
-    this.ctx.roundRect(x, y, menuWidth, menuHeight, 6);
-    this.ctx.fill();
-    this.ctx.stroke();
-
-    this.ctx.shadowColor = "transparent";
-    this.ctx.shadowBlur = 0;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-
-    this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
-
-    for (let i = 0; i < menuItems.length; i++) {
-      const item = menuItems[i]!;
-      const itemY = y + i * itemHeight;
-
-      if (i === hoveredIndex) {
-        this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg;
-        this.ctx.fillRect(x, itemY, menuWidth, itemHeight);
-      }
-
-      this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      this.ctx.textBaseline = "middle";
-      this.ctx.fillText(item.text, x + 12, itemY + itemHeight / 2);
-    }
-
-    this.ctx.restore();
+    this.overlayRenderer.renderHeaderContextMenu(headerContextMenu);
   }
 
   private renderColumnReorderIndicator(
@@ -7342,9 +3937,6 @@ export class Renderer {
     this.dirtyRegions = [];
     // 清理图片加载队列
     this.imageLoadQueue.destroy();
-    // 清理颜色缓存
-    this.colorRangeCache.clear();
-    this.hexToRgbCache.clear();
     // 清理渲染缓存
     if (this.renderCache) {
       this.renderCache.clear();

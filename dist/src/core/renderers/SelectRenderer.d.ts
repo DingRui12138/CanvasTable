@@ -6,5 +6,7 @@ import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellR
 export declare class SelectRenderer extends BaseCellRenderer {
     readonly type: CellType;
     render(context: CellRendererContext): CellRenderResult;
+    private calculateMaxRows;
+    private wrapTextToLines;
 }
 //# sourceMappingURL=SelectRenderer.d.ts.map

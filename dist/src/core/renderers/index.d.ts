@@ -23,6 +23,7 @@ export { DateRenderer } from "./DateRenderer";
 export { SelectRenderer } from "./SelectRenderer";
 export { InputRenderer } from "./InputRenderer";
 export { RatingRenderer } from "./RatingRenderer";
+export { ColorRenderer } from "./ColorRenderer";
 export { RendererPerformanceMonitor, getPerformanceMonitor } from "./PerformanceMonitor";
 export type { PerformanceStats, FrameStats } from "./PerformanceMonitor";
 /**
@@ -91,6 +92,7 @@ export declare class CellRendererRegistry {
         dpr: number;
         switchAnimation?: import("../../types").SwitchAnimationState;
         buttonHoverState?: import("../../types").ButtonHoverState;
+        multipleSelectSeparator?: string;
         hoveredImageIndex?: number;
         hoveredButtonIndex?: number;
     }): CellRendererContext;

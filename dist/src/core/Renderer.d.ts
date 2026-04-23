@@ -9,6 +9,11 @@ export declare class Renderer {
     private dpr;
     private offscreenCanvas;
     private offscreenCtx;
+    private cellRendererRegistry;
+    private dropdownRenderer;
+    private filterDropdownRenderer;
+    private imageOverlayRenderer;
+    private overlayRenderer;
     private dirtyRegions;
     private watermarkConfig;
     private expandColumnKey;
@@ -20,8 +25,6 @@ export declare class Renderer {
     private imageLoadQueue;
     /** 当前帧收集的可见图片 URL */
     private frameVisibleUrls;
-    private colorRangeCache;
-    private hexToRgbCache;
     private textWidthCache;
     private textWidthCacheKey;
     /**
@@ -131,50 +134,18 @@ export declare class Renderer {
      */
     private executeRender;
     private renderCellContent;
+    private renderWithCellRenderer;
     private renderCellContentInternal;
     private renderExpandIcon;
-    private renderCheckbox;
-    private renderRadio;
-    private renderButton;
-    private renderButtons;
-    private renderSingleButton;
     renderButtonsDropdown(dropdown: ButtonsDropdownState): void;
     renderImageTooltip(imageTooltip: ImageTooltipState): void;
     renderImageEditor(editor: ImageEditorState): void;
-    private interpolateColor;
-    private renderSwitch;
-    private hexToRgb;
     /**
      * 获取文本宽度（使用缓存优化性能）
      * 避免每帧都调用 measureText
      */
     private measureTextWidth;
-    private renderProgress;
-    private renderLineProgress;
-    private renderCircleProgress;
-    private renderDashboardProgress;
-    private getProgressColor;
-    private renderRating;
-    private drawStar;
-    private getStarPoints;
-    private renderColorCell;
     renderColorDropdown(dropdown: ColorPickerDropdownState): void;
-    private getDefaultPresetColors;
-    private getContrastColor;
-    private renderInput;
-    private wrapText;
-    /**
-     * 二分查找找到能放入 maxWidth 的最大字符数
-     */
-    private findLineBreakPoint;
-    private truncateTextWithEllipsis;
-    /**
-     * 二分查找截断文本并添加省略号
-     */
-    private truncateWithEllipsisBinary;
-    private renderSelect;
-    private renderDate;
-    private formatDate;
     private renderImage;
     private renderMultipleImages;
     private renderMoreCount;
@@ -266,9 +237,7 @@ export declare class Renderer {
      */
     printPerformanceReport(): void;
     renderDropdown(dropdown: DropdownState): void;
-    private renderTagsDropdown;
     private renderTag;
-    private renderTags;
     private resolveDisabled;
     private formatValue;
     private isCellSelected;
@@ -299,34 +268,6 @@ export declare class Renderer {
         } | null;
     };
     renderFilterDropdown(filterDropdown: FilterDropdownState): void;
-    /**
-     * 渲染关键字搜索筛选下拉框
-     */
-    private renderSearchFilterDropdown;
-    /**
-     * 渲染多选筛选下拉框（原有逻辑）
-     */
-    private renderSelectFilterDropdown;
-    /**
-     * 渲染范围筛选下拉框
-     */
-    private renderRangeFilterDropdown;
-    /**
-     * 渲染布尔筛选下拉框
-     */
-    private renderBooleanFilterDropdown;
-    /**
-     * 渲染日期范围筛选下拉框
-     */
-    private renderDateRangeFilterDropdown;
-    /**
-     * 渲染日期范围筛选的日历弹出层（独立层级）
-     */
-    private renderDateRangeCalendarPopover;
-    /**
-     * 渲染筛选下拉框的按钮区域
-     */
-    private renderFilterButtons;
     renderDateDropdown(dateDropdown: DateDropdownState): void;
     renderContextMenu(contextMenu: ContextMenuState): void;
     renderHeaderContextMenu(headerContextMenu: HeaderContextMenuState): void;

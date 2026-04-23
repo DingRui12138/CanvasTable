@@ -4,7 +4,7 @@
  * This module defines the interface that all cell renderers must implement,
  * enabling a strategy pattern for rendering different cell types.
  */
-import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, ButtonsConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, SwitchAnimationState, ButtonHoverState } from "../../types";
+import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, ButtonsConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, ColorPickerConfig, SwitchAnimationState, ButtonHoverState } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 /**
  * Context provided to each cell renderer
@@ -46,6 +46,8 @@ export interface CellRendererContext {
     switchAnimation?: SwitchAnimationState;
     /** Optional button hover state */
     buttonHoverState?: ButtonHoverState;
+    /** Global separator used by multi-select cells */
+    multipleSelectSeparator?: string;
     /** Hovered image index (for multi-image cells) */
     hoveredImageIndex?: number;
     /** Hovered button index (for buttons cells) */
@@ -58,7 +60,7 @@ export interface CellRenderResult {
     /** The type of cell that was rendered */
     type: CellType;
     /** Optional config that was used for rendering */
-    config?: CheckboxConfig | RadioConfig | ButtonConfig | ButtonsConfig | InputConfig | SelectConfig | TagsConfig | DateConfig | SwitchConfig | ImageConfig | ProgressConfig | RatingConfig;
+    config?: CheckboxConfig | RadioConfig | ButtonConfig | ButtonsConfig | InputConfig | SelectConfig | TagsConfig | DateConfig | SwitchConfig | ImageConfig | ProgressConfig | RatingConfig | ColorPickerConfig;
     /** Whether the cell handled its own background */
     customBackground?: boolean;
     /** Star bounds for rating click detection */

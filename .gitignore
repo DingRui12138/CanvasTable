@@ -12,6 +12,19 @@ pnpm-debug.log*
 coverage/
 docs/plans/
 
+# Playwright runtime artifacts
+test-results/
+playwright-report/
+
+# Browser/MCP debugging artifacts
+.playwright-mcp/
+
+# Runtime diagnostics
+*.heapsnapshot
+
+# Local debug screenshots
+debug-*.png
+
 # Logs
 logs
 *.log
@@ -19,4 +32,3 @@ logs
 # OS generated files
 Thumbs.db
 .DS_Store
-

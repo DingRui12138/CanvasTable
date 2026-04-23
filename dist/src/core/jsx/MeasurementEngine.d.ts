@@ -1,4 +1,4 @@
-import type { CTElement, CTLayoutInfo } from './types';
+import type { CTElement, CTLayoutInfo } from "./types";
 /**
  * 尺寸测量引擎
  * CTText: 自动测量宽度，高度由 fontSize/lineHeight 决定

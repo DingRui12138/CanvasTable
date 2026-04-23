@@ -21,6 +21,7 @@ import { DateRenderer } from "./DateRenderer";
 import { SelectRenderer } from "./SelectRenderer";
 import { InputRenderer } from "./InputRenderer";
 import { RatingRenderer } from "./RatingRenderer";
+import { ColorRenderer } from "./ColorRenderer";
 import { getPerformanceMonitor, RendererPerformanceMonitor } from "./PerformanceMonitor";
 
 // Re-export all types and base classes
@@ -41,6 +42,7 @@ export { DateRenderer } from "./DateRenderer";
 export { SelectRenderer } from "./SelectRenderer";
 export { InputRenderer } from "./InputRenderer";
 export { RatingRenderer } from "./RatingRenderer";
+export { ColorRenderer } from "./ColorRenderer";
 
 // Re-export performance monitor
 export { RendererPerformanceMonitor, getPerformanceMonitor } from "./PerformanceMonitor";
@@ -60,7 +62,9 @@ export class CellRendererRegistry {
     this.register(new NumberRenderer());
     this.register(new CheckboxRenderer());
     this.register(new RadioRenderer());
-    this.register(new ButtonRenderer());
+    const buttonRenderer = new ButtonRenderer();
+    this.register(buttonRenderer);
+    this.renderers.set("buttons", buttonRenderer);
     this.register(new SwitchRenderer());
     this.register(new ProgressRenderer());
     this.register(new ImageRenderer());
@@ -69,6 +73,7 @@ export class CellRendererRegistry {
     this.register(new SelectRenderer());
     this.register(new InputRenderer());
     this.register(new RatingRenderer());
+    this.register(new ColorRenderer());
 
     // Default renderer for unknown types
     this.defaultRenderer = new TextRenderer();
@@ -166,6 +171,7 @@ export class CellRendererRegistry {
     dpr: number;
     switchAnimation?: import("../../types").SwitchAnimationState;
     buttonHoverState?: import("../../types").ButtonHoverState;
+    multipleSelectSeparator?: string;
     hoveredImageIndex?: number;
     hoveredButtonIndex?: number;
   }): CellRendererContext {

@@ -1,6 +1,6 @@
-import type { CTElement, CTLayoutInfo } from './types';
-import type { TableTheme } from '../../types/index';
-import { LayoutEngine } from './LayoutEngine';
+import type { CTElement, CTLayoutInfo } from "./types";
+import type { TableTheme } from "../../types/index";
+import { LayoutEngine } from "./LayoutEngine";
 /**
  * CTElement Canvas Renderer
  *

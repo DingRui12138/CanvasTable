@@ -6,12 +6,12 @@
   "packageManager": "pnpm@10.15.1",
   "main": "dist/canvas-table.umd.cjs",
   "module": "dist/canvas-table.js",
-  "types": "dist/index.d.ts",
+  "types": "dist/src/index.d.ts",
   "exports": {
     ".": {
       "import": "./dist/canvas-table.js",
       "require": "./dist/canvas-table.umd.cjs",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/src/index.d.ts"
     }
   },
   "files": [

@@ -1,4 +1,4 @@
-import type { CTElement } from '../core/jsx/types';
+import type { CTElement } from "../core/jsx/types";
 export type CellType = "text" | "number" | "boolean" | "link" | "tag" | "date" | "custom" | "checkbox" | "radio" | "button" | "buttons" | "input" | "select" | "switch" | "image" | "progress" | "rating" | "color";
 export type SortDirection = "asc" | "desc" | "none";
 export type FixedType = "left" | "right" | false;

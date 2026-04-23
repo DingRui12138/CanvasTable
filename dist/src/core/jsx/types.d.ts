@@ -21,12 +21,12 @@ export interface CTPositionProps {
 /** CTGroup 容器属性 */
 export interface CTGroupProps extends CTBaseProps, CTPositionProps {
     /** 布局模式：flex = 弹性布局，子元素按 flexDirection 排列 */
-    display?: 'flex';
+    display?: "flex";
     /** 定位模式：子元素可以用 x, y 相对于此容器定位 */
-    position?: 'relative';
-    flexDirection?: 'row' | 'column' | 'row-reverse' | 'column-reverse';
-    justifyContent?: 'flex-start' | 'flex-end' | 'center' | 'space-between';
-    alignItems?: 'flex-start' | 'flex-end' | 'center';
+    position?: "relative";
+    flexDirection?: "row" | "column" | "row-reverse" | "column-reverse";
+    justifyContent?: "flex-start" | "flex-end" | "center" | "space-between";
+    alignItems?: "flex-start" | "flex-end" | "center";
     gap?: number;
     width?: number;
     height?: number;
@@ -65,8 +65,8 @@ export interface CTTextProps extends CTBaseProps, CTPositionProps {
     text: string;
     fontSize?: number;
     fontFamily?: string;
-    fontWeight?: 'normal' | 'bold';
-    fontStyle?: 'normal' | 'italic';
+    fontWeight?: "normal" | "bold";
+    fontStyle?: "normal" | "italic";
     color?: string;
     lineHeight?: number;
     maxWidth?: number;
@@ -77,7 +77,7 @@ export interface CTImageProps extends CTBaseProps, CTPositionProps {
     width: number;
     height: number;
     borderRadius?: number;
-    objectFit?: 'fill' | 'contain' | 'cover';
+    objectFit?: "fill" | "contain" | "cover";
 }
 /** CTLine 线条属性 */
 export interface CTLineProps extends CTBaseProps, CTPositionProps {
@@ -87,13 +87,13 @@ export interface CTLineProps extends CTBaseProps, CTPositionProps {
     }>;
     strokeWidth?: number;
     strokeColor?: string;
-    strokeLinecap?: 'butt' | 'round' | 'square';
+    strokeLinecap?: "butt" | "round" | "square";
 }
 /** 元素属性联合类型 */
 export type CTElementProps = CTGroupProps | CTRectProps | CTCircleProps | CTTextProps | CTImageProps | CTLineProps;
 /** CTElement 树节点 */
 export interface CTElement {
-    type: 'CTGroup' | 'CTRect' | 'CTCircle' | 'CTText' | 'CTImage' | 'CTLine';
+    type: "CTGroup" | "CTRect" | "CTCircle" | "CTText" | "CTImage" | "CTLine";
     props: Record<string, unknown>;
     children: CTElement[];
 }

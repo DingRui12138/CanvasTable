@@ -1,4 +1,4 @@
-import type { CTElement } from './types';
+import type { CTElement } from "./types";
 /**
  * JSX 元素工厂函数
  * TypeScript/Babel 编译 JSX 时调用此函数

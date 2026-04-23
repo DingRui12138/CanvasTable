@@ -5,6 +5,8 @@
 import { ProgressConfig, CellType } from "../../types";
 import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
 
+const STANDARD_ROW_HEIGHT = 32;
+
 export class ProgressRenderer extends BaseCellRenderer {
   readonly type: CellType = "progress";
 
@@ -111,7 +113,7 @@ export class ProgressRenderer extends BaseCellRenderer {
     const size = config.size ?? "medium";
 
     const sizeRatio = size === "small" ? 0.6 : size === "large" ? 0.9 : 0.75;
-    const defaultDiameter = Math.floor(cellHeight * sizeRatio);
+    const defaultDiameter = Math.floor(STANDARD_ROW_HEIGHT * sizeRatio);
     const diameter = config.width ?? defaultDiameter;
     const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.12));
 
@@ -172,7 +174,7 @@ export class ProgressRenderer extends BaseCellRenderer {
     const size = config.size ?? "medium";
 
     const sizeRatio = size === "small" ? 0.7 : size === "large" ? 0.95 : 0.85;
-    const defaultDiameter = Math.floor(cellHeight * sizeRatio);
+    const defaultDiameter = Math.floor(STANDARD_ROW_HEIGHT * sizeRatio);
     const diameter = config.width ?? defaultDiameter;
     const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.1));
 

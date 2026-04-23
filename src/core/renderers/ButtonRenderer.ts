@@ -151,7 +151,7 @@ export class ButtonRenderer extends BaseCellRenderer {
       const textWidth = ctx.measureText(text).width;
       const buttonWidth = Math.max(textWidth + 16, 40);
 
-      const isHovered = hoveredButtonIndex === i;
+      const isHovered = hoveredButtonIndex === i && !isDisabled;
       const isBtnDisabled = isDisabled ?? false;
 
       let bgColor: string;
@@ -202,10 +202,10 @@ export class ButtonRenderer extends BaseCellRenderer {
       currentX += buttonWidth + gap;
     }
 
-    // Render more button if needed
     if (moreButtons.length > 0) {
-      const moreText = `+${moreButtons.length}`;
-      const moreWidth = 32;
+      const moreText = config.moreButtonText ?? "···";
+      const textWidth = ctx.measureText(moreText).width;
+      const moreWidth = Math.max(textWidth + 16, 32);
       const isMoreHovered = hoveredButtonIndex === displayButtons.length;
 
       ctx.fillStyle = isMoreHovered ? theme.colors.button.hoverBg : theme.colors.button.background;
@@ -226,7 +226,7 @@ export class ButtonRenderer extends BaseCellRenderer {
 
     ctx.textAlign = "left";
 
-    return { type: "button", config };
+    return { type: "buttons", config };
   }
 
   private hexToRgb(hex: string): { r: number; g: number; b: number } {

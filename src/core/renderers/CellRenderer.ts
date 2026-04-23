@@ -22,6 +22,7 @@ import {
   ImageConfig,
   ProgressConfig,
   RatingConfig,
+  ColorPickerConfig,
   SwitchAnimationState,
   ButtonHoverState,
 } from "../../types";
@@ -85,6 +86,9 @@ export interface CellRendererContext {
   /** Optional button hover state */
   buttonHoverState?: ButtonHoverState;
 
+  /** Global separator used by multi-select cells */
+  multipleSelectSeparator?: string;
+
   /** Hovered image index (for multi-image cells) */
   hoveredImageIndex?: number;
 
@@ -112,7 +116,8 @@ export interface CellRenderResult {
     | SwitchConfig
     | ImageConfig
     | ProgressConfig
-    | RatingConfig;
+    | RatingConfig
+    | ColorPickerConfig;
 
   /** Whether the cell handled its own background */
   customBackground?: boolean;

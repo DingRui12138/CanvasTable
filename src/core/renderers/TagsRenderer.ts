@@ -13,7 +13,7 @@ export class TagsRenderer extends BaseCellRenderer {
 
     const config = value as TagsConfig;
     const padding = 8;
-    const { tags, maxRows = 1 } = config;
+    const { tags } = config;
 
     if (!tags || tags.length === 0) {
       return { type: "tag", config };
@@ -27,18 +27,29 @@ export class TagsRenderer extends BaseCellRenderer {
     const ellipsis = "...";
 
     const availableWidth = width - padding * 2;
-    const maxLineCount = maxRows;
+    const autoMaxRows = Math.max(1, Math.floor((height - padding * 2) / (tagHeight + lineGap)));
+    const maxLineCount = Math.min(config.maxRows ?? autoMaxRows, autoMaxRows);
+
+    const textWidthCache = new Map<string, number>();
+    const measureTextCached = (text: string): number => {
+      let measuredWidth = textWidthCache.get(text);
+      if (measuredWidth === undefined) {
+        measuredWidth = ctx.measureText(text).width;
+        textWidthCache.set(text, measuredWidth);
+      }
+      return measuredWidth;
+    };
 
     const moreTagWidth = (count: number) => {
       const moreText = `+${count}`;
-      return ctx.measureText(moreText).width + tagPadding * 2;
+      return measureTextCached(moreText) + tagPadding * 2;
     };
 
     const calculateTagWidth = (tag: TagItem): number => {
-      return ctx.measureText(tag.text).width + tagPadding * 2;
+      return measureTextCached(tag.text) + tagPadding * 2;
     };
 
-    const ellipsisWidth = ctx.measureText(ellipsis).width;
+    const ellipsisWidth = measureTextCached(ellipsis);
 
     const lines: { tag: TagItem; displayText: string; width: number }[][] = [];
     let currentLine: { tag: TagItem; displayText: string; width: number }[] = [];
@@ -65,16 +76,22 @@ export class TagsRenderer extends BaseCellRenderer {
           if (truncatedTagSpace >= tagPadding * 2 + ellipsisWidth + 10) {
             const maxTextWidth = truncatedTagSpace - tagPadding * 2 - ellipsisWidth;
             let truncatedText = "";
-            let textWidth = 0;
-            for (const char of tag.text) {
-              const charWidth = ctx.measureText(char).width;
-              if (textWidth + charWidth > maxTextWidth) break;
-              truncatedText += char;
-              textWidth += charWidth;
+            let left = 0;
+            let right = tag.text.length;
+
+            while (left < right) {
+              const mid = Math.floor((left + right + 1) / 2);
+              const testText = tag.text.slice(0, mid);
+              if (measureTextCached(testText) <= maxTextWidth) {
+                left = mid;
+                truncatedText = testText;
+              } else {
+                right = mid - 1;
+              }
             }
             if (truncatedText.length > 0) {
               const displayText = truncatedText + ellipsis;
-              const truncatedWidth = ctx.measureText(displayText).width + tagPadding * 2;
+              const truncatedWidth = measureTextCached(displayText) + tagPadding * 2;
               currentLine.push({ tag, displayText, width: truncatedWidth });
               processedTags++;
             }
@@ -127,7 +144,7 @@ export class TagsRenderer extends BaseCellRenderer {
         ctx.textBaseline = "middle";
 
         const textY = lineY + tagHeight / 2;
-        const textX = currentX + (tagWidth - ctx.measureText(displayText).width) / 2;
+        const textX = currentX + (tagWidth - measureTextCached(displayText)) / 2;
         ctx.fillText(displayText, textX, textY);
 
         currentX += tagWidth + gap;
@@ -148,7 +165,7 @@ export class TagsRenderer extends BaseCellRenderer {
           ctx.font = `${theme.font.size}px ${theme.font.family}`;
           ctx.textBaseline = "middle";
           const textY = lineY + tagHeight / 2;
-          const textX = currentX + (moreWidth - ctx.measureText(moreText).width) / 2;
+          const textX = currentX + (moreWidth - measureTextCached(moreText)) / 2;
           ctx.fillText(moreText, textX, textY);
         }
       }
