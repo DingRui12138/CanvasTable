@@ -195,4 +195,108 @@ describe('LayoutManager', () => {
       expect(layoutManager.getLeafColumns().length).toBe(0);
     });
   });
+
+  describe('row height overrides', () => {
+    it('override wins over rowHeightFn', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(3);
+
+      layoutManager.setRowHeightFn(() => 80);
+      layoutManager.setRowHeight(rows[1]!, 120);
+      layoutManager.calculateLayout(columns, rows);
+
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(80);
+      expect(layoutManager.getRowHeightByIndex(1)).toBe(120);
+    });
+
+    it('does not depend on row id for overrides', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(2).map((row) => ({
+        ...row,
+        id: undefined as unknown as string,
+      }));
+
+      layoutManager.setRowHeight(rows[1]!, 96);
+      layoutManager.calculateLayout(columns, rows);
+
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(theme.row.height);
+      expect(layoutManager.getRowHeightByIndex(1)).toBe(96);
+    });
+
+    it('keeps overrides attached to row objects when row order changes', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(3);
+
+      layoutManager.setRowHeight(rows[2]!, 96);
+      layoutManager.calculateLayout(columns, rows);
+      expect(layoutManager.getRowHeightByIndex(2)).toBe(96);
+
+      const reorderedRows = [rows[2]!, rows[0]!, rows[1]!];
+      layoutManager.calculateLayout(columns, reorderedRows);
+
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(96);
+      expect(layoutManager.getRowHeightByIndex(2)).toBe(theme.row.height);
+    });
+
+    it('clearRowHeightOverrides falls back to fn and default height', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(2);
+
+      layoutManager.setRowHeightFn(() => 72);
+      layoutManager.setRowHeight(rows[0]!, 110);
+      layoutManager.calculateLayout(columns, rows);
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(110);
+
+      layoutManager.clearRowHeightOverrides();
+      layoutManager.calculateLayout(columns, rows);
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(72);
+
+      layoutManager.setRowHeightFn(undefined);
+      layoutManager.calculateLayout(columns, rows);
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(theme.row.height);
+    });
+
+    it('override updates row offsets and total height after recalculation', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(3);
+
+      layoutManager.calculateLayout(columns, rows);
+      const initialLayout = layoutManager.getLayoutInfo();
+      expect(initialLayout.totalHeight).toBe(theme.row.headerHeight + theme.row.height * 3);
+      expect(layoutManager.getRowOffset(1)).toBe(theme.row.headerHeight + theme.row.height);
+
+      layoutManager.setRowHeight(rows[0]!, 64);
+      const updatedLayout = layoutManager.calculateLayout(columns, rows);
+
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(64);
+      expect(layoutManager.getRowOffset(1)).toBe(theme.row.headerHeight + 64);
+      expect(updatedLayout.totalHeight).toBe(theme.row.headerHeight + 64 + theme.row.height * 2);
+    });
+
+    it('override clamps to theme row min and max', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(2);
+
+      layoutManager.setRowHeight(rows[0]!, theme.row.minHeight - 10);
+      layoutManager.setRowHeight(rows[1]!, theme.row.maxHeight + 25);
+      layoutManager.calculateLayout(columns, rows);
+
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(theme.row.minHeight);
+      expect(layoutManager.getRowHeightByIndex(1)).toBe(theme.row.maxHeight);
+    });
+
+    it('reset clears overrides', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(2);
+
+      layoutManager.setRowHeight(rows[0]!, 88);
+      layoutManager.calculateLayout(columns, rows);
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(88);
+
+      layoutManager.reset();
+
+      layoutManager.calculateLayout(columns, rows);
+      expect(layoutManager.getRowHeightByIndex(0)).toBe(theme.row.height);
+    });
+  });
 });

@@ -17,6 +17,7 @@ export declare const TableEvents: {
     readonly CELL_HOVER: "cellHover";
     readonly ROW_CLICK: "rowClick";
     readonly ROW_DBL_CLICK: "rowDblClick";
+    readonly ROW_HEIGHT_CHANGE: "rowHeightChange";
     readonly ROW_ADD_ABOVE: "rowAddAbove";
     readonly ROW_ADD_BELOW: "rowAddBelow";
     readonly ROW_DELETE: "rowDelete";
@@ -28,6 +29,7 @@ export declare const TableEvents: {
     readonly COLUMN_RESIZE: "columnResize";
     readonly COLUMN_REORDER: "columnReorder";
     readonly COLUMN_REORDER_DRAG: "columnReorderDrag";
+    readonly ROW_RESIZE_DRAG: "rowResizeDrag";
     readonly COLUMN_SWAP: "columnSwap";
     readonly COLUMN_HIDE: "columnHide";
     readonly COLUMN_SHOW: "columnShow";

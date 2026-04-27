@@ -18,6 +18,8 @@ interface TableEvents {
     headerClick: [Column, number, MouseEvent];
     scroll: [number, number];
     columnResize: [Column, number];
+    rowResizeDrag: [];
+    rowHeightChange: [Row, number, number];
     columnReorder: [number, number];
     columnReorderDrag: [];
     columnHide: [string];

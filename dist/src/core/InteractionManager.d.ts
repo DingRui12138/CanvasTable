@@ -43,6 +43,8 @@ interface InteractionEvents {
     rowDelete: [number];
     columnReorder: [number, number];
     columnReorderDrag: [];
+    rowResizeDrag: [];
+    rowHeightChange: [Row, number, number];
     columnSwap: [string, string];
     imageClick: [CellInfo, string, MouseEvent];
     progressChange: [CellInfo, number];
@@ -98,6 +100,8 @@ export declare class InteractionManager {
     private lazyLoadThreshold;
     private isLoadingMore;
     private hasMoreData;
+    private rowHeightResizeEnabled;
+    private rowResizable;
     constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig);
     /**
      * Initialize handler instances
@@ -261,6 +265,9 @@ export declare class InteractionManager {
     getSelectedRows(): number[];
     setSelectedCells(cells: CellPosition[]): void;
     updateConfig(_selection: SelectionConfig, editing: EditingConfig): void;
+    setRowHeightResizeEnabled(enabled: boolean): void;
+    setRowResizable(resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined): void;
+    private isRowResizable;
     private startSwitchAnimationLoop;
     getSwitchAnimations: () => Map<string, SwitchAnimationState>;
     destroy(): void;

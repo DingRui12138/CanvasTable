@@ -9,6 +9,8 @@
 import { ImageConfig, CellType } from "../../types";
 import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
 
+const STANDARD_ROW_HEIGHT = 32;
+
 export class ImageRenderer extends BaseCellRenderer {
   readonly type: CellType = "image";
 
@@ -45,7 +47,7 @@ export class ImageRenderer extends BaseCellRenderer {
     }
 
     const padding = 4;
-    const maxImgSize = Math.min(width, height) - padding * 2;
+    const maxImgSize = this.getMaxImageSize(width, height, padding, config);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     const imgWidth = Math.min(configWidth, maxImgSize);
@@ -153,7 +155,7 @@ export class ImageRenderer extends BaseCellRenderer {
   ): CellRenderResult {
     const images = config.images!;
     const padding = 4;
-    const maxImgSize = Math.min(cellWidth, cellHeight) - padding * 2;
+    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     const imgWidth = Math.min(configWidth, maxImgSize);
@@ -165,41 +167,36 @@ export class ImageRenderer extends BaseCellRenderer {
     const showMoreCount = config.showMoreCount !== false;
 
     const availableWidth = cellWidth - padding * 2;
-    const userMaxVisible = config.maxVisible;
-
-    let calculatedMaxVisible: number;
-    if (images.length === 1) {
-      calculatedMaxVisible = 1;
-    } else {
-      const maxByWidth = Math.floor((availableWidth + gap) / (imgWidth + gap));
-      const reservedForMore = showMoreCount ? 1 : 0;
-      calculatedMaxVisible = Math.max(1, maxByWidth - reservedForMore);
-    }
-
-    const maxVisible =
-      userMaxVisible !== undefined
-        ? Math.min(userMaxVisible, calculatedMaxVisible)
-        : calculatedMaxVisible;
+    const availableHeight = cellHeight - padding * 2;
+    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
+    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
+    const slotCapacity = imagesPerRow * maxRows;
+    const requestedMaxVisible = config.maxVisible ?? slotCapacity;
+    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
+    const maxVisibleCapacity = needsMoreCount ? Math.max(1, slotCapacity - 1) : slotCapacity;
+    const maxVisible = Math.max(1, Math.min(requestedMaxVisible, maxVisibleCapacity));
 
     const hasMore = images.length > maxVisible;
     const displayCount = hasMore ? maxVisible : images.length;
     const displayImages = images.slice(0, displayCount);
     const moreCount = hasMore ? images.length - maxVisible : 0;
 
-    let contentWidth: number;
-    if (hasMore && showMoreCount) {
-      contentWidth = displayCount * imgWidth + displayCount * gap + imgWidth;
-    } else {
-      contentWidth = displayImages.length * imgWidth + Math.max(0, displayImages.length - 1) * gap;
-    }
+    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
+    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
+    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
+    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
+    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
 
     let startX = x + (cellWidth - contentWidth) / 2;
     startX = Math.max(x + padding, startX);
-    const imgY = y + (cellHeight - imgHeight) / 2;
+    const startY = y + (cellHeight - contentHeight) / 2;
 
     for (let i = 0; i < displayImages.length; i++) {
       const src = displayImages[i]!;
-      const imgX = startX + i * (imgWidth + gap);
+      const row = Math.floor(i / imagesPerRow);
+      const col = i % imagesPerRow;
+      const imgX = startX + col * (imgWidth + gap);
+      const imgY = startY + row * (imgHeight + gap);
       const isCurrentHovered = isHovered && config.hoverable !== false && hoveredImageIndex === i;
 
       ctx.fillStyle = theme.colors.image.placeholderBg;
@@ -268,14 +265,17 @@ export class ImageRenderer extends BaseCellRenderer {
 
     // Render +N count
     if (hasMore && showMoreCount) {
-      const countX = startX + displayCount * (imgWidth + gap);
+      const countRow = Math.floor(displayCount / imagesPerRow);
+      const countCol = displayCount % imagesPerRow;
+      const countX = startX + countCol * (imgWidth + gap);
+      const countY = startY + countRow * (imgHeight + gap);
       const isMoreHovered =
         isHovered && config.hoverable !== false && hoveredImageIndex === displayCount;
       this.renderMoreCount(
         ctx,
         theme,
         countX,
-        imgY,
+        countY,
         imgWidth,
         imgHeight,
         borderRadius,
@@ -315,6 +315,18 @@ export class ImageRenderer extends BaseCellRenderer {
       ctx.fillText(placeholder, x + width / 2, y + height / 2);
       ctx.textAlign = "left";
     }
+  }
+
+  private getMaxImageSize(
+    cellWidth: number,
+    cellHeight: number,
+    padding: number,
+    config: ImageConfig,
+  ): number {
+    const maxHeight =
+      config.scaleWithRowHeight === false ? Math.min(cellHeight, STANDARD_ROW_HEIGHT) : cellHeight;
+
+    return Math.max(0, Math.min(cellWidth, maxHeight) - padding * 2);
   }
 
   private renderImageError(

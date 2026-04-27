@@ -18,6 +18,7 @@ export declare class ImageRenderer extends BaseCellRenderer {
     render(context: CellRendererContext): CellRenderResult;
     private renderMultipleImages;
     private renderImagePlaceholder;
+    private getMaxImageSize;
     private renderImageError;
     private renderImageHover;
     private renderMoreCount;

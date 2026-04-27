@@ -38,9 +38,10 @@ export class LayoutManager {
   private cellToMergeMap: Map<string, CellMerge> = new Map();
 
   // 动态行高支持
-  private rowHeightCache: Map<string, number> = new Map(); // 按 row.id 缓存非标准高度
+  private rowHeightOverrides: WeakMap<Row, number> = new WeakMap();
+  private hasRowHeightOverrides: boolean = false;
   private rowHeightFn?: (row: Row, rowIndex: number) => number;
-  private cachedRowIds: string[] = []; // 缓存的行 ID，用于检测数据变化
+  private cachedRows: Row[] = []; // 缓存行引用，用于检测数据变化
   private rowHeightsDirty: boolean = true; // 标记行高度是否需要重新计算
 
   private viewportWidth: number = 0;
@@ -131,6 +132,23 @@ export class LayoutManager {
 
   setRowHeightFn(fn?: (row: Row, rowIndex: number) => number): void {
     this.rowHeightFn = fn;
+    this.rowHeightsDirty = true;
+  }
+
+  setRowHeight(row: Row, height: number): void {
+    const clampedHeight = clamp(height, this.theme.row.minHeight, this.theme.row.maxHeight);
+    this.rowHeightOverrides.set(row, clampedHeight);
+    this.hasRowHeightOverrides = true;
+    this.rowHeightsDirty = true;
+  }
+
+  clearRowHeightOverrides(): void {
+    if (!this.hasRowHeightOverrides) {
+      return;
+    }
+    this.rowHeightOverrides = new WeakMap();
+    this.hasRowHeightOverrides = false;
+    this.rowHeightsDirty = true;
   }
 
   setScrollPosition(scrollLeft: number, scrollTop: number): void {
@@ -540,11 +558,9 @@ export class LayoutManager {
     const rowCount = rows.length;
     const defaultHeight = this.theme.row.height;
 
-    // 检查数据是否变化：比较行数和行 ID
-    const currentRowIds = rows.map((r) => r.id);
+    // 检查数据是否变化：比较行数和行对象引用，避免布局层耦合业务 row id。
     const rowsChanged =
-      rowCount !== this.cachedRowIds.length ||
-      currentRowIds.some((id, i) => id !== this.cachedRowIds[i]);
+      rowCount !== this.cachedRows.length || rows.some((row, i) => row !== this.cachedRows[i]);
 
     // 如果数据未变化且高度未标记为脏，跳过计算
     if (!rowsChanged && !this.rowHeightsDirty && this.rowHeights.length === rowCount) {
@@ -552,25 +568,23 @@ export class LayoutManager {
     }
 
     // 更新缓存
-    this.cachedRowIds = currentRowIds;
+    this.cachedRows = [...rows];
     this.rowHeightsDirty = false;
 
-    // 计算每行高度
-    if (this.rowHeightFn) {
-      // 动态高度模式
-      const fn = this.rowHeightFn;
-      this.rowHeights = rows.map((row, index) => {
-        const height = fn(row, index);
-        // 缓存非标准高度（与 row.id 关联）
-        if (height !== defaultHeight) {
-          this.rowHeightCache.set(row.id, height);
-        }
-        return height;
-      });
-    } else {
-      // 统一高度模式
-      this.rowHeights = Array.from({ length: rowCount }, () => defaultHeight);
-    }
+    // 计算每行高度：override > rowHeightFn > default
+    const fn = this.rowHeightFn;
+    this.rowHeights = rows.map((row, index) => {
+      const overrideHeight = this.rowHeightOverrides.get(row);
+      if (overrideHeight !== undefined) {
+        return clamp(overrideHeight, this.theme.row.minHeight, this.theme.row.maxHeight);
+      }
+
+      if (fn) {
+        return fn(row, index);
+      }
+
+      return defaultHeight;
+    });
 
     // 累加计算 offsets
     this.rowOffsets = Array.from({ length: rowCount });
@@ -971,6 +985,13 @@ export class LayoutManager {
 
   getRowHeightByIndex(rowIndex: number): number {
     return this.rowHeights[rowIndex] ?? this.theme.row.height;
+  }
+
+  getRowHeightBounds(): { min: number; max: number } {
+    return {
+      min: this.theme.row.minHeight,
+      max: this.theme.row.maxHeight,
+    };
   }
 
   getColumnWidthByIndex(columnIndex: number): number {
@@ -1407,6 +1428,7 @@ export class LayoutManager {
     this.theme = theme;
     this.layoutInfo.headerHeight = theme.row.headerHeight;
     this.layoutInfo.rowHeight = theme.row.height;
+    this.rowHeightsDirty = true;
   }
 
   reset(): void {
@@ -1424,6 +1446,11 @@ export class LayoutManager {
     this.cellMergeByRow.clear();
     this.mergedCellSet.clear();
     this.cellToMergeMap.clear();
+    this.rowHeightOverrides = new WeakMap();
+    this.hasRowHeightOverrides = false;
+    this.rowHeightFn = undefined;
+    this.cachedRows = [];
+    this.rowHeightsDirty = true;
     this.layoutInfo = this.createEmptyLayoutInfo();
     this.visibleRange = { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
   }
@@ -1719,11 +1746,14 @@ export class LayoutManager {
   private hitTestCell(viewportX: number, viewportY: number): HitTestResult {
     const regionDetail = this.getMouseRegion(viewportX);
     const y = viewportY + this.scrollTop;
+    const rowResizeIndex = this.hitTestRowResizeHandle(y);
 
     // 计算行索引
     const rowIndex = this.findRowIndexAtPosition(y);
     if (rowIndex < 0 || rowIndex >= this.rowHeights.length) {
-      return { region: "outside", viewport: { x: viewportX, y: viewportY } };
+      if (rowResizeIndex < 0) {
+        return { region: "outside", viewport: { x: viewportX, y: viewportY } };
+      }
     }
 
     // 根据区域计算列索引
@@ -1742,13 +1772,17 @@ export class LayoutManager {
       return { region: "outside", regionDetail, viewport: { x: viewportX, y: viewportY } };
     }
 
+    const resolvedRowIndex = rowResizeIndex >= 0 ? rowResizeIndex : rowIndex;
+
     // 检查合并单元格
-    const merge = this.getCellMerge(rowIndex, columnIndex);
+    const merge = this.getCellMerge(resolvedRowIndex, columnIndex);
     if (merge) {
       return {
         region: "cell",
         regionDetail,
         cell: { rowIndex: merge.rowIndex, columnIndex: merge.columnIndex },
+        isRowResizeHandle: rowResizeIndex >= 0,
+        resizeRowIndex: rowResizeIndex >= 0 ? rowResizeIndex : undefined,
         viewport: { x: viewportX, y: viewportY },
       };
     }
@@ -1756,9 +1790,24 @@ export class LayoutManager {
     return {
       region: "cell",
       regionDetail,
-      cell: { rowIndex, columnIndex },
+      cell: { rowIndex: resolvedRowIndex, columnIndex },
+      isRowResizeHandle: rowResizeIndex >= 0,
+      resizeRowIndex: rowResizeIndex >= 0 ? rowResizeIndex : undefined,
       viewport: { x: viewportX, y: viewportY },
     };
+  }
+
+  private hitTestRowResizeHandle(y: number): number {
+    const tolerance = 4;
+
+    for (let rowIndex = 0; rowIndex < this.rowOffsets.length; rowIndex++) {
+      const bottom = (this.rowOffsets[rowIndex] ?? 0) + (this.rowHeights[rowIndex] ?? 0);
+      if (Math.abs(y - bottom) <= tolerance) {
+        return rowIndex;
+      }
+    }
+
+    return -1;
   }
 
   /**

@@ -26,6 +26,7 @@ export const TableEvents = {
   // 行事件
   ROW_CLICK: "rowClick",
   ROW_DBL_CLICK: "rowDblClick",
+  ROW_HEIGHT_CHANGE: "rowHeightChange",
   ROW_ADD_ABOVE: "rowAddAbove",
   ROW_ADD_BELOW: "rowAddBelow",
   ROW_DELETE: "rowDelete",
@@ -41,6 +42,7 @@ export const TableEvents = {
   COLUMN_RESIZE: "columnResize",
   COLUMN_REORDER: "columnReorder",
   COLUMN_REORDER_DRAG: "columnReorderDrag",
+  ROW_RESIZE_DRAG: "rowResizeDrag",
   COLUMN_SWAP: "columnSwap",
   COLUMN_HIDE: "columnHide",
   COLUMN_SHOW: "columnShow",

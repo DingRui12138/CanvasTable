@@ -44,7 +44,6 @@ import {
 import { truncateText, getDevicePixelRatio, resolveDisabled, getColumnField } from "../utils";
 import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
 
-// 标准行高（用于 UI 元素的固定尺寸计算，不随动态行高变化）
 const STANDARD_ROW_HEIGHT = 32;
 
 export class Renderer {
@@ -148,6 +147,7 @@ export class Renderer {
   private currentHoveredButtonIndex: number = -1;
   private currentProgressDragState: import("../types").InteractionState["progressDragState"] =
     undefined;
+  private currentRowResizeState: import("../types").InteractionState["rowResizeState"] = undefined;
 
   // 渲染缓存相关
   private renderCache: RenderCache | null = null;
@@ -327,6 +327,7 @@ export class Renderer {
       hoveredImageIndex?: number;
       hoveredButtonIndex?: number;
       progressDragState?: import("../types").InteractionState["progressDragState"];
+      rowResizeState?: import("../types").InteractionState["rowResizeState"];
     },
   ): void {
     this.currentSwitchAnimations = options.switchAnimations;
@@ -335,6 +336,7 @@ export class Renderer {
     this.currentHoveredImageIndex = options.hoveredImageIndex ?? -1;
     this.currentHoveredButtonIndex = options.hoveredButtonIndex ?? -1;
     this.currentProgressDragState = options.progressDragState;
+    this.currentRowResizeState = options.rowResizeState;
 
     // 开始性能监控帧
     this.beginFrame();
@@ -465,6 +467,8 @@ export class Renderer {
         );
       }
     }
+
+    this.renderRowResizeGuide(viewportWidth);
 
     if (options.dropdown) {
       this.renderDropdown(options.dropdown);
@@ -724,8 +728,13 @@ export class Renderer {
     },
   ): void {
     const renderedMerges = new Set<string>();
+    const activeRowIndex = this.currentRowResizeState?.rowIndex;
 
     for (let rowIndex = startRow; rowIndex <= endRow; rowIndex++) {
+      if (rowIndex === activeRowIndex) {
+        continue;
+      }
+
       const row = rows[rowIndex];
       if (!row) continue;
 
@@ -739,6 +748,25 @@ export class Renderer {
         scrollTop,
         options,
         renderedMerges,
+      );
+    }
+
+    const activeRow =
+      activeRowIndex !== undefined && activeRowIndex >= startRow && activeRowIndex <= endRow
+        ? rows[activeRowIndex]
+        : undefined;
+
+    if (activeRowIndex !== undefined && activeRow) {
+      this.renderCenterRow(
+        columns,
+        rows,
+        activeRow,
+        activeRowIndex,
+        centerColumnIndices,
+        scrollLeft,
+        scrollTop,
+        options,
+        new Set(),
       );
     }
   }
@@ -768,7 +796,8 @@ export class Renderer {
     },
     renderedMerges: Set<string>,
   ): void {
-    const { y: absRowY, height: rowHeight } = this.layoutManager.getCellPosition(rowIndex, 0);
+    const absRowY = this.layoutManager.getRowOffset(rowIndex);
+    const rowHeight = this.getRenderedRowHeight(rowIndex);
     const rowY = absRowY - scrollTop;
 
     let backgroundColor = this.theme.colors.rowBackground;
@@ -903,7 +932,7 @@ export class Renderer {
       const width = this.layoutManager.getColumnWidthByIndex(colIndex);
       const absY = this.layoutManager.getRowOffset(rowIndex);
       const y = absY - scrollTop;
-      const height = this.layoutManager.getRowHeightByIndex(rowIndex);
+      const height = this.getRenderedRowHeight(rowIndex);
 
       this.renderCellWithPosition(
         column,
@@ -951,13 +980,18 @@ export class Renderer {
     }
 
     const renderedMerges = new Set<string>();
+    const activeRowIndex = this.currentRowResizeState?.rowIndex;
 
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      if (rowIndex === activeRowIndex) {
+        continue;
+      }
+
       const row = rows[rowIndex];
       if (!row) continue;
 
       const absRowY = this.layoutManager.getRowOffset(rowIndex);
-      const rowHeight = this.layoutManager.getRowHeightByIndex(rowIndex);
+      const rowHeight = this.getRenderedRowHeight(rowIndex);
       const rowY = absRowY - scrollTop;
 
       if (absRowY + rowHeight < scrollTop || absRowY > scrollTop + viewportHeight) {
@@ -1095,7 +1129,107 @@ export class Renderer {
       }
     }
 
+    const activeRow = activeRowIndex !== undefined ? rows[activeRowIndex] : undefined;
+    if (activeRowIndex !== undefined && activeRow) {
+      this.renderFixedRowOverlay(
+        columns,
+        activeRow,
+        activeRowIndex,
+        fixedColumnIndices,
+        startX,
+        scrollTop,
+        options,
+      );
+    }
+
     this.ctx.restore();
+  }
+
+  private renderFixedRowOverlay(
+    columns: Column[],
+    row: Row,
+    rowIndex: number,
+    fixedColumnIndices: number[],
+    startX: number,
+    scrollTop: number,
+    options: {
+      hoveredCell: CellPosition | null;
+      selectedCells: CellRange[];
+      editingCell: CellPosition | null;
+      stripeRows: boolean;
+      columnReorderState?: {
+        dragColumnIndex: number;
+        dragColumnKey: string;
+        dragStartX: number;
+        currentX: number;
+        targetColumnIndex: number;
+        isParentColumn?: boolean;
+      };
+    },
+  ): void {
+    const absRowY = this.layoutManager.getRowOffset(rowIndex);
+    const rowHeight = this.getRenderedRowHeight(rowIndex);
+    const rowY = absRowY - scrollTop;
+    const viewportHeight = this.canvas.height / this.dpr;
+
+    if (absRowY + rowHeight < scrollTop || absRowY > scrollTop + viewportHeight) {
+      return;
+    }
+
+    let backgroundColor = this.theme.colors.rowBackground;
+
+    if (options.stripeRows && rowIndex % 2 === 1) {
+      backgroundColor = this.theme.colors.rowAltBackground;
+    }
+
+    if (row.selected) {
+      backgroundColor = this.theme.colors.rowSelectedBackground;
+    }
+
+    if (options.hoveredCell?.rowIndex === rowIndex) {
+      backgroundColor = this.theme.colors.rowHoverBackground;
+    }
+
+    let currentX = startX;
+    for (const colIndex of fixedColumnIndices) {
+      const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+      const column = columns[colIndex];
+
+      if (!column) {
+        currentX += width;
+        continue;
+      }
+
+      if (this.layoutManager.isCellMerged(rowIndex, colIndex)) {
+        currentX += width;
+        continue;
+      }
+
+      const merge = this.layoutManager.getCellMerge(rowIndex, colIndex);
+      if (merge && (merge.rowIndex !== rowIndex || merge.columnIndex !== colIndex)) {
+        currentX += width;
+        continue;
+      }
+
+      this.ctx.fillStyle = backgroundColor;
+      this.ctx.fillRect(currentX, rowY, width, rowHeight);
+
+      const value = row.data[getColumnField(column)];
+      this.renderCellWithPosition(
+        column,
+        row,
+        rowIndex,
+        colIndex,
+        value,
+        currentX,
+        rowY,
+        width,
+        rowHeight,
+        options,
+      );
+
+      currentX += width;
+    }
   }
 
   private renderFixedColumnsHeader(
@@ -2195,8 +2329,7 @@ export class Renderer {
     }
 
     const padding = 4; // 单元格内边距
-    // 图片最大尺寸基于标准行高（不随动态行高变化）
-    const maxImgSize = Math.min(cellWidth, STANDARD_ROW_HEIGHT) - padding * 2;
+    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     // 限制图片大小不超过单元格可用空间
@@ -2318,6 +2451,18 @@ export class Renderer {
     }
   }
 
+  private getMaxImageSize(
+    cellWidth: number,
+    cellHeight: number,
+    padding: number,
+    config: ImageConfig,
+  ): number {
+    const maxHeight =
+      config.scaleWithRowHeight === false ? Math.min(cellHeight, STANDARD_ROW_HEIGHT) : cellHeight;
+
+    return Math.max(0, Math.min(cellWidth, maxHeight) - padding * 2);
+  }
+
   private renderMultipleImages(
     x: number,
     y: number,
@@ -2329,8 +2474,7 @@ export class Renderer {
   ): void {
     const images = config.images!;
     const padding = 4; // 单元格内边距
-    // 图片最大尺寸基于标准行高（不随动态行高变化）
-    const maxImgSize = Math.min(cellWidth, STANDARD_ROW_HEIGHT) - padding * 2;
+    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     // 限制图片大小不超过单元格可用空间
@@ -2351,18 +2495,11 @@ export class Renderer {
     // 能显示几行
     const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
 
-    // 总共能显示几个图片
-    const autoMaxVisible = imagesPerRow * maxRows;
-    // 如果显示 +N，需要预留一个位置
-    const reservedForMore = showMoreCount ? 1 : 0;
-    const calculatedMaxVisible = Math.max(1, autoMaxVisible - reservedForMore);
-
-    // 如果用户指定了 maxVisible，取较小值
-    const userMaxVisible = config.maxVisible;
-    const maxVisible =
-      userMaxVisible !== undefined
-        ? Math.min(userMaxVisible, calculatedMaxVisible)
-        : calculatedMaxVisible;
+    const slotCapacity = imagesPerRow * maxRows;
+    const requestedMaxVisible = config.maxVisible ?? slotCapacity;
+    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
+    const maxVisibleCapacity = needsMoreCount ? Math.max(1, slotCapacity - 1) : slotCapacity;
+    const maxVisible = Math.max(1, Math.min(requestedMaxVisible, maxVisibleCapacity));
 
     // 检查是否在懒加载范围内
     const lazyEnabled = config.lazy !== false;
@@ -2378,21 +2515,16 @@ export class Renderer {
     const displayImages = images.slice(0, displayCount);
     const moreCount = hasMore ? images.length - maxVisible : 0;
 
-    // 计算实际渲染的内容尺寸（支持多行）
-    const displayRows = Math.ceil(displayCount / imagesPerRow);
-    const contentWidth =
-      displayRows > 1
-        ? imagesPerRow * imgWidth + (imagesPerRow - 1) * gap
-        : displayCount * imgWidth + (displayCount - 1) * gap;
-    const contentHeight = displayRows * imgHeight + (displayRows - 1) * gap;
-    // 如果有更多，+N 块占一个图片位置
-    const totalContentWidth = hasMore && showMoreCount ? contentWidth : contentWidth;
-    const totalContentHeight = contentHeight;
+    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
+    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
+    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
+    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
+    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
 
     // 居中定位
-    let startX = x + (cellWidth - totalContentWidth) / 2;
+    let startX = x + (cellWidth - contentWidth) / 2;
     startX = Math.max(x + padding, startX);
-    const startY = y + (cellHeight - totalContentHeight) / 2;
+    const startY = y + (cellHeight - contentHeight) / 2;
 
     // 渲染每张图片（多行布局）
     for (let i = 0; i < displayImages.length; i++) {
@@ -3592,6 +3724,34 @@ export class Renderer {
 
   renderHeaderContextMenu(headerContextMenu: HeaderContextMenuState): void {
     this.overlayRenderer.renderHeaderContextMenu(headerContextMenu);
+  }
+
+  private getRenderedRowHeight(rowIndex: number): number {
+    if (this.currentRowResizeState?.rowIndex === rowIndex) {
+      return this.currentRowResizeState.displayHeight;
+    }
+
+    return this.layoutManager.getRowHeightByIndex(rowIndex);
+  }
+
+  private renderRowResizeGuide(viewportWidth: number): void {
+    if (!this.currentRowResizeState) {
+      return;
+    }
+
+    const guideY =
+      this.layoutManager.getRowOffset(this.currentRowResizeState.rowIndex) +
+      this.currentRowResizeState.displayHeight -
+      this.currentScrollTop;
+
+    this.ctx.save();
+    this.ctx.strokeStyle = this.theme.row.resizeGuideColor;
+    this.ctx.lineWidth = this.theme.row.resizeGuideWidth;
+    this.ctx.beginPath();
+    this.ctx.moveTo(0, guideY);
+    this.ctx.lineTo(viewportWidth, guideY);
+    this.ctx.stroke();
+    this.ctx.restore();
   }
 
   private renderColumnReorderIndicator(

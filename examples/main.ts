@@ -9,6 +9,15 @@ import type {
 } from "../src/types";
 import { getFPSMonitor } from "./FPSMonitor";
 
+type ExampleWindow = typeof window & {
+  table?: CanvasTable;
+  lastRowHeightChange?: {
+    rowName: string;
+    newHeight: number;
+    rowIndex: number;
+  };
+};
+
 // 创建 Web Worker 用于数据生成
 const dataWorker = new Worker(new URL("./dataWorker.ts", import.meta.url), {
   type: "module",
@@ -528,9 +537,9 @@ const columns: Column[] = [
         images: row.data.photos as string[],
         width: 32,
         height: 32,
+        scaleWithRowHeight: false,
         borderRadius: 4,
         gap: 4,
-        maxVisible: 4,
         maxCount: 9,
         clickable: true,
         hoverable: true,
@@ -1394,6 +1403,7 @@ function generate1000ColumnsData(count: number): Row[] {
 }
 
 const container = document.getElementById("table-container")!;
+const exampleWindow = window as ExampleWindow;
 
 const table = new CanvasTable(container, {
   rows: generateData(100),
@@ -1404,11 +1414,19 @@ const table = new CanvasTable(container, {
   hoverable: true,
   showRowNumbers: true,
   themeMode: "auto",
+  enableRowHeightResize: true,
   // 动态行高示例：每10行有100px高度，每5行有64px高度，其他为默认32px
   rowHeight: (_row, rowIndex) => {
     if (rowIndex % 10 === 0) return 100;
     if (rowIndex % 5 === 0) return 64;
     return 32;
+  },
+  onRowHeightChange: (row, newHeight, rowIndex) => {
+    exampleWindow.lastRowHeightChange = {
+      rowName: String(row.data.name ?? ""),
+      newHeight,
+      rowIndex,
+    };
   },
   watermark: {
     enabled: true,
@@ -1602,6 +1620,8 @@ const table = new CanvasTable(container, {
     console.log("Columns reordered:", columnKeys);
   },
 });
+
+exampleWindow.table = table;
 
 // 小数据量使用同步方式（可以对比 Worker 和主线程的差异）
 // 大数据量也使用同步方式，因为 postMessage 的结构化克隆开销太大

@@ -49,6 +49,7 @@ export declare class Renderer {
     private currentHoveredImageIndex;
     private currentHoveredButtonIndex;
     private currentProgressDragState;
+    private currentRowResizeState;
     private renderCache;
     private rowIdManager;
     private columnIdManager;
@@ -108,12 +109,14 @@ export declare class Renderer {
         hoveredImageIndex?: number;
         hoveredButtonIndex?: number;
         progressDragState?: import("../types").InteractionState["progressDragState"];
+        rowResizeState?: import("../types").InteractionState["rowResizeState"];
     }): void;
     private renderCenterHeader;
     private renderHeaderCellMultiLevel;
     private renderCenterRows;
     private renderCenterRow;
     private renderFixedColumnsContent;
+    private renderFixedRowOverlay;
     private renderFixedColumnsHeader;
     private renderHeader;
     private renderHeaderCell;
@@ -147,6 +150,7 @@ export declare class Renderer {
     private measureTextWidth;
     renderColorDropdown(dropdown: ColorPickerDropdownState): void;
     private renderImage;
+    private getMaxImageSize;
     private renderMultipleImages;
     private renderMoreCount;
     private renderImageHover;
@@ -271,6 +275,8 @@ export declare class Renderer {
     renderDateDropdown(dateDropdown: DateDropdownState): void;
     renderContextMenu(contextMenu: ContextMenuState): void;
     renderHeaderContextMenu(headerContextMenu: HeaderContextMenuState): void;
+    private getRenderedRowHeight;
+    private renderRowResizeGuide;
     private renderColumnReorderIndicator;
     private renderParentColumnGhost;
     private renderChildColumnsGhost;

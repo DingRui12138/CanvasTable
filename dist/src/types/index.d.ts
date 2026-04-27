@@ -272,6 +272,8 @@ export interface ImageConfig {
     width?: number;
     /** 图片高度，默认 32 */
     height?: number;
+    /** 是否允许图片尺寸随行高放大，默认 true；设为 false 时按标准行高限制图片尺寸 */
+    scaleWithRowHeight?: boolean;
     /** 图片适应方式，默认 'cover' */
     fit?: "fill" | "contain" | "cover" | "none";
     /** 圆角半径，默认 0 */
@@ -292,7 +294,7 @@ export interface ImageConfig {
     lazyThreshold?: number;
     /** 图片数组（多图模式） */
     images?: string[];
-    /** 多图模式下最大显示数量，默认 3 */
+    /** 多图模式下最大显示数量。不指定时根据单元格宽高自动计算 */
     maxVisible?: number;
     /** 多图间距，默认 4 */
     gap?: number;
@@ -628,6 +630,10 @@ export interface TableTheme {
     row: {
         height: number;
         headerHeight: number;
+        minHeight: number;
+        maxHeight: number;
+        resizeGuideColor: string;
+        resizeGuideWidth: number;
     };
     border: {
         width: number;
@@ -723,6 +729,7 @@ export interface TableEventHandlers {
     onCellHover?: (cell: CellPosition | null, event: MouseEvent) => void;
     onRowClick?: (row: Row, rowIndex: number, event: MouseEvent) => void;
     onRowDblClick?: (row: Row, rowIndex: number, event: MouseEvent) => void;
+    onRowHeightChange?: (row: Row, newHeight: number, rowIndex: number) => void;
     onHeaderClick?: (column: Column, columnIndex: number, event: MouseEvent) => void;
     onScroll?: (scrollLeft: number, scrollTop: number) => void;
     onColumnResize?: (column: Column, width: number) => void;
@@ -791,6 +798,10 @@ export interface CanvasTableBaseProps {
     imageLoad?: ImageLoadConfig;
     /** 行高计算函数，返回每行高度。不指定则使用默认 32px */
     rowHeight?: (row: Row, rowIndex: number) => number;
+    /** 是否启用行高拖拽调整 */
+    enableRowHeightResize?: boolean;
+    /** 是否允许行高拖拽调整。可全局关闭，也可按行动态控制 */
+    rowResizable?: boolean | ((row: Row, rowIndex: number) => boolean);
     /** 多选列分隔符，默认 ", " */
     multipleSelectSeparator?: string;
 }
@@ -829,8 +840,14 @@ export interface InteractionState {
     isSelecting: boolean;
     selectionStart: CellPosition | null;
     isDragging: boolean;
-    dragType: "column-resize" | "column-reorder" | "row-reorder" | "progress-drag" | null;
+    dragType: "column-resize" | "column-reorder" | "row-reorder" | "row-resize" | "progress-drag" | null;
     dragTarget: unknown;
+    rowResizeState?: {
+        rowIndex: number;
+        startY: number;
+        startHeight: number;
+        displayHeight: number;
+    };
     /** 进度条拖拽状态 */
     progressDragState?: {
         cell: CellPosition;
@@ -1105,6 +1122,10 @@ export interface HitTestResult {
     isResizeHandle?: boolean;
     /** resize handle 对应的列索引 */
     resizeColumnIndex?: number;
+    /** 是否在行高 resize handle 上 */
+    isRowResizeHandle?: boolean;
+    /** row resize handle 对应的行索引 */
+    resizeRowIndex?: number;
     /** 单元格位置 */
     cell?: {
         rowIndex: number;

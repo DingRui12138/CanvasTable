@@ -10,7 +10,7 @@ pnpm-debug.log*
 .idea/
 .claude
 coverage/
-docs/plans/
+docs/**/plans/
 
 # Playwright runtime artifacts
 test-results/

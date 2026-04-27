@@ -193,8 +193,8 @@ function initDemo() {
     { key: 'id', title: 'ID', width: 60, type: 'number', sortable: true, filterable: true, fixed: 'left', disabled: isRowDisabled },
     { key: 'name', title: '姓名', width: 140, sortable: true, filterable: true, editable: true, fixed: 'left', disabled: isRowDisabled, render: function(value) { return { type: 'custom', customRender: function(ctx) { renderAvatarName(String(value), ctx); } }; } },
     { key: 'secretCode', title: '暗号', width: 100, sortable: true, editable: true, hidden: true },
-    { key: 'avatar', title: '头像', width: 80, align: 'center', fixed: 'left', editable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'image', image: { src: row.data.avatar, width: 24, height: 24, circle: true, clickable: true, hoverable: true } }; } },
-    { key: 'photos', title: '相册', width: 180, align: 'center', editable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'image', image: { images: row.data.photos, width: 32, height: 32, borderRadius: 4, gap: 4, maxVisible: 4, maxCount: 9, clickable: true, hoverable: true } }; } },
+    { key: 'avatar', title: '头像', width: 80, align: 'center', fixed: 'left', editable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'image', image: { src: row.data.avatar, width: 24, height: 24, scaleWithRowHeight: false, circle: true, clickable: true, hoverable: true } }; } },
+    { key: 'photos', title: '相册', width: 180, align: 'center', editable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'image', image: { images: row.data.photos, width: 32, height: 32, scaleWithRowHeight: false, borderRadius: 4, gap: 4, maxCount: 9, clickable: true, hoverable: true } }; } },
     { key: 'basicInfo', title: '基本信息', children: [
       { key: 'age', title: '年龄', width: 60, type: 'number', sortable: true, filterable: true, align: 'center', disabled: isRowDisabled },
       { key: 'department', title: '部门', width: 100, sortable: true, filterable: true, editable: true, disabled: isRowDisabled }
@@ -474,6 +474,12 @@ function initDemo() {
     hoverable: true,
     showRowNumbers: true,
     themeMode: 'auto',
+    enableRowHeightResize: true,
+    rowHeight: function(row, rowIndex) {
+      if (rowIndex % 10 === 0) return 100;
+      if (rowIndex % 5 === 0) return 64;
+      return 32;
+    },
     watermark: { enabled: true, content: 'Canvas Table', fontSize: 18, color: 'rgba(0, 0, 0, 0.12)', rotation: -22, gapX: 120, gapY: 80 },
     selection: { mode: 'cell', multi: true },
     editing: { enabled: true, mode: 'dblclick' },
@@ -488,6 +494,7 @@ function initDemo() {
     onSelectChange: function(cell, value) { console.log('Select changed:', cell, value); },
     onTagsChange: function(cell, values) { console.log('Tags changed:', cell, values); },
     onRatingChange: function(cell, value) { console.log('Rating changed:', cell, value); },
+    onRowHeightChange: function(row, newHeight, rowIndex) { console.log('Row height changed:', row, newHeight, rowIndex); },
     onProgressChange: function(cell, value) { console.log('Progress changed:', cell, value); },
     onColorChange: function(cell, color) { console.log('Color changed:', cell, color); },
     onImageClick: function(cell, src) { console.log('Image clicked:', cell, src); },

@@ -10,6 +10,7 @@
 - [x] 合并单元格 - 行合并/列合并
 - [x] 层级数据 - 树形结构展示，展开/折叠
 - [x] 列宽调整 - 拖拽调整列宽
+- [x] 行高调整 - 支持动态行高、拖拽调整行高、按行配置是否可调整
 - [x] 列拖拽重排 - 拖拽调整列顺序
 - [x] 列隐藏/显示 - 支持动态隐藏/显示列
 - [x] 行号列 - 显示行号
@@ -29,7 +30,7 @@
 - [x] select - 下拉选择
 - [x] input - 输入框（支持多行）
 - [x] link - 超链接
-- [x] image - 图片（单图/多图、上传、预览）
+- [x] image - 图片（单图/多图、上传、预览，支持动态行高下多行排布和固定图片尺寸配置）
 - [x] progress - 进度条（线型/环型/仪表盘、颜色区间、可交互、圆角）
 - [x] custom - 自定义渲染
 
@@ -84,7 +85,6 @@
 
 #### 低优先级
 
-- [ ] **行高调整** - 拖拽调整行高
 - [ ] **打印功能**
 
 ### 列类型
@@ -166,6 +166,7 @@
 - [x] ~~Select/Tags dropdown 滚动条未使用主题颜色~~
 - [x] ~~事件回调参数仅包含 CellPosition，缺少 row/column 数据~~
 - [x] ~~图片列配置冗余 - 移除 column.image 属性，统一使用 render 函数配置~~
+- [x] ~~动态行高下图片列只渲染一行 - 多图按单元格高度自动排布，并支持 `scaleWithRowHeight: false` 固定图片尺寸~~
 - [x] ~~各控件配置 disabled 冗余 - disabled 为列通用属性，已从 CheckboxConfig、RadioConfig、ButtonConfig、SwitchConfig、InputConfig、SelectConfig、TagsConfig、DateConfig、ProgressConfig 中移除，统一使用 column.disabled~~
 - [x] ~~内存优化 - 移除 originalRows 深拷贝，改用历史记录栈存储操作，大幅降低内存占用~~
 - [x] ~~大数据量崩溃 - 优化示例数据生成，减少图片数组数量~~

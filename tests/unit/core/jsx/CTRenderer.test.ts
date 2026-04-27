@@ -67,7 +67,14 @@ describe('CTRenderer', () => {
         watermark: { color: '#bfbfbf', fontSize: 14, opacity: 0.1 },
       },
       font: { family: 'Arial', size: 14, headerSize: 14 },
-      row: { height: 40, headerHeight: 40 },
+      row: {
+        height: 40,
+        headerHeight: 40,
+        minHeight: 24,
+        maxHeight: 320,
+        resizeGuideColor: '#1890ff',
+        resizeGuideWidth: 1,
+      },
       border: { width: 1, color: '#d9d9d9' },
     };
 

@@ -99,6 +99,8 @@ interface InteractionEvents {
   rowDelete: [number];
   columnReorder: [number, number];
   columnReorderDrag: [];
+  rowResizeDrag: [];
+  rowHeightChange: [Row, number, number];
   columnSwap: [string, string]; // fromKey, toKey
   imageClick: [CellInfo, string, MouseEvent];
   progressChange: [CellInfo, number];
@@ -174,6 +176,8 @@ export class InteractionManager {
   private lazyLoadThreshold: number = 5;
   private isLoadingMore: boolean = false;
   private hasMoreData: boolean = true; // 是否还有更多数据
+  private rowHeightResizeEnabled: boolean = false;
+  private rowResizable: boolean | ((row: Row, rowIndex: number) => boolean) = true;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -497,6 +501,28 @@ export class InteractionManager {
         return;
 
       case "cell":
+        if (
+          this.rowHeightResizeEnabled &&
+          hitResult.isRowResizeHandle &&
+          hitResult.resizeRowIndex !== undefined &&
+          this.isRowResizable(hitResult.resizeRowIndex)
+        ) {
+          const row = this.rows[hitResult.resizeRowIndex];
+          if (!row) return;
+
+          const startHeight = this.layoutManager.getRowHeightByIndex(hitResult.resizeRowIndex);
+          this.state.isDragging = true;
+          this.state.dragType = "row-resize";
+          this.state.rowResizeState = {
+            rowIndex: hitResult.resizeRowIndex,
+            startY: e.clientY,
+            startHeight,
+            displayHeight: startHeight,
+          };
+          this.canvas.style.cursor = "ns-resize";
+          this.bindDocumentEvents();
+          return;
+        }
         if (hitResult.cell && this.handleControlClick(hitResult.cell, e)) {
           return;
         }
@@ -680,6 +706,22 @@ export class InteractionManager {
   }
 
   private handleDocumentMouseMove = (e: MouseEvent): void => {
+    if (
+      this.state.isDragging &&
+      this.state.dragType === "row-resize" &&
+      this.state.rowResizeState
+    ) {
+      const { min, max } = this.layoutManager.getRowHeightBounds();
+      const deltaY = e.clientY - this.state.rowResizeState.startY;
+      this.state.rowResizeState.displayHeight = clamp(
+        this.state.rowResizeState.startHeight + deltaY,
+        min,
+        max,
+      );
+      this.eventEmitter.emit(TableEvents.ROW_RESIZE_DRAG);
+      return;
+    }
+
     if (this.state.filterDropdown?.isScrollbarDragging) {
       const { options, scrollbarDragStartY, scrollbarDragStartScrollTop } =
         this.state.filterDropdown;
@@ -747,6 +789,24 @@ export class InteractionManager {
   };
 
   private handleDocumentMouseUp = (): void => {
+    if (
+      this.state.isDragging &&
+      this.state.dragType === "row-resize" &&
+      this.state.rowResizeState
+    ) {
+      const { rowIndex, displayHeight } = this.state.rowResizeState;
+      const row = this.rows[rowIndex];
+      if (row) {
+        this.eventEmitter.emit(TableEvents.ROW_HEIGHT_CHANGE, row, displayHeight, rowIndex);
+      }
+      this.state.isDragging = false;
+      this.state.dragType = null;
+      this.state.rowResizeState = undefined;
+      this.canvas.style.cursor = "default";
+      this.unbindDocumentEvents();
+      return;
+    }
+
     if (this.state.filterDropdown?.isScrollbarDragging) {
       this.state.filterDropdown.isScrollbarDragging = false;
       this.canvas.style.cursor = "default";
@@ -1041,6 +1101,17 @@ export class InteractionManager {
     }
 
     if (hitResult.region === "cell" && hitResult.cell) {
+      if (
+        this.rowHeightResizeEnabled &&
+        hitResult.isRowResizeHandle &&
+        hitResult.resizeRowIndex !== undefined &&
+        this.isRowResizable(hitResult.resizeRowIndex)
+      ) {
+        this.canvas.style.cursor = "ns-resize";
+        this.state.tooltip = null;
+        return;
+      }
+
       const cell = hitResult.cell;
       this.updateButtonHoverState(cell, viewportX, viewportY);
 
@@ -1808,6 +1879,24 @@ export class InteractionManager {
   }
 
   private handleMouseUp = (_e: MouseEvent): void => {
+    if (
+      this.state.isDragging &&
+      this.state.dragType === "row-resize" &&
+      this.state.rowResizeState
+    ) {
+      const { rowIndex, displayHeight } = this.state.rowResizeState;
+      const row = this.rows[rowIndex];
+      if (row) {
+        this.eventEmitter.emit(TableEvents.ROW_HEIGHT_CHANGE, row, displayHeight, rowIndex);
+      }
+      this.state.isDragging = false;
+      this.state.dragType = null;
+      this.state.rowResizeState = undefined;
+      this.canvas.style.cursor = "default";
+      this.unbindDocumentEvents();
+      return;
+    }
+
     // 进度条拖拽结束
     if (
       this.state.isDragging &&
@@ -3392,6 +3481,7 @@ export class InteractionManager {
     this.state.selectionStart = null;
     this.state.isDragging = false;
     this.state.dragType = null;
+    this.state.rowResizeState = undefined;
     this.state.dragTarget = null;
     this.state.tooltip = null;
     this.closeAllDropdowns();
@@ -3862,6 +3952,29 @@ export class InteractionManager {
 
   updateConfig(_selection: SelectionConfig, editing: EditingConfig): void {
     this.editingConfig = editing;
+  }
+
+  setRowHeightResizeEnabled(enabled: boolean): void {
+    this.rowHeightResizeEnabled = enabled;
+  }
+
+  setRowResizable(
+    resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined,
+  ): void {
+    this.rowResizable = resizable ?? true;
+  }
+
+  private isRowResizable(rowIndex: number): boolean {
+    if (this.rowResizable === false) {
+      return false;
+    }
+
+    if (this.rowResizable === true) {
+      return true;
+    }
+
+    const row = this.rows[rowIndex];
+    return row ? this.rowResizable(row, rowIndex) : false;
   }
 
   private startSwitchAnimationLoop = (): void => {

@@ -49,6 +49,8 @@ interface TableEvents {
   headerClick: [Column, number, MouseEvent];
   scroll: [number, number];
   columnResize: [Column, number];
+  rowResizeDrag: [];
+  rowHeightChange: [Row, number, number];
   columnReorder: [number, number];
   columnReorderDrag: [];
   columnHide: [string];
@@ -212,6 +214,8 @@ export class CanvasTable implements CanvasTableAPI {
       selectionConfig,
       editingConfig,
     );
+    this.interactionManager.setRowHeightResizeEnabled(props.enableRowHeightResize === true);
+    this.interactionManager.setRowResizable(props.rowResizable);
     this.interactionManager.setGetScrollbarBounds(() => {
       const scrollState = this.interactionManager.getScrollState();
       return this.renderer.getScrollbarBounds(
@@ -291,6 +295,31 @@ export class CanvasTable implements CanvasTableAPI {
       );
       this.render();
     });
+
+    this.eventEmitter.on(Events.ROW_RESIZE_DRAG, () => {
+      this.render();
+    });
+
+    this.eventEmitter.on(
+      Events.ROW_HEIGHT_CHANGE,
+      (_row: unknown, _newHeight: unknown, _rowIndex: unknown) => {
+        const row = _row as Row;
+        const newHeight = _newHeight as number;
+        void _rowIndex;
+
+        this.layoutManager.setRowHeight(row, newHeight);
+
+        const columns = this.dataManager.getColumns();
+        const rows = this.dataManager.getRows();
+        this.layoutManager.calculateLayout(columns, rows);
+        this.interactionManager.updateMaxScroll(
+          this.layoutManager.getMaxScrollLeft(),
+          this.layoutManager.getMaxScrollTop(),
+        );
+        this.editorManager.updatePosition();
+        this.render();
+      },
+    );
 
     this.eventEmitter.on(Events.COLUMN_REORDER, (_fromIndex: unknown, _toIndex: unknown) => {
       const fromIndex = _fromIndex as number;
@@ -740,6 +769,7 @@ export class CanvasTable implements CanvasTableAPI {
       onHeaderClick: this.props.onHeaderClick,
       onScroll: this.props.onScroll,
       onColumnResize: this.props.onColumnResize,
+      onRowHeightChange: this.props.onRowHeightChange,
       onColumnReorder: this.props.onColumnReorder,
       onEditStart: this.props.onEditStart,
       onEditEnd: this.props.onEditEnd,
@@ -896,6 +926,7 @@ export class CanvasTable implements CanvasTableAPI {
         hoveredImageIndex: this.interactionManager.getHoveredImageIndex(),
         hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
         progressDragState: interactionState.progressDragState,
+        rowResizeState: interactionState.rowResizeState,
       },
     );
 

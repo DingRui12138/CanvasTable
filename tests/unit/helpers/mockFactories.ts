@@ -138,6 +138,10 @@ export function createMockTheme(): TableTheme {
     row: {
       height: 32,
       headerHeight: 36,
+      minHeight: 24,
+      maxHeight: 320,
+      resizeGuideColor: '#1890ff',
+      resizeGuideWidth: 1,
     },
     border: {
       width: 1,

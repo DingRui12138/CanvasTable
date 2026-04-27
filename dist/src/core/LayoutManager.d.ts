@@ -16,9 +16,10 @@ export declare class LayoutManager {
     private cellMergeByRow;
     private mergedCellSet;
     private cellToMergeMap;
-    private rowHeightCache;
+    private rowHeightOverrides;
+    private hasRowHeightOverrides;
     private rowHeightFn?;
-    private cachedRowIds;
+    private cachedRows;
     private rowHeightsDirty;
     private viewportWidth;
     private viewportHeight;
@@ -39,6 +40,8 @@ export declare class LayoutManager {
     setViewportSize(width: number, height: number): void;
     setTheme(theme: TableTheme): void;
     setRowHeightFn(fn?: (row: Row, rowIndex: number) => number): void;
+    setRowHeight(row: Row, height: number): void;
+    clearRowHeightOverrides(): void;
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     getScrollLeft(): number;
     private createRowNumberColumn;
@@ -93,6 +96,10 @@ export declare class LayoutManager {
     getRowOffset(rowIndex: number): number;
     getColumnOffset(columnIndex: number): number;
     getRowHeightByIndex(rowIndex: number): number;
+    getRowHeightBounds(): {
+        min: number;
+        max: number;
+    };
     getColumnWidthByIndex(columnIndex: number): number;
     getCellPosition(rowIndex: number, columnIndex: number): {
         x: number;
@@ -189,6 +196,7 @@ export declare class LayoutManager {
      * 检测单元格区域
      */
     private hitTestCell;
+    private hitTestRowResizeHandle;
     /**
      * 在左侧固定列中查找列索引
      */

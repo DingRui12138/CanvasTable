@@ -4,6 +4,7 @@ import { DataManager } from '@/core/DataManager';
 import { EventEmitter } from '@/core/EventEmitter';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { SelectionConfig, EditingConfig, SortConfig, FilterConfig, CellPosition, Column } from '@/types';
+import { TableEvents } from '@/constants/events';
 
 // Helper to create mock mouse events
 function createMouseEvent(type: string, options: Partial<MouseEventInit> = {}): MouseEvent {
@@ -893,6 +894,189 @@ describe('InteractionManager', () => {
       const state = interactionManager.getInteractionState();
       expect(state.isDragging).toBe(true);
       expect(state.dragType).toBe('column-resize');
+    });
+  });
+
+  describe('row resize', () => {
+    const getFirstRowResizeY = () => mockTheme.row.headerHeight + mockTheme.row.height;
+
+    it('does not enable row-resize behavior when disabled', () => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseEvent = createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      });
+
+      canvas.dispatchEvent(mouseEvent);
+
+      expect(canvas.style.cursor).not.toBe('ns-resize');
+    });
+
+    it('hover on handle sets ns-resize when enabled', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseEvent = createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      });
+
+      canvas.dispatchEvent(mouseEvent);
+
+      expect(canvas.style.cursor).toBe('ns-resize');
+    });
+
+    it('does not show row resize cursor when rowResizable is false', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+      interactionManager.setRowResizable(false);
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseEvent = createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      });
+
+      canvas.dispatchEvent(mouseEvent);
+
+      expect(canvas.style.cursor).not.toBe('ns-resize');
+    });
+
+    it('does not start row resize when rowResizable callback returns false', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+      interactionManager.setRowResizable((_row, rowIndex) => rowIndex !== 0);
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseEvent = createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      });
+
+      canvas.dispatchEvent(mouseEvent);
+
+      const state = interactionManager.getInteractionState();
+      expect(state.isDragging).toBe(false);
+      expect(state.dragType).toBeNull();
+      expect(state.rowResizeState).toBeUndefined();
+    });
+
+    it('mousedown on handle starts row-resize drag and seeds rowResizeState', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseEvent = createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      });
+
+      canvas.dispatchEvent(mouseEvent);
+
+      const state = interactionManager.getInteractionState();
+      expect(state.isDragging).toBe(true);
+      expect(state.dragType).toBe('row-resize');
+      expect(state.rowResizeState).toEqual({
+        rowIndex: 0,
+        startY: rect.top + getFirstRowResizeY(),
+        startHeight: mockTheme.row.height,
+        displayHeight: mockTheme.row.height,
+      });
+    });
+
+    it('mousemove updates displayHeight and emits ROW_RESIZE_DRAG', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+      const dragHandler = jest.fn();
+      interactionManager['eventEmitter'].on(TableEvents.ROW_RESIZE_DRAG, dragHandler);
+
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      }));
+
+      document.dispatchEvent(createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY() + 18,
+      }));
+
+      const state = interactionManager.getInteractionState();
+      expect(state.rowResizeState?.displayHeight).toBe(mockTheme.row.height + 18);
+      expect(dragHandler).toHaveBeenCalled();
+    });
+
+    it('mouseup emits ROW_HEIGHT_CHANGE and clears rowResizeState', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+      const changeHandler = jest.fn();
+      interactionManager['eventEmitter'].on(TableEvents.ROW_HEIGHT_CHANGE, changeHandler);
+
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      }));
+
+      document.dispatchEvent(createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY() + 12,
+      }));
+      document.dispatchEvent(createMouseEvent('mouseup'));
+
+      const state = interactionManager.getInteractionState();
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ id: 'row-0' }), mockTheme.row.height + 12, 0);
+      expect(state.rowResizeState).toBeUndefined();
+      expect(state.dragType).toBeNull();
+      expect(state.isDragging).toBe(false);
+    });
+
+    it('canvas mouseup also commits row height resize', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+      const changeHandler = jest.fn();
+      interactionManager['eventEmitter'].on(TableEvents.ROW_HEIGHT_CHANGE, changeHandler);
+
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      }));
+
+      document.dispatchEvent(createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY() + 16,
+      }));
+      canvas.dispatchEvent(createMouseEvent('mouseup', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY() + 16,
+      }));
+
+      const state = interactionManager.getInteractionState();
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ id: 'row-0' }), mockTheme.row.height + 16, 0);
+      expect(state.rowResizeState).toBeUndefined();
+      expect(state.dragType).toBeNull();
+      expect(state.isDragging).toBe(false);
+    });
+
+    it('drag height clamps to theme row min and max', () => {
+      interactionManager.setRowHeightResizeEnabled(true);
+
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY(),
+      }));
+
+      document.dispatchEvent(createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY() - 100,
+      }));
+      expect(interactionManager.getInteractionState().rowResizeState?.displayHeight).toBe(
+        mockTheme.row.minHeight,
+      );
+
+      document.dispatchEvent(createMouseEvent('mousemove', {
+        clientX: rect.left + 40,
+        clientY: rect.top + getFirstRowResizeY() + 1000,
+      }));
+      expect(interactionManager.getInteractionState().rowResizeState?.displayHeight).toBe(
+        mockTheme.row.maxHeight,
+      );
     });
   });
 

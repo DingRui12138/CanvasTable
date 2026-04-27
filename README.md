@@ -103,6 +103,9 @@ const table = new CanvasTable(container, {
 | `loadingText` | `string` | `'Loading...'` | Loading overlay 文本 |
 | `lazyLoad` | `LazyLoadConfig` | - | 懒加载配置 |
 | `imageLoad` | `ImageLoadConfig` | - | 图片加载配置 |
+| `rowHeight` | `(row: Row, rowIndex: number) => number` | - | 动态行高计算函数，不指定则使用主题默认行高 |
+| `enableRowHeightResize` | `boolean` | `false` | 是否启用拖拽调整行高 |
+| `rowResizable` | `boolean \| ((row: Row, rowIndex: number) => boolean)` | `true` | 是否允许调整行高，可按行控制 |
 | `createRowData` | `(columns: Column[]) => Record<string, unknown>` | - | 新增行时的数据初始化函数 |
 
 ### Column 配置
@@ -421,6 +424,7 @@ interface Column {
       src: row.data.avatar as string,
       width: 32,
       height: 32,
+      scaleWithRowHeight: false, // 行高变化时保持头像尺寸不变
       circle: true,           // 圆形
       clickable: true,        // 可点击
       hoverable: true,        // 悬浮效果
@@ -447,7 +451,8 @@ interface Column {
       height: 32,
       borderRadius: 4,
       gap: 4,
-      maxVisible: 4,          // 最多显示数量
+      // maxVisible 不指定时会根据单元格宽高自动计算可显示数量
+      scaleWithRowHeight: false, // 行高变大时多排几行，但单张图片仍保持 32px 配置尺寸
       maxCount: 9,            // 最大上传数量
       clickable: true,
       hoverable: true,
@@ -460,6 +465,15 @@ interface Column {
   })
 }
 ```
+
+`ImageConfig` 中和动态行高相关的配置：
+
+| 属性 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `width` | `number` | `32` | 图片目标宽度 |
+| `height` | `number` | `32` | 图片目标高度 |
+| `scaleWithRowHeight` | `boolean` | `true` | 是否允许图片尺寸随行高放大。设为 `false` 时按标准行高限制单张图片尺寸，行高变大只会让多图有更多可排布行 |
+| `maxVisible` | `number` | 自动计算 | 多图最多显示数量。不指定时根据单元格宽高和图片尺寸自动计算 |
 
 ### 事件回调
 
@@ -545,6 +559,7 @@ const table = new CanvasTable(container, {
 | `onScroll` | `(scrollLeft: number, scrollTop: number)` | 滚动变化 |
 | `onRowClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | 行点击 |
 | `onRowDoubleClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | 行双击 |
+| `onRowHeightChange` | `(row: Row, newHeight: number, rowIndex: number)` | 行高拖拽调整完成 |
 | `onHeaderClick` | `(column: Column, columnIndex: number, event: MouseEvent)` | 表头点击 |
 | `onColumnResize` | `(column: Column, width: number)` | 列宽调整 |
 | `onExpand` | `(row: Row, rowIndex: number, expanded: boolean)` | 展开/折叠 |
@@ -865,6 +880,31 @@ table.setWatermark({
 | `rotation` | `number` | `-22` | 旋转角度（度） |
 | `gapX` | `number` | `100` | 水平间距 |
 | `gapY` | `number` | `100` | 垂直间距 |
+
+## 动态行高与行高调整
+
+可以通过 `rowHeight` 按行返回不同高度，也可以开启拖拽调整行高：
+
+```typescript
+const table = new CanvasTable(container, {
+  rows,
+  columns,
+  rowHeight: (row, rowIndex) => {
+    if (rowIndex % 10 === 0) return 100;
+    if (rowIndex % 5 === 0) return 64;
+    return 32;
+  },
+  enableRowHeightResize: true,
+  rowResizable: (row) => row.data.locked !== true,
+  onRowHeightChange: (row, newHeight, rowIndex) => {
+    console.log('行高已调整:', row, newHeight, rowIndex);
+  }
+});
+```
+
+行高拖拽会写入内部覆盖值，优先级高于 `rowHeight` 返回值；数据行对象本身会作为覆盖值的 key，避免和业务数据里的 `id` 字段耦合。
+
+图片列在行高变大后会根据单元格高度自动排布更多图片。如果只想增加可排布行数，不希望单张图片跟着放大，可以在图片配置里设置 `scaleWithRowHeight: false`。
 
 ## 性能优化
 
