@@ -5,7 +5,7 @@
  * Each handler extends this base class to access shared state and utilities.
  * Data (rows) is accessed through DataManager to ensure consistency.
  */
-import { CellPosition, CellInfo, InteractionState, ScrollState, Column, Row } from "../../types";
+import { CanvasTableLocale, CellPosition, CellInfo, InteractionState, ScrollState, Column, Row } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import { DataManager } from "../DataManager";
 import { EventEmitter } from "../EventEmitter";
@@ -18,6 +18,7 @@ export interface HandlerContext {
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
     expandColumnKey: string | null;
+    locale: CanvasTableLocale;
 }
 export interface InteractionEvents {
     cellClick: [CellInfo, MouseEvent];
@@ -80,6 +81,7 @@ export declare abstract class BaseHandler {
     protected get dataManager(): DataManager;
     protected get canvas(): HTMLCanvasElement;
     protected get ctx(): CanvasRenderingContext2D;
+    protected get locale(): CanvasTableLocale;
     protected get rows(): Row[];
     protected get allRows(): Row[];
     /**

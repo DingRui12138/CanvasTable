@@ -4,6 +4,61 @@ export type SortDirection = "asc" | "desc" | "none";
 export type FixedType = "left" | "right" | false;
 export type HorizontalAlign = "left" | "center" | "right";
 export type VerticalAlign = "top" | "middle" | "bottom";
+export type LocalePreset = "zh-CN" | "en-US";
+export type DeepPartial<T> = {
+    [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K];
+};
+export interface CanvasTableLocale {
+    emptyText: string;
+    loadingText: string;
+    contextMenu: {
+        pinTop: string;
+        pinBottom: string;
+        unpin: string;
+        addRowAbove: string;
+        addRowBelow: string;
+        deleteRow: string;
+        hideColumn: string;
+        showColumn: string;
+    };
+    filter: {
+        searchPlaceholder: string;
+        selectSearchPlaceholder: string;
+        minPlaceholder: string;
+        maxPlaceholder: string;
+        startDatePlaceholder: string;
+        endDatePlaceholder: string;
+        reset: string;
+        confirm: string;
+        noData: string;
+        loading: string;
+        all: string;
+        yes: string;
+        no: string;
+        selected: string;
+        unselected: string;
+    };
+    cell: {
+        selectPlaceholder: string;
+        datePlaceholder: string;
+        buttonText: string;
+    };
+    image: {
+        uploadIdle: string;
+        uploadDragging: string;
+        uploading: string;
+    };
+    calendar: {
+        months: string[];
+        weekdays: string[];
+        yearMonthFormat: string;
+    };
+}
+export interface LocaleOptions {
+    preset?: LocalePreset;
+    messages?: DeepPartial<CanvasTableLocale>;
+}
+export type LocaleConfig = LocalePreset | DeepPartial<CanvasTableLocale> | LocaleOptions;
 export interface CellStyle {
     fontFamily?: string;
     fontSize?: number;
@@ -786,9 +841,11 @@ export interface CanvasTableBaseProps {
     stripeRows?: boolean;
     hoverable?: boolean;
     loading?: boolean;
-    /** Loading overlay text, default "Loading..." */
+    /** Loading overlay text, defaults to locale.loadingText */
     loadingText?: string;
     emptyText?: string;
+    /** 文案配置，默认 zh-CN。可传 "en-US" 或局部覆盖文案 */
+    locale?: LocaleConfig;
     watermark?: WatermarkConfig;
     expandColumnKey?: string;
     defaultExpandedRowKeys?: string[];
@@ -1101,6 +1158,8 @@ export interface CanvasTableAPI {
     export(options: ExportOptions): Promise<Blob>;
     getViewConfig(): ViewConfig;
     setViewConfig(config: ViewConfig): void;
+    setLocale(locale: LocaleConfig): void;
+    getLocale(): CanvasTableLocale;
     hideColumn(columnKey: string): void;
     showColumn(columnKey: string): void;
     refresh(): void;

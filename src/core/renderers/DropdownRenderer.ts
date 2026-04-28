@@ -1,19 +1,23 @@
-import { ButtonsDropdownState, DropdownState, TableTheme } from "../../types";
+import { ButtonsDropdownState, CanvasTableLocale, DropdownState, TableTheme } from "../../types";
 import { truncateText } from "../../utils";
+import { zhCN } from "../../locale";
 
 export class DropdownRenderer {
   private ctx: CanvasRenderingContext2D;
   private theme: TableTheme;
+  private locale: CanvasTableLocale;
   private measureTextWidth: (text: string) => number;
 
   constructor(
     ctx: CanvasRenderingContext2D,
     theme: TableTheme,
     measureTextWidth: (text: string) => number,
+    locale: CanvasTableLocale = zhCN,
   ) {
     this.ctx = ctx;
     this.theme = theme;
     this.measureTextWidth = measureTextWidth;
+    this.locale = locale;
   }
 
   setContext(ctx: CanvasRenderingContext2D): void {
@@ -24,6 +28,10 @@ export class DropdownRenderer {
     this.theme = theme;
   }
 
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
+  }
+
   renderButtonsDropdown(dropdown: ButtonsDropdownState): void {
     const itemHeight = 32;
     const minWidth = 100;
@@ -31,7 +39,7 @@ export class DropdownRenderer {
 
     let maxWidth = minWidth;
     for (const btn of dropdown.buttons) {
-      const text = btn.text ?? "Button";
+      const text = btn.text ?? this.locale.cell.buttonText;
       const textWidth = this.measureTextWidth(text);
       maxWidth = Math.max(maxWidth, textWidth + padding * 2 + 16);
     }
@@ -79,7 +87,11 @@ export class DropdownRenderer {
       this.ctx.fillStyle = textColor;
       this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
       this.ctx.textBaseline = "middle";
-      this.ctx.fillText(btn.text ?? "Button", dropdown.x + padding, itemY + itemHeight / 2);
+      this.ctx.fillText(
+        btn.text ?? this.locale.cell.buttonText,
+        dropdown.x + padding,
+        itemY + itemHeight / 2,
+      );
     }
 
     this.ctx.restore();

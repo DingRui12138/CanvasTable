@@ -9,7 +9,7 @@ export class DateRenderer extends BaseCellRenderer {
   readonly type: CellType = "date";
 
   render(context: CellRendererContext): CellRenderResult {
-    const { ctx, theme, x, y, width, height, value } = context;
+    const { ctx, theme, locale, x, y, width, height, value } = context;
 
     const config = value as DateConfig;
     const padding = 8;
@@ -31,7 +31,7 @@ export class DateRenderer extends BaseCellRenderer {
       }
     }
 
-    const placeholder = config.placeholder ?? "选择日期";
+    const placeholder = config.placeholder ?? locale.cell.datePlaceholder;
     const text = displayText || placeholder;
 
     ctx.fillStyle = displayText ? theme.colors.cellText : theme.colors.placeholderText;

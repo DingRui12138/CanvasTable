@@ -4,7 +4,7 @@
  * This module exports all cell renderers and provides a registry
  * for managing and accessing renderers by cell type.
  */
-import { CellType, Column, Row, TableTheme } from "../../types";
+import { CanvasTableLocale, CellType, Column, Row, TableTheme } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import { CellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
 import { RendererPerformanceMonitor } from "./PerformanceMonitor";
@@ -33,7 +33,9 @@ export declare class CellRendererRegistry {
     private renderers;
     private defaultRenderer;
     private performanceMonitor;
-    constructor();
+    private locale;
+    constructor(locale?: CanvasTableLocale);
+    setLocale(locale: CanvasTableLocale): void;
     /**
      * Enable or disable performance monitoring
      */
@@ -76,6 +78,7 @@ export declare class CellRendererRegistry {
     createContext(params: {
         ctx: CanvasRenderingContext2D;
         theme: TableTheme;
+        locale?: CanvasTableLocale;
         layoutManager: LayoutManager;
         x: number;
         y: number;

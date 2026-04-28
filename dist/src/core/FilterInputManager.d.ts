@@ -1,4 +1,4 @@
-import { TableTheme, FilterDropdownState } from "../types";
+import { CanvasTableLocale, TableTheme, FilterDropdownState } from "../types";
 import { EventEmitter } from "./EventEmitter";
 interface FilterInputEvents {
     filterDropdownOpen: [];
@@ -13,6 +13,7 @@ export declare class FilterInputManager {
     private wrapper;
     private eventEmitter;
     private theme;
+    private locale;
     private searchInput;
     private minInput;
     private maxInput;
@@ -20,8 +21,10 @@ export declare class FilterInputManager {
     private currentColumnKey;
     private onInputChange;
     private isUpdatingFromExternal;
-    constructor(wrapper: HTMLElement, eventEmitter: EventEmitter<FilterInputEvents>, theme: TableTheme);
+    constructor(wrapper: HTMLElement, eventEmitter: EventEmitter<FilterInputEvents>, theme: TableTheme, locale?: CanvasTableLocale);
     setTheme(theme: TableTheme): void;
+    setLocale(locale: CanvasTableLocale): void;
+    private updatePlaceholders;
     setOnInputChange(callback: (value: string, field: string) => void): void;
     /**
      * 更新筛选下拉框状态并创建/更新输入框

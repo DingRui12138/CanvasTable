@@ -26,6 +26,7 @@ export declare class DropdownHandler extends BaseHandler {
      * Handle buttons dropdown hover
      */
     handleButtonsDropdownHover(e: MouseEvent): void;
+    private isButtonsDropdownSourceDisabled;
     /**
      * Handle filter dropdown click
      */

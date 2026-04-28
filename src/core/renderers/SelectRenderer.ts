@@ -9,7 +9,7 @@ export class SelectRenderer extends BaseCellRenderer {
   readonly type: CellType = "select";
 
   render(context: CellRendererContext): CellRenderResult {
-    const { ctx, theme, x, y, width, height, value, multipleSelectSeparator } = context;
+    const { ctx, theme, locale, x, y, width, height, value, multipleSelectSeparator } = context;
 
     const config = value as SelectConfig;
     const padding = 8;
@@ -53,7 +53,7 @@ export class SelectRenderer extends BaseCellRenderer {
         displayText = selectedOption?.label ?? String(config.value);
       }
 
-      const placeholder = config.placeholder ?? "请选择";
+      const placeholder = config.placeholder ?? locale.cell.selectPlaceholder;
       const text = displayText || placeholder;
 
       ctx.fillStyle = displayText ? theme.colors.cellText : theme.colors.placeholderText;

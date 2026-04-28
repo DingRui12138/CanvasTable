@@ -6,6 +6,7 @@ import type {
   CellMerge,
   TagItem,
   CustomRenderContext,
+  LocalePreset,
 } from "../src/types";
 import { getFPSMonitor } from "./FPSMonitor";
 
@@ -1276,6 +1277,96 @@ function generateComplexColumns(): Column[] {
       ],
     },
     {
+      key: "sales",
+      title: "销售情况",
+      children: [
+        {
+          key: "sales-phone",
+          title: "手机",
+          children: [
+            { key: "sales-phone-name", field: "name", title: "名称", width: 100 },
+            {
+              key: "sales-phone-sold",
+              field: "soldQuantity",
+              title: "售出数量",
+              width: 90,
+              type: "number",
+            },
+            {
+              key: "sales-phone-amount",
+              field: "amount",
+              title: "金额",
+              width: 100,
+              type: "number",
+            },
+            {
+              key: "sales-phone-stock",
+              field: "stockQuantity",
+              title: "库存数量",
+              width: 90,
+              type: "number",
+            },
+          ],
+        },
+        {
+          key: "sales-laptop",
+          title: "电脑",
+          children: [
+            { key: "sales-laptop-name", field: "name", title: "名称", width: 100 },
+            {
+              key: "sales-laptop-sold",
+              field: "soldQuantity",
+              title: "售出数量",
+              width: 90,
+              type: "number",
+            },
+            {
+              key: "sales-laptop-amount",
+              field: "amount",
+              title: "金额",
+              width: 100,
+              type: "number",
+            },
+            {
+              key: "sales-laptop-stock",
+              field: "stockQuantity",
+              title: "库存数量",
+              width: 90,
+              type: "number",
+            },
+          ],
+        },
+        {
+          key: "sales-accessory",
+          title: "配件",
+          children: [
+            { key: "sales-accessory-name", field: "name", title: "名称", width: 100 },
+            {
+              key: "sales-accessory-sold",
+              field: "soldQuantity",
+              title: "售出数量",
+              width: 90,
+              type: "number",
+            },
+            {
+              key: "sales-accessory-amount",
+              field: "amount",
+              title: "金额",
+              width: 100,
+              type: "number",
+            },
+            {
+              key: "sales-accessory-stock",
+              field: "stockQuantity",
+              title: "库存数量",
+              width: 90,
+              type: "number",
+            },
+          ],
+        },
+      ],
+    },
+    {
       key: "status",
       title: "状态",
       width: 80,
@@ -1317,6 +1408,7 @@ function generateComplexData(count: number, seed: number = DATA_SEED): Row[] {
   const positions = ["工程师", "高级工程师", "经理", "总监", "副总裁"];
   const levels = ["P5", "P6", "P7", "P8", "P9"];
   const grades = ["A", "B", "C", "D"];
+  const productNames = ["标准款", "旗舰款", "企业版", "轻量版", "套装"];
 
   const rows: Row[] = [];
   for (let i = 0; i < count; i++) {
@@ -1359,6 +1451,10 @@ function generateComplexData(count: number, seed: number = DATA_SEED): Row[] {
         communication: Math.floor(random() * 40) + 60,
         leadership: Math.floor(random() * 40) + 60,
         innovation: Math.floor(random() * 40) + 60,
+        name: productNames[i % productNames.length],
+        soldQuantity: Math.floor(random() * 900) + 100,
+        amount: Math.floor(random() * 900000) + 100000,
+        stockQuantity: Math.floor(random() * 3000) + 200,
         status: i % 3 === 0 ? "在职" : i % 3 === 1 ? "离职" : "休假",
       },
     });
@@ -1671,6 +1767,17 @@ document.getElementById("toggleTheme")!.addEventListener("click", () => {
   table.setThemeMode(currentThemeMode);
   themeDisplay.textContent = `(${currentThemeMode})`;
   console.log("Theme mode changed to:", currentThemeMode);
+});
+
+let currentLocale: LocalePreset = "zh-CN";
+const localeDisplay = document.getElementById("currentLocale")!;
+localeDisplay.textContent = `(中文)`;
+
+document.getElementById("toggleLocale")!.addEventListener("click", () => {
+  currentLocale = currentLocale === "zh-CN" ? "en-US" : "zh-CN";
+  table.setLocale(currentLocale);
+  localeDisplay.textContent = currentLocale === "zh-CN" ? `(中文)` : `(English)`;
+  console.log("Locale changed to:", currentLocale);
 });
 
 // 显示隐藏的"暗号"列

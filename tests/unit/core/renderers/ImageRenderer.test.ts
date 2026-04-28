@@ -1,5 +1,6 @@
 import { ImageRenderer } from '@/core/renderers/ImageRenderer';
 import { LayoutManager } from '@/core/LayoutManager';
+import { zhCN } from '@/locale';
 import { createMockCanvasContext, createMockTheme } from '../../helpers/mockFactories';
 import type { CellRendererContext } from '@/core/renderers/CellRenderer';
 import type { Column, Row } from '@/types';
@@ -43,6 +44,7 @@ describe('ImageRenderer', () => {
       isHovered: false,
       isSelected: false,
       dpr: 1,
+      locale: zhCN,
       ...overrides,
     };
   }

@@ -19,6 +19,8 @@ import {
   WatermarkConfig,
   ImageLoadConfig,
   RowPinPosition,
+  CanvasTableLocale,
+  LocaleConfig,
 } from "./types";
 import { DataManager } from "./core/DataManager";
 import { LayoutManager } from "./core/LayoutManager";
@@ -34,6 +36,7 @@ import { arrayToCsv, debounce, getColumnField } from "./utils";
 import { TableEvents as Events } from "./constants/events";
 import { LoadingOverlay } from "./core/LoadingOverlay";
 import { RowPinManager } from "./core/RowPinManager";
+import { resolveLocale } from "./locale";
 
 interface TableEvents {
   load: [{ rows: Row[]; columns: Column[] }];
@@ -104,6 +107,7 @@ export class CanvasTable implements CanvasTableAPI {
 
   private theme: TableTheme;
   private themeMode: ThemeMode;
+  private locale: CanvasTableLocale;
   private mediaQuery: MediaQueryList | null = null;
   private isDestroyed: boolean = false;
   private resizeObserver: ResizeObserver | null = null;
@@ -127,6 +131,7 @@ export class CanvasTable implements CanvasTableAPI {
     }
 
     this.props = props;
+    this.locale = resolveLocale(props.locale);
     this.themeMode = props.themeMode ?? "light";
     this.theme = this.resolveTheme();
 
@@ -154,7 +159,7 @@ export class CanvasTable implements CanvasTableAPI {
 
     // 初始化 loading overlay
     this.loadingOverlay = new LoadingOverlay(this.wrapper, this.theme, {
-      text: this.props.loadingText,
+      text: this.props.loadingText ?? this.locale.loadingText,
     });
 
     this.eventEmitter = new EventEmitter<TableEvents>();
@@ -188,7 +193,7 @@ export class CanvasTable implements CanvasTableAPI {
     this.layoutManager.setRowPinManager(this.rowPinManager);
     this.layoutManager.setShowRowNumbers(props.showRowNumbers === true);
     this.layoutManager.setRowHeightFn(props.rowHeight);
-    this.renderer = new Renderer(this.canvas, this.theme, this.layoutManager);
+    this.renderer = new Renderer(this.canvas, this.theme, this.layoutManager, this.locale);
     this.renderer.setMultipleSelectSeparator(props.multipleSelectSeparator ?? ", ");
 
     // 初始化渲染缓存相关管理器
@@ -219,6 +224,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.eventEmitter as unknown as EventEmitter,
       selectionConfig,
       editingConfig,
+      this.locale,
     );
     this.interactionManager.setRowHeightResizeEnabled(props.enableRowHeightResize === true);
     this.interactionManager.setRowResizable(props.rowResizable);
@@ -250,6 +256,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.wrapper,
       this.eventEmitter as unknown as EventEmitter,
       this.theme,
+      this.locale,
     );
 
     this.filterInputManager.setOnInputChange((value: string, field: string) => {
@@ -912,7 +919,7 @@ export class CanvasTable implements CanvasTableAPI {
     if (rows.length === 0) {
       this.loadingOverlay.hide();
       this.renderer.renderEmptyState(
-        this.props.emptyText ?? "No data",
+        this.props.emptyText ?? this.locale.emptyText,
         this.dataManager.getSort(),
         this.dataManager.getFilters(),
         interactionState.hoveredHeaderColumnKey,
@@ -928,7 +935,7 @@ export class CanvasTable implements CanvasTableAPI {
     }
 
     if (this.dataManager.isLoading() || this.manualLoading) {
-      this.loadingOverlay.show(this.props.loadingText);
+      this.loadingOverlay.show(this.props.loadingText ?? this.locale.loadingText);
       this.renderer.renderWatermark();
       return;
     }
@@ -1189,7 +1196,7 @@ export class CanvasTable implements CanvasTableAPI {
    */
   showLoading(text?: string): void {
     this.manualLoading = true;
-    this.loadingOverlay.show(text);
+    this.loadingOverlay.show(text ?? this.props.loadingText ?? this.locale.loadingText);
     this.render(); // 确保触发渲染
   }
 
@@ -1527,6 +1534,22 @@ export class CanvasTable implements CanvasTableAPI {
     }
     this.updateLayout();
     this.render();
+  }
+
+  setLocale(locale: LocaleConfig): void {
+    this.props = { ...this.props, locale };
+    this.locale = resolveLocale(locale);
+    this.loadingOverlay.setConfig({
+      text: this.props.loadingText ?? this.locale.loadingText,
+    });
+    this.renderer.setLocale(this.locale);
+    this.interactionManager.setLocale(this.locale);
+    this.filterInputManager.setLocale(this.locale);
+    this.render();
+  }
+
+  getLocale(): CanvasTableLocale {
+    return this.locale;
   }
 
   refresh(): void {

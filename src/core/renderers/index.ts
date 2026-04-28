@@ -5,7 +5,7 @@
  * for managing and accessing renderers by cell type.
  */
 
-import { CellType, Column, Row, TableTheme } from "../../types";
+import { CanvasTableLocale, CellType, Column, Row, TableTheme } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import { CellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
 import { TextRenderer } from "./TextRenderer";
@@ -23,6 +23,7 @@ import { InputRenderer } from "./InputRenderer";
 import { RatingRenderer } from "./RatingRenderer";
 import { ColorRenderer } from "./ColorRenderer";
 import { getPerformanceMonitor, RendererPerformanceMonitor } from "./PerformanceMonitor";
+import { zhCN } from "../../locale";
 
 // Re-export all types and base classes
 export { BaseCellRenderer } from "./CellRenderer";
@@ -55,8 +56,10 @@ export class CellRendererRegistry {
   private renderers: Map<CellType, CellRenderer> = new Map();
   private defaultRenderer: CellRenderer;
   private performanceMonitor: RendererPerformanceMonitor;
+  private locale: CanvasTableLocale;
 
-  constructor() {
+  constructor(locale: CanvasTableLocale = zhCN) {
+    this.locale = locale;
     // Register all built-in renderers
     this.register(new TextRenderer());
     this.register(new NumberRenderer());
@@ -80,6 +83,10 @@ export class CellRendererRegistry {
 
     // Get global performance monitor
     this.performanceMonitor = getPerformanceMonitor();
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
   }
 
   /**
@@ -155,6 +162,7 @@ export class CellRendererRegistry {
   createContext(params: {
     ctx: CanvasRenderingContext2D;
     theme: TableTheme;
+    locale?: CanvasTableLocale;
     layoutManager: LayoutManager;
     x: number;
     y: number;
@@ -175,6 +183,6 @@ export class CellRendererRegistry {
     hoveredImageIndex?: number;
     hoveredButtonIndex?: number;
   }): CellRendererContext {
-    return params;
+    return { ...params, locale: params.locale ?? this.locale };
   }
 }

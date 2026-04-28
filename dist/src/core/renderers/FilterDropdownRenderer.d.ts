@@ -1,10 +1,12 @@
-import { FilterDropdownState, TableTheme } from "../../types";
+import { CanvasTableLocale, FilterDropdownState, TableTheme } from "../../types";
 export declare class FilterDropdownRenderer {
     private ctx;
     private theme;
-    constructor(ctx: CanvasRenderingContext2D, theme: TableTheme);
+    private locale;
+    constructor(ctx: CanvasRenderingContext2D, theme: TableTheme, locale?: CanvasTableLocale);
     setContext(ctx: CanvasRenderingContext2D): void;
     setTheme(theme: TableTheme): void;
+    setLocale(locale: CanvasTableLocale): void;
     render(filterDropdown: FilterDropdownState): void;
     private renderSearchFilterDropdown;
     private renderSelectFilterDropdown;

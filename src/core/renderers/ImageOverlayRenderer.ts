@@ -1,5 +1,6 @@
-import { ImageEditorState, ImageTooltipState, TableTheme } from "../../types";
+import { CanvasTableLocale, ImageEditorState, ImageTooltipState, TableTheme } from "../../types";
 import { drawOverlayPanel, renderOverlayVerticalScrollbar } from "./OverlayRenderUtils";
+import { zhCN } from "../../locale";
 
 interface ImageOverlayLoader {
   get(src: string, minSize?: number): HTMLImageElement | HTMLCanvasElement | null;
@@ -12,11 +13,18 @@ export class ImageOverlayRenderer {
   private ctx: CanvasRenderingContext2D;
   private theme: TableTheme;
   private loader: ImageOverlayLoader;
+  private locale: CanvasTableLocale;
 
-  constructor(ctx: CanvasRenderingContext2D, theme: TableTheme, loader: ImageOverlayLoader) {
+  constructor(
+    ctx: CanvasRenderingContext2D,
+    theme: TableTheme,
+    loader: ImageOverlayLoader,
+    locale: CanvasTableLocale = zhCN,
+  ) {
     this.ctx = ctx;
     this.theme = theme;
     this.loader = loader;
+    this.locale = locale;
   }
 
   setContext(ctx: CanvasRenderingContext2D): void {
@@ -25,6 +33,10 @@ export class ImageOverlayRenderer {
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
   }
 
   renderImageTooltip(imageTooltip: ImageTooltipState): void {
@@ -243,7 +255,7 @@ export class ImageOverlayRenderer {
     this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
     this.ctx.textAlign = "center";
     this.ctx.textBaseline = "middle";
-    const uploadText = isDragging ? "释放以上传图片" : "点击上传或拖拽图片到此处";
+    const uploadText = isDragging ? this.locale.image.uploadDragging : this.locale.image.uploadIdle;
     this.ctx.fillText(uploadText, editor.x + editorWidth / 2, uploadY + uploadAreaHeight / 2);
   }
 
@@ -285,7 +297,7 @@ export class ImageOverlayRenderer {
       this.ctx.fillStyle = "#ffffff";
       this.ctx.font = `${this.theme.font.size - 2}px ${this.theme.font.family}`;
       this.ctx.textAlign = "center";
-      this.ctx.fillText("上传中...", x + imgSize / 2, y + imgSize - 10);
+      this.ctx.fillText(this.locale.image.uploading, x + imgSize / 2, y + imgSize - 10);
     }
 
     if (isHovered && !isPending && showDelete) {

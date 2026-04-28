@@ -2,6 +2,7 @@ export { CanvasTable, default } from "./CanvasTable";
 export * from "./types";
 export * from "./theme";
 export * from "./utils";
+export * from "./locale";
 export { DataManager } from "./core/DataManager";
 export { LayoutManager } from "./core/LayoutManager";
 export { Renderer } from "./core/Renderer";

@@ -1,5 +1,6 @@
-import { TableTheme, FilterDropdownState } from "../types";
+import { CanvasTableLocale, TableTheme, FilterDropdownState } from "../types";
 import { EventEmitter } from "./EventEmitter";
+import { zhCN } from "../locale";
 
 interface FilterInputEvents {
   filterDropdownOpen: [];
@@ -15,6 +16,7 @@ export class FilterInputManager {
   private wrapper: HTMLElement;
   private eventEmitter: EventEmitter<FilterInputEvents>;
   private theme: TableTheme;
+  private locale: CanvasTableLocale;
 
   // 输入元素
   private searchInput: HTMLInputElement | null = null;
@@ -32,14 +34,36 @@ export class FilterInputManager {
     wrapper: HTMLElement,
     eventEmitter: EventEmitter<FilterInputEvents>,
     theme: TableTheme,
+    locale: CanvasTableLocale = zhCN,
   ) {
     this.wrapper = wrapper;
     this.eventEmitter = eventEmitter;
     this.theme = theme;
+    this.locale = locale;
   }
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
+    this.updatePlaceholders();
+  }
+
+  private updatePlaceholders(): void {
+    if (this.searchInput) {
+      this.searchInput.placeholder =
+        this.currentMode === "select"
+          ? this.locale.filter.selectSearchPlaceholder
+          : this.locale.filter.searchPlaceholder;
+    }
+    if (this.minInput) {
+      this.minInput.placeholder = this.locale.filter.minPlaceholder;
+    }
+    if (this.maxInput) {
+      this.maxInput.placeholder = this.locale.filter.maxPlaceholder;
+    }
   }
 
   setOnInputChange(callback: (value: string, field: string) => void): void {
@@ -201,7 +225,7 @@ export class FilterInputManager {
     this.searchInput = document.createElement("input");
     this.searchInput.type = "text";
     this.searchInput.value = filterDropdown.searchValue ?? "";
-    this.searchInput.placeholder = "输入关键字筛选...";
+    this.searchInput.placeholder = this.locale.filter.searchPlaceholder;
 
     this.searchInput.style.cssText = `
       position: absolute;
@@ -263,7 +287,7 @@ export class FilterInputManager {
     this.searchInput = document.createElement("input");
     this.searchInput.type = "text";
     this.searchInput.value = filterDropdown.searchText ?? "";
-    this.searchInput.placeholder = "搜索...";
+    this.searchInput.placeholder = this.locale.filter.selectSearchPlaceholder;
 
     this.searchInput.style.cssText = `
       position: absolute;
@@ -326,7 +350,7 @@ export class FilterInputManager {
     this.minInput = document.createElement("input");
     this.minInput.type = "number";
     this.minInput.value = minValue !== undefined && minValue !== "" ? String(minValue) : "";
-    this.minInput.placeholder = "最小值";
+    this.minInput.placeholder = this.locale.filter.minPlaceholder;
 
     this.minInput.style.cssText = `
       position: absolute;
@@ -368,7 +392,7 @@ export class FilterInputManager {
     this.maxInput = document.createElement("input");
     this.maxInput.type = "number";
     this.maxInput.value = maxValue !== undefined && maxValue !== "" ? String(maxValue) : "";
-    this.maxInput.placeholder = "最大值";
+    this.maxInput.placeholder = this.locale.filter.maxPlaceholder;
 
     this.maxInput.style.cssText = `
       position: absolute;

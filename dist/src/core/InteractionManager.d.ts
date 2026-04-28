@@ -1,4 +1,4 @@
-import { CellPosition, CellInfo, CellRange, InteractionState, ScrollState, SelectionConfig, EditingConfig, Column, Row, SortConfig, InputConfig, SelectConfig, DropdownState, TagsConfig, ScrollbarState, FilterConfig, FilterDropdownState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ContextMenuState, HeaderContextMenuState, ButtonHoverState, DateConfig, DateDropdownState, SwitchAnimationState, ImageConfig, ColorPickerConfig, ColorPickerDropdownState } from "../types";
+import { CellPosition, CellInfo, CellRange, InteractionState, ScrollState, SelectionConfig, EditingConfig, Column, Row, SortConfig, InputConfig, SelectConfig, DropdownState, TagsConfig, ScrollbarState, FilterConfig, FilterDropdownState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ContextMenuState, HeaderContextMenuState, ButtonHoverState, DateConfig, DateDropdownState, SwitchAnimationState, ImageConfig, ColorPickerConfig, ColorPickerDropdownState, CanvasTableLocale } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
 import { EventEmitter } from "./EventEmitter";
@@ -105,7 +105,9 @@ export declare class InteractionManager {
     private rowResizable;
     private enableRowPinning;
     private rowPinnable;
-    constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig);
+    private locale;
+    private handlerContext;
+    constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig, locale?: CanvasTableLocale);
     /**
      * Initialize handler instances
      */
@@ -273,6 +275,7 @@ export declare class InteractionManager {
     setRowResizable(resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined): void;
     setRowPinningEnabled(enabled: boolean): void;
     setRowPinnable(pinnable: boolean | ((row: Row) => boolean) | undefined): void;
+    setLocale(locale: CanvasTableLocale): void;
     private isRowPinnable;
     private getRowContextMenuItems;
     private isRowResizable;

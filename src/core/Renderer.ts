@@ -30,6 +30,7 @@ import {
   ColorPickerDropdownState,
   ImageLoadConfig,
   RowBand,
+  CanvasTableLocale,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
@@ -44,6 +45,7 @@ import {
 } from "./renderers";
 import { truncateText, getDevicePixelRatio, resolveDisabled, getColumnField } from "../utils";
 import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
+import { zhCN } from "../locale";
 
 const STANDARD_ROW_HEIGHT = 32;
 
@@ -52,6 +54,7 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D;
   private theme: TableTheme;
   private layoutManager: LayoutManager;
+  private locale: CanvasTableLocale;
   private dpr: number;
 
   private offscreenCanvas: HTMLCanvasElement;
@@ -159,32 +162,47 @@ export class Renderer {
   // 图片加载完成后的渲染触发回调
   private onImageLoaded: (() => void) | null = null;
 
-  constructor(canvas: HTMLCanvasElement, theme: TableTheme, layoutManager: LayoutManager) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    theme: TableTheme,
+    layoutManager: LayoutManager,
+    locale: CanvasTableLocale = zhCN,
+  ) {
     this.canvas = canvas;
     this.ctx = this.getContext(canvas);
     this.theme = theme;
     this.layoutManager = layoutManager;
+    this.locale = locale;
     this.dpr = getDevicePixelRatio();
 
     this.offscreenCanvas = document.createElement("canvas");
     this.offscreenCtx = this.getContext(this.offscreenCanvas);
-    this.cellRendererRegistry = new CellRendererRegistry();
-    this.dropdownRenderer = new DropdownRenderer(this.ctx, this.theme, (text) =>
-      this.measureTextWidth(text),
+    this.cellRendererRegistry = new CellRendererRegistry(locale);
+    this.dropdownRenderer = new DropdownRenderer(
+      this.ctx,
+      this.theme,
+      (text) => this.measureTextWidth(text),
+      locale,
     );
-    this.filterDropdownRenderer = new FilterDropdownRenderer(this.ctx, this.theme);
-    this.imageOverlayRenderer = new ImageOverlayRenderer(this.ctx, this.theme, {
-      get: (src, minSize) => this.imageLoadQueue.get(src, minSize),
-      isLoading: (src) => this.imageLoadQueue.isLoading(src),
-      load: (src, targetSize) => this.loadImage(src, targetSize),
-      collectVisible: (src) => this.collectVisibleImage(src),
-    });
+    this.filterDropdownRenderer = new FilterDropdownRenderer(this.ctx, this.theme, locale);
+    this.imageOverlayRenderer = new ImageOverlayRenderer(
+      this.ctx,
+      this.theme,
+      {
+        get: (src, minSize) => this.imageLoadQueue.get(src, minSize),
+        isLoading: (src) => this.imageLoadQueue.isLoading(src),
+        load: (src, targetSize) => this.loadImage(src, targetSize),
+        collectVisible: (src) => this.collectVisibleImage(src),
+      },
+      locale,
+    );
     this.overlayRenderer = new OverlayRenderer(
       this.canvas,
       this.ctx,
       this.theme,
       this.layoutManager,
       this.dpr,
+      locale,
     );
 
     // 初始化图片加载队列（使用默认配置）
@@ -214,6 +232,15 @@ export class Renderer {
     this.filterDropdownRenderer.setTheme(theme);
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
+    this.cellRendererRegistry.setLocale(locale);
+    this.dropdownRenderer.setLocale(locale);
+    this.filterDropdownRenderer.setLocale(locale);
+    this.imageOverlayRenderer.setLocale(locale);
+    this.overlayRenderer.setLocale(locale);
   }
 
   setMultipleSelectSeparator(separator: string): void {
@@ -2091,6 +2118,7 @@ export class Renderer {
         isHovered: options.isHovered ?? false,
         isSelected: false,
         dpr: this.dpr,
+        locale: this.locale,
         switchAnimation: options.switchAnimation,
         buttonHoverState: options.buttonHoverState,
         multipleSelectSeparator: options.multipleSelectSeparator,
@@ -3713,7 +3741,7 @@ export class Renderer {
     this.ctx.font = `14px ${this.theme.font.family}`;
     this.ctx.textAlign = "center";
     this.ctx.textBaseline = "middle";
-    this.ctx.fillText("Loading...", width / 2, height / 2);
+    this.ctx.fillText(this.locale.loadingText, width / 2, height / 2);
     this.ctx.restore();
   }
 

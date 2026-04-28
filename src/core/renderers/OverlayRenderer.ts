@@ -3,6 +3,7 @@ import {
   ContextMenuState,
   DateDropdownState,
   HeaderContextMenuState,
+  CanvasTableLocale,
   ScrollbarState,
   TableTheme,
   TagItem,
@@ -11,12 +12,14 @@ import {
 } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import { drawOverlayPanel } from "./OverlayRenderUtils";
+import { zhCN } from "../../locale";
 
 export class OverlayRenderer {
   private ctx: CanvasRenderingContext2D;
   private canvas: HTMLCanvasElement;
   private theme: TableTheme;
   private layoutManager: LayoutManager;
+  private locale: CanvasTableLocale;
   private dpr: number;
   private watermarkConfig: WatermarkConfig | null = null;
 
@@ -26,11 +29,13 @@ export class OverlayRenderer {
     theme: TableTheme,
     layoutManager: LayoutManager,
     dpr: number,
+    locale: CanvasTableLocale = zhCN,
   ) {
     this.canvas = canvas;
     this.ctx = ctx;
     this.theme = theme;
     this.layoutManager = layoutManager;
+    this.locale = locale;
     this.dpr = dpr;
   }
 
@@ -41,6 +46,10 @@ export class OverlayRenderer {
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
   }
 
   setDpr(dpr: number): void {
@@ -438,7 +447,7 @@ export class OverlayRenderer {
     const { x, y, hoveredIndex } = headerContextMenu;
     const menuWidth = 120;
     const itemHeight = 32;
-    const menuItems = [{ text: "隐藏此列" }];
+    const menuItems = [{ text: this.locale.contextMenu.hideColumn }];
     const menuHeight = menuItems.length * itemHeight;
 
     this.ctx.save();
@@ -487,21 +496,10 @@ export class OverlayRenderer {
     this.ctx.fillStyle = this.theme.colors.dropdown.background;
     this.ctx.fillRect(x, y, width, dropdownHeight);
 
-    const monthNames = [
-      "1月",
-      "2月",
-      "3月",
-      "4月",
-      "5月",
-      "6月",
-      "7月",
-      "8月",
-      "9月",
-      "10月",
-      "11月",
-      "12月",
-    ];
-    const headerText = `${currentYear}年 ${monthNames[currentMonth]}`;
+    const monthText = this.locale.calendar.months[currentMonth] ?? String(currentMonth + 1);
+    const headerText = this.locale.calendar.yearMonthFormat
+      .replace("{year}", String(currentYear))
+      .replace("{month}", monthText);
 
     this.ctx.fillStyle = this.theme.colors.dropdown.text;
     this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`;
@@ -529,7 +527,7 @@ export class OverlayRenderer {
     this.ctx.closePath();
     this.ctx.fill();
 
-    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+    const weekdays = this.locale.calendar.weekdays;
     const dayWidth = (width - rowPadding * 2) / 7;
 
     this.ctx.font = `${this.theme.font.size - 1}px ${this.theme.font.family}`;

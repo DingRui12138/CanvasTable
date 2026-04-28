@@ -1,4 +1,4 @@
-import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState, ColorPickerDropdownState, ImageLoadConfig } from "../types";
+import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState, ColorPickerDropdownState, ImageLoadConfig, CanvasTableLocale } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
 export declare class Renderer {
@@ -6,6 +6,7 @@ export declare class Renderer {
     private ctx;
     private theme;
     private layoutManager;
+    private locale;
     private dpr;
     private offscreenCanvas;
     private offscreenCtx;
@@ -55,10 +56,11 @@ export declare class Renderer {
     private rowIdManager;
     private columnIdManager;
     private onImageLoaded;
-    constructor(canvas: HTMLCanvasElement, theme: TableTheme, layoutManager: LayoutManager);
+    constructor(canvas: HTMLCanvasElement, theme: TableTheme, layoutManager: LayoutManager, locale?: CanvasTableLocale);
     private getContext;
     setCanvas(canvas: HTMLCanvasElement): void;
     setTheme(theme: TableTheme): void;
+    setLocale(locale: CanvasTableLocale): void;
     setMultipleSelectSeparator(separator: string): void;
     /**
      * 设置图片加载配置

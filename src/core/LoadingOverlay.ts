@@ -8,9 +8,10 @@
  */
 
 import type { TableTheme } from "../types";
+import { zhCN } from "../locale";
 
 export interface LoadingOverlayConfig {
-  /** Loading text, default "Loading..." */
+  /** Loading text, default zh-CN loading text */
   text?: string;
 }
 
@@ -134,7 +135,7 @@ export class LoadingOverlay {
   }
 
   private updateText(): void {
-    this.textElement.textContent = this.config.text ?? "Loading...";
+    this.textElement.textContent = this.config.text ?? zhCN.loadingText;
   }
 
   show(text?: string): void {

@@ -8,7 +8,7 @@
  */
 import type { TableTheme } from "../types";
 export interface LoadingOverlayConfig {
-    /** Loading text, default "Loading..." */
+    /** Loading text, default zh-CN loading text */
     text?: string;
 }
 export declare class LoadingOverlay {

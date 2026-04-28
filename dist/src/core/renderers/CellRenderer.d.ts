@@ -4,7 +4,7 @@
  * This module defines the interface that all cell renderers must implement,
  * enabling a strategy pattern for rendering different cell types.
  */
-import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, ButtonsConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, ColorPickerConfig, SwitchAnimationState, ButtonHoverState } from "../../types";
+import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, ButtonsConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, ColorPickerConfig, SwitchAnimationState, ButtonHoverState, CanvasTableLocale } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 /**
  * Context provided to each cell renderer
@@ -14,6 +14,8 @@ export interface CellRendererContext {
     ctx: CanvasRenderingContext2D;
     /** Table theme for styling */
     theme: TableTheme;
+    /** Locale text used by built-in renderers */
+    locale: CanvasTableLocale;
     /** Layout manager for position calculations */
     layoutManager: LayoutManager;
     /** Cell X position in viewport coordinates */

@@ -1,5 +1,6 @@
 import { InputRenderer } from '@/core/renderers/InputRenderer';
 import { LayoutManager } from '@/core/LayoutManager';
+import { zhCN } from '@/locale';
 import { createMockCanvasContext, createMockTheme } from '../../helpers/mockFactories';
 import type { CellRendererContext } from '@/core/renderers/CellRenderer';
 import type { Column, Row } from '@/types';
@@ -41,6 +42,7 @@ describe('InputRenderer', () => {
       isHovered: false,
       isSelected: false,
       dpr: 1,
+      locale: zhCN,
       ...overrides,
     };
   }

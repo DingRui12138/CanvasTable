@@ -7,7 +7,7 @@
 
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
-import { getColumnField } from "../../utils";
+import { getColumnField, resolveDisabled } from "../../utils";
 import { TableEvents } from "../../constants/events";
 
 export class DropdownHandler extends BaseHandler {
@@ -247,6 +247,12 @@ export class DropdownHandler extends BaseHandler {
     if (!this.state.buttonsDropdown) return false;
 
     const { x, y, buttons, cell } = this.state.buttonsDropdown;
+    if (this.isButtonsDropdownSourceDisabled(cell)) {
+      this.state.buttonsDropdown = null;
+      this.eventEmitter.emit(TableEvents.BUTTONS_DROPDOWN_CLOSE);
+      return true;
+    }
+
     const viewportCoords = this.getViewportCoords(e);
     const viewportX = viewportCoords.x;
     const viewportY = viewportCoords.y;
@@ -258,7 +264,7 @@ export class DropdownHandler extends BaseHandler {
     this.ctx.font = `14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
     let maxWidth = 100;
     for (const btn of buttons) {
-      const text = btn.text ?? "Button";
+      const text = btn.text ?? this.locale.cell.buttonText;
       const textWidth = this.ctx.measureText(text).width;
       maxWidth = Math.max(maxWidth, textWidth + 24);
     }
@@ -293,6 +299,12 @@ export class DropdownHandler extends BaseHandler {
     if (!this.state.buttonsDropdown) return;
 
     const { x, y, buttons } = this.state.buttonsDropdown;
+    if (this.isButtonsDropdownSourceDisabled(this.state.buttonsDropdown.cell)) {
+      this.state.buttonsDropdown.hoveredIndex = -1;
+      this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
+      return;
+    }
+
     const viewportCoords = this.getViewportCoords(e);
     const viewportX = viewportCoords.x;
     const viewportY = viewportCoords.y;
@@ -303,7 +315,7 @@ export class DropdownHandler extends BaseHandler {
     this.ctx.font = `14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
     let maxWidth = 100;
     for (const btn of buttons) {
-      const text = btn.text ?? "Button";
+      const text = btn.text ?? this.locale.cell.buttonText;
       const textWidth = this.ctx.measureText(text).width;
       maxWidth = Math.max(maxWidth, textWidth + 24);
     }
@@ -324,6 +336,15 @@ export class DropdownHandler extends BaseHandler {
     } else {
       this.state.buttonsDropdown.hoveredIndex = -1;
     }
+  }
+
+  private isButtonsDropdownSourceDisabled(cell: {
+    rowIndex: number;
+    columnIndex: number;
+  }): boolean {
+    const column = this.layoutManager.getLeafColumns()[cell.columnIndex];
+    const row = this.rows[cell.rowIndex];
+    return column && row ? resolveDisabled(column.disabled, row, column) : true;
   }
 
   /**
@@ -513,8 +534,8 @@ export class DropdownHandler extends BaseHandler {
     if (viewportY >= buttonY && viewportY <= buttonY + buttonHeight) {
       const fontSize = 14;
       this.ctx.font = `${fontSize}px sans-serif`;
-      const resetText = "重置";
-      const confirmText = "确定";
+      const resetText = this.locale.filter.reset;
+      const confirmText = this.locale.filter.confirm;
       const resetWidth = this.ctx.measureText(resetText).width;
       const confirmWidth = this.ctx.measureText(confirmText).width;
 
@@ -569,8 +590,8 @@ export class DropdownHandler extends BaseHandler {
     if (viewportY >= buttonY && viewportY <= buttonY + buttonHeight) {
       const fontSize = 14;
       this.ctx.font = `${fontSize}px sans-serif`;
-      const resetText = "重置";
-      const confirmText = "确定";
+      const resetText = this.locale.filter.reset;
+      const confirmText = this.locale.filter.confirm;
       const resetWidth = this.ctx.measureText(resetText).width;
       const confirmWidth = this.ctx.measureText(confirmText).width;
 
@@ -608,8 +629,8 @@ export class DropdownHandler extends BaseHandler {
     if (viewportY >= buttonY && viewportY <= buttonY + buttonHeight) {
       const fontSize = 14;
       this.ctx.font = `${fontSize}px sans-serif`;
-      const resetText = "重置";
-      const confirmText = "确定";
+      const resetText = this.locale.filter.reset;
+      const confirmText = this.locale.filter.confirm;
       const resetWidth = this.ctx.measureText(resetText).width;
       const confirmWidth = this.ctx.measureText(confirmText).width;
 
@@ -662,8 +683,8 @@ export class DropdownHandler extends BaseHandler {
     if (viewportY >= buttonY && viewportY <= buttonY + buttonHeight) {
       const fontSize = 14;
       this.ctx.font = `${fontSize}px sans-serif`;
-      const resetText = "重置";
-      const confirmText = "确定";
+      const resetText = this.locale.filter.reset;
+      const confirmText = this.locale.filter.confirm;
       const resetWidth = this.ctx.measureText(resetText).width;
       const confirmWidth = this.ctx.measureText(confirmText).width;
 
@@ -761,8 +782,8 @@ export class DropdownHandler extends BaseHandler {
     if (viewportY >= buttonY && viewportY <= buttonY + buttonHeight) {
       const fontSize = 14;
       this.ctx.font = `${fontSize}px sans-serif`;
-      const resetText = "重置";
-      const confirmText = "确定";
+      const resetText = this.locale.filter.reset;
+      const confirmText = this.locale.filter.confirm;
       const resetWidth = this.ctx.measureText(resetText).width;
       const confirmWidth = this.ctx.measureText(confirmText).width;
 

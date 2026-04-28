@@ -31,6 +31,7 @@ import {
   ColorPickerConfig,
   ColorPickerDropdownState,
   ContextMenuItem,
+  CanvasTableLocale,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
@@ -58,6 +59,7 @@ import {
   TooltipHandler,
   HandlerContext,
 } from "./handlers";
+import { zhCN } from "../locale";
 
 interface InteractionEvents {
   cellClick: [CellInfo, MouseEvent];
@@ -182,6 +184,8 @@ export class InteractionManager {
   private rowResizable: boolean | ((row: Row, rowIndex: number) => boolean) = true;
   private enableRowPinning: boolean = false;
   private rowPinnable: boolean | ((row: Row) => boolean) = true;
+  private locale: CanvasTableLocale;
+  private handlerContext: HandlerContext | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -190,6 +194,7 @@ export class InteractionManager {
     eventEmitter: EventEmitter<InteractionEvents>,
     _selectionConfig: SelectionConfig,
     editingConfig: EditingConfig,
+    locale: CanvasTableLocale = zhCN,
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
@@ -197,6 +202,7 @@ export class InteractionManager {
     this.dataManager = dataManager;
     this.eventEmitter = eventEmitter;
     this.editingConfig = editingConfig;
+    this.locale = locale;
 
     this.state = {
       hoveredCell: null,
@@ -261,7 +267,9 @@ export class InteractionManager {
       canvas: this.canvas,
       ctx: this.ctx,
       expandColumnKey: this.expandColumnKey,
+      locale: this.locale,
     };
+    this.handlerContext = context;
 
     this.editingHandler = new EditingHandler(context, this.eventEmitter, this.editingConfig);
     this.dropdownHandler = new DropdownHandler(context, this.eventEmitter);
@@ -1221,7 +1229,7 @@ export class InteractionManager {
     const buttonY = (cellPos.height - buttonHeight) / 2;
 
     // 计算按钮宽度：与 Renderer 保持一致
-    const text = renderResult.button.text ?? "Button";
+    const text = renderResult.button.text ?? this.locale.cell.buttonText;
     // 使用默认字体大小计算
     const fontSize = 13;
     this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
@@ -1462,6 +1470,11 @@ export class InteractionManager {
       return;
     }
 
+    if (resolveDisabled(column.disabled, row, column)) {
+      this.state.hoveredButtonIndex = -1;
+      return;
+    }
+
     const config = renderResult.buttons;
     const visibleButtons = config.buttons.filter((btn) => btn.visible !== false);
     const maxVisible = config.maxVisible ?? 3;
@@ -1494,7 +1507,7 @@ export class InteractionManager {
     // 检查显示的按钮
     for (let i = 0; i < displayButtons.length; i++) {
       const btn = displayButtons[i]!;
-      const text = btn.text ?? "Button";
+      const text = btn.text ?? this.locale.cell.buttonText;
       const textWidth = this.ctx.measureText(text).width;
       const buttonWidth = Math.max(textWidth + 16, 40);
 
@@ -1648,6 +1661,7 @@ export class InteractionManager {
     }
 
     if (renderResult.type === "buttons" && renderResult.buttons) {
+      if (isDisabled) return false;
       const padding = 8;
       const gap = renderResult.buttons.gap ?? 4;
       const maxVisible = renderResult.buttons.maxVisible ?? 3;
@@ -1659,7 +1673,7 @@ export class InteractionManager {
 
       let currentX = padding;
       for (const btn of displayButtons) {
-        const text = btn.text ?? "Button";
+        const text = btn.text ?? this.locale.cell.buttonText;
         this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
         const textWidth = this.ctx.measureText(text).width;
         const buttonWidth = Math.max(textWidth + 16, 40);
@@ -2313,7 +2327,7 @@ export class InteractionManager {
       const buttonY = (cellPos.height - buttonHeight) / 2;
 
       // 计算按钮宽度：与 Renderer 保持一致
-      const text = renderResult.button.text ?? "Button";
+      const text = renderResult.button.text ?? this.locale.cell.buttonText;
       const fontSize = 13;
       this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
       const textWidth = this.ctx.measureText(text).width;
@@ -2342,6 +2356,8 @@ export class InteractionManager {
     }
 
     if (renderResult.type === "buttons" && renderResult.buttons) {
+      if (isDisabled) return false;
+
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
       const rect = this.canvas.getBoundingClientRect();
       const viewportX = e.clientX - rect.left;
@@ -2366,7 +2382,7 @@ export class InteractionManager {
       let currentX = padding;
       for (let i = 0; i < displayButtons.length; i++) {
         const btn = displayButtons[i]!;
-        const text = btn.text ?? "Button";
+        const text = btn.text ?? this.locale.cell.buttonText;
         this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
         const textWidth = this.ctx.measureText(text).width;
         const buttonWidth = Math.max(textWidth + 16, 40);
@@ -3986,6 +4002,13 @@ export class InteractionManager {
     this.rowPinnable = pinnable ?? true;
   }
 
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
+    if (this.handlerContext) {
+      this.handlerContext.locale = locale;
+    }
+  }
+
   private isRowPinnable(row: Row): boolean {
     if (typeof this.rowPinnable === "function") {
       return this.rowPinnable(row);
@@ -3999,20 +4022,20 @@ export class InteractionManager {
 
     if (this.enableRowPinning && this.isRowPinnable(row)) {
       if (pinPosition !== "top") {
-        items.push({ key: "pin-top", text: "固定到顶部" });
+        items.push({ key: "pin-top", text: this.locale.contextMenu.pinTop });
       }
       if (pinPosition !== "bottom") {
-        items.push({ key: "pin-bottom", text: "固定到底部" });
+        items.push({ key: "pin-bottom", text: this.locale.contextMenu.pinBottom });
       }
       if (pinPosition) {
-        items.push({ key: "unpin", text: "取消固定" });
+        items.push({ key: "unpin", text: this.locale.contextMenu.unpin });
       }
     }
 
     items.push(
-      { key: "add-above", text: "上方添加行" },
-      { key: "add-below", text: "下方添加行" },
-      { key: "delete", text: "删除行", danger: true },
+      { key: "add-above", text: this.locale.contextMenu.addRowAbove },
+      { key: "add-below", text: this.locale.contextMenu.addRowBelow },
+      { key: "delete", text: this.locale.contextMenu.deleteRow, danger: true },
     );
 
     return items;

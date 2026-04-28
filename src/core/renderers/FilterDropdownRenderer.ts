@@ -1,13 +1,16 @@
-import { FilterDropdownState, TableTheme } from "../../types";
+import { CanvasTableLocale, FilterDropdownState, TableTheme } from "../../types";
 import { truncateText } from "../../utils";
+import { zhCN } from "../../locale";
 
 export class FilterDropdownRenderer {
   private ctx: CanvasRenderingContext2D;
   private theme: TableTheme;
+  private locale: CanvasTableLocale;
 
-  constructor(ctx: CanvasRenderingContext2D, theme: TableTheme) {
+  constructor(ctx: CanvasRenderingContext2D, theme: TableTheme, locale: CanvasTableLocale = zhCN) {
     this.ctx = ctx;
     this.theme = theme;
+    this.locale = locale;
   }
 
   setContext(ctx: CanvasRenderingContext2D): void {
@@ -16,6 +19,10 @@ export class FilterDropdownRenderer {
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
   }
 
   render(filterDropdown: FilterDropdownState): void {
@@ -74,7 +81,7 @@ export class FilterDropdownRenderer {
       this.ctx.fillText(searchValue, textX, textY);
     } else {
       this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("输入关键字筛选...", textX, textY);
+      this.ctx.fillText(this.locale.filter.searchPlaceholder, textX, textY);
     }
 
     this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
@@ -115,13 +122,17 @@ export class FilterDropdownRenderer {
       this.ctx.fillText(filterDropdown.searchText, x + padding + 12, searchY + searchHeight / 2);
     } else {
       this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("搜索...", x + padding + 12, searchY + searchHeight / 2);
+      this.ctx.fillText(
+        this.locale.filter.selectSearchPlaceholder,
+        x + padding + 12,
+        searchY + searchHeight / 2,
+      );
     }
 
     const listY = y + padding + searchHeight + gap;
     if (isLoading) {
       this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("加载中...", x + padding, listY + itemHeight / 2);
+      this.ctx.fillText(this.locale.filter.loading, x + padding, listY + itemHeight / 2);
     } else if (options && options.length > 0) {
       this.ctx.save();
       this.ctx.beginPath();
@@ -238,7 +249,7 @@ export class FilterDropdownRenderer {
       }
     } else {
       this.ctx.fillStyle = this.theme.colors.placeholderText;
-      this.ctx.fillText("暂无数据", x + padding, listY + itemHeight / 2);
+      this.ctx.fillText(this.locale.filter.noData, x + padding, listY + itemHeight / 2);
     }
 
     this.renderFilterButtons(
@@ -278,7 +289,7 @@ export class FilterDropdownRenderer {
       : this.theme.colors.placeholderText;
     this.ctx.textBaseline = "middle";
     this.ctx.fillText(
-      minValue ? String(minValue) : "最小值",
+      minValue ? String(minValue) : this.locale.filter.minPlaceholder,
       x + padding + 8,
       input1Y + inputHeight / 2,
     );
@@ -295,7 +306,7 @@ export class FilterDropdownRenderer {
       ? this.theme.colors.dropdown.text
       : this.theme.colors.placeholderText;
     this.ctx.fillText(
-      maxValue ? String(maxValue) : "最大值",
+      maxValue ? String(maxValue) : this.locale.filter.maxPlaceholder,
       input2X + 8,
       input1Y + inputHeight / 2,
     );
@@ -315,9 +326,9 @@ export class FilterDropdownRenderer {
     this.drawPanelBackground(x, y, width, dropdownHeight);
 
     const options = [
-      { value: "all", label: "全部" },
-      { value: "true", label: "已选" },
-      { value: "false", label: "未选" },
+      { value: "all", label: this.locale.filter.all },
+      { value: "true", label: this.locale.filter.selected },
+      { value: "false", label: this.locale.filter.unselected },
     ];
 
     const radioSize = 14;
@@ -393,7 +404,11 @@ export class FilterDropdownRenderer {
       ? this.theme.colors.dropdown.text
       : this.theme.colors.placeholderText;
     this.ctx.textBaseline = "middle";
-    this.ctx.fillText(startText || "开始日期", input1X + 8, input1Y + inputHeight / 2);
+    this.ctx.fillText(
+      startText || this.locale.filter.startDatePlaceholder,
+      input1X + 8,
+      input1Y + inputHeight / 2,
+    );
 
     const input2X = x + padding + inputWidth + inputGap;
     const isEndActive = activeDateField === "endDate";
@@ -410,7 +425,11 @@ export class FilterDropdownRenderer {
     this.ctx.fillStyle = endText
       ? this.theme.colors.dropdown.text
       : this.theme.colors.placeholderText;
-    this.ctx.fillText(endText || "结束日期", input2X + 8, input1Y + inputHeight / 2);
+    this.ctx.fillText(
+      endText || this.locale.filter.endDatePlaceholder,
+      input2X + 8,
+      input1Y + inputHeight / 2,
+    );
 
     this.renderFilterButtons(x, y + padding + inputHeight + gap, width, buttonHeight);
     this.drawPanelBorder(x, y, width, dropdownHeight);
@@ -481,21 +500,10 @@ export class FilterDropdownRenderer {
     this.ctx.lineWidth = 1;
     this.ctx.stroke();
 
-    const monthNames = [
-      "1月",
-      "2月",
-      "3月",
-      "4月",
-      "5月",
-      "6月",
-      "7月",
-      "8月",
-      "9月",
-      "10月",
-      "11月",
-      "12月",
-    ];
-    const headerText = `${currentYear}年 ${monthNames[currentMonth]}`;
+    const monthText = this.locale.calendar.months[currentMonth] ?? String(currentMonth + 1);
+    const headerText = this.locale.calendar.yearMonthFormat
+      .replace("{year}", String(currentYear))
+      .replace("{month}", monthText);
 
     this.ctx.fillStyle = this.theme.colors.dropdown.text;
     this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`;
@@ -523,7 +531,7 @@ export class FilterDropdownRenderer {
     this.ctx.closePath();
     this.ctx.fill();
 
-    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+    const weekdays = this.locale.calendar.weekdays;
     const dayWidth = (calendarWidth - rowPadding * 2) / 7;
 
     this.ctx.font = `${this.theme.font.size - 1}px ${this.theme.font.family}`;
@@ -600,8 +608,8 @@ export class FilterDropdownRenderer {
     this.ctx.stroke();
 
     this.ctx.font = `${fontSize}px ${this.theme.font.family}`;
-    const resetText = "重置";
-    const confirmText = "确定";
+    const resetText = this.locale.filter.reset;
+    const confirmText = this.locale.filter.confirm;
     const confirmWidth = this.ctx.measureText(confirmText).width;
 
     const resetX = x + padding;

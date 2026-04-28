@@ -1344,5 +1344,80 @@ describe('InteractionManager', () => {
     it('should return null for buttons dropdown when not open', () => {
       expect(interactionManager.getButtonsDropdown()).toBeNull();
     });
+
+    it('does not open the more-buttons dropdown when the buttons cell is disabled', () => {
+      const columns: Column[] = [
+        {
+          key: 'actions',
+          title: 'Actions',
+          type: 'buttons',
+          width: 220,
+          disabled: true,
+          render: () => ({
+            type: 'buttons',
+            buttons: {
+              maxVisible: 1,
+              buttons: [
+                { text: 'A', actionKey: 'a' },
+                { text: 'B', actionKey: 'b' },
+              ],
+            },
+          }),
+        },
+      ];
+      const rows = [{ id: '1', data: { actions: null } }];
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+
+      const onButtonClick = jest.fn();
+      eventEmitter.on(TableEvents.BUTTON_CLICK, onButtonClick);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: 64,
+        clientY: mockTheme.row.headerHeight + mockTheme.row.height / 2,
+      }));
+
+      expect(interactionManager.getButtonsDropdown()).toBeNull();
+      expect(onButtonClick).not.toHaveBeenCalled();
+    });
+
+    it('does not emit button clicks from an existing dropdown when the source cell is disabled', () => {
+      const columns: Column[] = [
+        {
+          key: 'actions',
+          title: 'Actions',
+          type: 'buttons',
+          width: 220,
+          disabled: true,
+        },
+      ];
+      const rows = [{ id: '1', data: { actions: null } }];
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+
+      interactionManager['state'].buttonsDropdown = {
+        cell: { rowIndex: 0, columnIndex: 0 },
+        x: 20,
+        y: 60,
+        buttons: [{ text: 'B', actionKey: 'b' }],
+        hoveredIndex: -1,
+        buttonRelativeX: 56,
+        buttonY: 4,
+        buttonHeight: 24,
+        showAbove: false,
+      };
+
+      const onButtonClick = jest.fn();
+      eventEmitter.on(TableEvents.BUTTON_CLICK, onButtonClick);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: 30,
+        clientY: 76,
+      }));
+
+      expect(onButtonClick).not.toHaveBeenCalled();
+    });
   });
 });

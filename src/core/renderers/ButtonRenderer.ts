@@ -30,7 +30,7 @@ export class ButtonRenderer extends BaseCellRenderer {
     config: ButtonConfig,
     hoverProgress?: number,
   ): CellRenderResult {
-    const { ctx, theme, x, y, width, height, isDisabled } = context;
+    const { ctx, theme, locale, x, y, width, height, isDisabled } = context;
 
     const cellPadding = 8;
     const buttonHeight = config.size === "small" ? 24 : config.size === "large" ? 40 : 32;
@@ -38,7 +38,7 @@ export class ButtonRenderer extends BaseCellRenderer {
     const disabled = isDisabled ?? false;
 
     // Calculate button width based on text content
-    const text = config.text ?? "Button";
+    const text = config.text ?? locale.cell.buttonText;
     ctx.font = `${theme.font.size}px ${theme.font.family}`;
     const textWidth = ctx.measureText(text).width;
     const buttonPadding = 16;
@@ -129,7 +129,7 @@ export class ButtonRenderer extends BaseCellRenderer {
   }
 
   private renderButtons(context: CellRendererContext, config: ButtonsConfig): CellRenderResult {
-    const { ctx, theme, x, y, height, isDisabled, hoveredButtonIndex } = context;
+    const { ctx, theme, locale, x, y, height, isDisabled, hoveredButtonIndex } = context;
 
     const padding = 8;
     const gap = config.gap ?? 4;
@@ -146,7 +146,7 @@ export class ButtonRenderer extends BaseCellRenderer {
 
     for (let i = 0; i < displayButtons.length; i++) {
       const btn = displayButtons[i]!;
-      const text = btn.text ?? "Button";
+      const text = btn.text ?? locale.cell.buttonText;
       ctx.font = `${theme.font.size}px ${theme.font.family}`;
       const textWidth = ctx.measureText(text).width;
       const buttonWidth = Math.max(textWidth + 16, 40);
@@ -206,10 +206,17 @@ export class ButtonRenderer extends BaseCellRenderer {
       const moreText = config.moreButtonText ?? "···";
       const textWidth = ctx.measureText(moreText).width;
       const moreWidth = Math.max(textWidth + 16, 32);
-      const isMoreHovered = hoveredButtonIndex === displayButtons.length;
+      const isMoreDisabled = isDisabled ?? false;
+      const isMoreHovered = hoveredButtonIndex === displayButtons.length && !isMoreDisabled;
 
-      ctx.fillStyle = isMoreHovered ? theme.colors.button.hoverBg : theme.colors.button.background;
-      ctx.strokeStyle = theme.colors.button.border;
+      ctx.fillStyle = isMoreDisabled
+        ? theme.colors.button.disabledBg
+        : isMoreHovered
+          ? theme.colors.button.hoverBg
+          : theme.colors.button.background;
+      ctx.strokeStyle = isMoreDisabled
+        ? theme.colors.button.disabledBorder
+        : theme.colors.button.border;
       ctx.lineWidth = 1;
 
       ctx.beginPath();
@@ -217,7 +224,7 @@ export class ButtonRenderer extends BaseCellRenderer {
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = theme.colors.button.text;
+      ctx.fillStyle = isMoreDisabled ? theme.colors.button.disabledText : theme.colors.button.text;
       ctx.font = `${theme.font.size}px ${theme.font.family}`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";

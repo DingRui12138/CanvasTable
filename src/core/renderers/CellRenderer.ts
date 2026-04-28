@@ -25,6 +25,7 @@ import {
   ColorPickerConfig,
   SwitchAnimationState,
   ButtonHoverState,
+  CanvasTableLocale,
 } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 
@@ -37,6 +38,9 @@ export interface CellRendererContext {
 
   /** Table theme for styling */
   theme: TableTheme;
+
+  /** Locale text used by built-in renderers */
+  locale: CanvasTableLocale;
 
   /** Layout manager for position calculations */
   layoutManager: LayoutManager;

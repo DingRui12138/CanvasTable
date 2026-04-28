@@ -6,7 +6,15 @@
  * Data (rows) is accessed through DataManager to ensure consistency.
  */
 
-import { CellPosition, CellInfo, InteractionState, ScrollState, Column, Row } from "../../types";
+import {
+  CanvasTableLocale,
+  CellPosition,
+  CellInfo,
+  InteractionState,
+  ScrollState,
+  Column,
+  Row,
+} from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import { DataManager } from "../DataManager";
 import { EventEmitter } from "../EventEmitter";
@@ -25,6 +33,7 @@ export interface HandlerContext {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   expandColumnKey: string | null;
+  locale: CanvasTableLocale;
 }
 
 // Event emitter type for interaction events
@@ -119,6 +128,10 @@ export abstract class BaseHandler {
 
   protected get ctx(): CanvasRenderingContext2D {
     return this.context.ctx;
+  }
+
+  protected get locale(): CanvasTableLocale {
+    return this.context.locale;
   }
 
   protected get rows(): Row[] {

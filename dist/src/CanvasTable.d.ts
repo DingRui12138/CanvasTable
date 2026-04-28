@@ -1,4 +1,4 @@
-import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig, RowPinPosition } from "./types";
+import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig, RowPinPosition, CanvasTableLocale, LocaleConfig } from "./types";
 interface TableEvents {
     load: [{
         rows: Row[];
@@ -68,6 +68,7 @@ export declare class CanvasTable implements CanvasTableAPI {
     private loadingOverlay;
     private theme;
     private themeMode;
+    private locale;
     private mediaQuery;
     private isDestroyed;
     private resizeObserver;
@@ -173,6 +174,8 @@ export declare class CanvasTable implements CanvasTableAPI {
     private hideColumnInternal;
     getViewConfig(): ViewConfig;
     setViewConfig(config: ViewConfig): void;
+    setLocale(locale: LocaleConfig): void;
+    getLocale(): CanvasTableLocale;
     refresh(): void;
     private createDefaultRowData;
     getCanvas(): HTMLCanvasElement;

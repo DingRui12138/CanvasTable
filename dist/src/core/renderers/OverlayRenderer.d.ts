@@ -1,15 +1,17 @@
-import { ColorPickerDropdownState, ContextMenuState, DateDropdownState, HeaderContextMenuState, ScrollbarState, TableTheme, TooltipState, WatermarkConfig } from "../../types";
+import { ColorPickerDropdownState, ContextMenuState, DateDropdownState, HeaderContextMenuState, CanvasTableLocale, ScrollbarState, TableTheme, TooltipState, WatermarkConfig } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 export declare class OverlayRenderer {
     private ctx;
     private canvas;
     private theme;
     private layoutManager;
+    private locale;
     private dpr;
     private watermarkConfig;
-    constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, theme: TableTheme, layoutManager: LayoutManager, dpr: number);
+    constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, theme: TableTheme, layoutManager: LayoutManager, dpr: number, locale?: CanvasTableLocale);
     setCanvas(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void;
     setTheme(theme: TableTheme): void;
+    setLocale(locale: CanvasTableLocale): void;
     setDpr(dpr: number): void;
     setWatermarkConfig(config: WatermarkConfig | null): void;
     renderColorDropdown(dropdown: ColorPickerDropdownState): void;
