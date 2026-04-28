@@ -1415,6 +1415,7 @@ const table = new CanvasTable(container, {
   showRowNumbers: true,
   themeMode: "auto",
   enableRowHeightResize: true,
+  enableRowPinning: true,
   // 动态行高示例：每10行有100px高度，每5行有64px高度，其他为默认32px
   rowHeight: (_row, rowIndex) => {
     if (rowIndex % 10 === 0) return 100;

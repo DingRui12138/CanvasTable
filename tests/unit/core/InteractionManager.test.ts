@@ -2,6 +2,7 @@ import { InteractionManager } from '@/core/InteractionManager';
 import { LayoutManager } from '@/core/LayoutManager';
 import { DataManager } from '@/core/DataManager';
 import { EventEmitter } from '@/core/EventEmitter';
+import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { SelectionConfig, EditingConfig, SortConfig, FilterConfig, CellPosition, Column } from '@/types';
 import { TableEvents } from '@/constants/events';
@@ -411,8 +412,9 @@ describe('InteractionManager', () => {
       interactionManager['state'].contextMenu = {
         x: 100,
         y: 100,
-        rowIndex: 0,
+        row: dataManager.getRows()[0]!,
         hoveredIndex: -1,
+        items: [{ key: 'delete', text: '删除行', danger: true }],
       };
 
       const mouseEvent = createMouseEvent('mousedown', {
@@ -503,6 +505,27 @@ describe('InteractionManager', () => {
 
       const state = interactionManager.getInteractionState();
       expect(state.hoveredCell).toBeNull();
+    });
+
+    it('uses pinned row viewport coordinates for hover state', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[3]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+
+      const rect = canvas.getBoundingClientRect();
+      const mouseEvent = createMouseEvent('mousemove', {
+        clientX: rect.left + 100,
+        clientY: rect.top + mockTheme.row.headerHeight + mockTheme.row.height / 2,
+      });
+
+      canvas.dispatchEvent(mouseEvent);
+
+      expect(interactionManager.getInteractionState().hoveredCell?.rowIndex).toBe(3);
     });
 
     it('should clear scrollbar hover on mouse leave', () => {
@@ -722,6 +745,34 @@ describe('InteractionManager', () => {
 
       // Context menu should be opened (may be null if no items provided)
       // This test just verifies no error is thrown
+    });
+
+    it('opens context menu for a pinned top row by row reference', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[3]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+      interactionManager.setRowPinningEnabled(true);
+
+      const rect = canvas.getBoundingClientRect();
+      const contextMenuEvent = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + 100,
+        clientY: rect.top + mockTheme.row.headerHeight + mockTheme.row.height / 2,
+        button: 2,
+      });
+
+      canvas.dispatchEvent(contextMenuEvent);
+
+      expect(interactionManager.getContextMenu()?.row).toBe(rows[3]);
+      expect(interactionManager.getContextMenu()?.items.map((item) => item.key)).toContain(
+        'unpin',
+      );
     });
   });
 
@@ -979,6 +1030,46 @@ describe('InteractionManager', () => {
         startHeight: mockTheme.row.height,
         displayHeight: mockTheme.row.height,
       });
+    });
+
+    it('uses pinned top row bottom edge for row resize hit testing', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[3]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+      interactionManager.setRowHeightResizeEnabled(true);
+
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + mockTheme.row.headerHeight + mockTheme.row.height,
+      }));
+
+      expect(interactionManager.getInteractionState().rowResizeState?.rowIndex).toBe(3);
+    });
+
+    it('uses body band row bottom edge after pinned top rows for row resize hit testing', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[3]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+      interactionManager.setRowHeightResizeEnabled(true);
+
+      const rect = canvas.getBoundingClientRect();
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + 40,
+        clientY: rect.top + mockTheme.row.headerHeight + mockTheme.row.height * 2,
+      }));
+
+      expect(interactionManager.getInteractionState().rowResizeState?.rowIndex).toBe(0);
     });
 
     it('mousemove updates displayHeight and emits ROW_RESIZE_DRAG', () => {

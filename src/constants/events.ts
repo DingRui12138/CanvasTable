@@ -27,6 +27,7 @@ export const TableEvents = {
   ROW_CLICK: "rowClick",
   ROW_DBL_CLICK: "rowDblClick",
   ROW_HEIGHT_CHANGE: "rowHeightChange",
+  ROW_PIN_CHANGE: "rowPinChange",
   ROW_ADD_ABOVE: "rowAddAbove",
   ROW_ADD_BELOW: "rowAddBelow",
   ROW_DELETE: "rowDelete",

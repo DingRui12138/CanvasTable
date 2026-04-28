@@ -1,4 +1,5 @@
 import { LayoutManager } from '@/core/LayoutManager';
+import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 
 describe('LayoutManager', () => {
@@ -273,6 +274,27 @@ describe('LayoutManager', () => {
       expect(updatedLayout.totalHeight).toBe(theme.row.headerHeight + 64 + theme.row.height * 2);
     });
 
+    it('updates a committed row height without recalculating every row height', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowHeightFn = jest.fn(() => theme.row.height);
+
+      layoutManager.setRowHeightFn(rowHeightFn);
+      layoutManager.calculateLayout(columns, rows);
+      rowHeightFn.mockClear();
+
+      const updated = layoutManager.updateRowHeight(rows[1]!, 64);
+
+      expect(updated).toBe(true);
+      expect(rowHeightFn).not.toHaveBeenCalled();
+      expect(layoutManager.getRowHeightByIndex(1)).toBe(64);
+      expect(layoutManager.getRowOffset(1)).toBe(theme.row.headerHeight + theme.row.height);
+      expect(layoutManager.getRowOffset(2)).toBe(theme.row.headerHeight + theme.row.height + 64);
+      expect(layoutManager.getLayoutInfo().totalHeight).toBe(
+        theme.row.headerHeight + theme.row.height * 4 + 64,
+      );
+    });
+
     it('override clamps to theme row min and max', () => {
       const columns = createTestColumns();
       const rows = createTestRows(2);
@@ -297,6 +319,95 @@ describe('LayoutManager', () => {
 
       layoutManager.calculateLayout(columns, rows);
       expect(layoutManager.getRowHeightByIndex(0)).toBe(theme.row.height);
+    });
+  });
+
+  describe('row bands', () => {
+    it('excludes pinned rows from body rows', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+
+      layoutManager.setRowPinManager(rowPinManager);
+      rowPinManager.pin(rows[2]!, 'top');
+      rowPinManager.pin(rows[4]!, 'bottom');
+      layoutManager.calculateLayout(columns, rows);
+
+      const bands = layoutManager.getRowBands();
+      expect(bands.pinnedTop.rows).toEqual([rows[2]]);
+      expect(bands.body.rows).toEqual([rows[0], rows[1], rows[3]]);
+      expect(bands.pinnedBottom.rows).toEqual([rows[4]]);
+    });
+
+    it('reduces body visible height when rows are pinned', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+
+      layoutManager.setViewportSize(800, 200);
+      layoutManager.setRowPinManager(rowPinManager);
+      rowPinManager.pin(rows[0]!, 'top');
+      rowPinManager.pin(rows[4]!, 'bottom');
+      layoutManager.calculateLayout(columns, rows);
+
+      expect(layoutManager.getBodyViewportHeight()).toBe(
+        200 - theme.row.headerHeight - theme.row.height * 2,
+      );
+    });
+
+    it('rebuilds row bands when pin state changes without row data changes', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+
+      rowPinManager.pin(rows[1]!, 'top');
+      layoutManager.calculateLayout(columns, rows);
+
+      const bands = layoutManager.getRowBands();
+      expect(bands.pinnedTop.rows).toEqual([rows[1]]);
+      expect(bands.body.rows).toEqual([rows[0], rows[2], rows[3], rows[4]]);
+    });
+
+    it('calculates visible range from body viewport height', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(20);
+      const rowPinManager = new RowPinManager();
+      layoutManager = new LayoutManager(
+        { enabled: true, rowBufferSize: 0, columnBufferSize: 0 },
+        theme,
+      );
+
+      layoutManager.setViewportSize(800, theme.row.headerHeight + theme.row.height * 3);
+      layoutManager.setRowPinManager(rowPinManager);
+      rowPinManager.pin(rows[0]!, 'top');
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setScrollPosition(0, 0);
+
+      const visibleRange = layoutManager.getVisibleRange();
+
+      expect(layoutManager.getBodyViewportHeight()).toBe(theme.row.height * 2);
+      expect(visibleRange.endRow).toBe(2);
+    });
+
+    it('hit tests large pinned layouts without scanning all rows on mouse move', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(20000);
+      const rowPinManager = new RowPinManager();
+      layoutManager.setViewportSize(800, 400);
+      layoutManager.setRowPinManager(rowPinManager);
+      rowPinManager.pin(rows[19999]!, 'top');
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setScrollPosition(0, theme.row.height * 10000);
+
+      const startedAt = performance.now();
+      const result = layoutManager.hitTest(40, theme.row.headerHeight + theme.row.height * 2);
+      const elapsed = performance.now() - startedAt;
+
+      expect(result.region).toBe('cell');
+      expect(elapsed).toBeLessThan(20);
     });
   });
 });

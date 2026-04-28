@@ -18,6 +18,7 @@ import {
   ThemeMode,
   WatermarkConfig,
   ImageLoadConfig,
+  RowPinPosition,
 } from "./types";
 import { DataManager } from "./core/DataManager";
 import { LayoutManager } from "./core/LayoutManager";
@@ -32,6 +33,7 @@ import { DEFAULT_THEME, DARK_THEME } from "./theme";
 import { arrayToCsv, debounce, getColumnField } from "./utils";
 import { TableEvents as Events } from "./constants/events";
 import { LoadingOverlay } from "./core/LoadingOverlay";
+import { RowPinManager } from "./core/RowPinManager";
 
 interface TableEvents {
   load: [{ rows: Row[]; columns: Column[] }];
@@ -68,9 +70,10 @@ interface TableEvents {
   contextMenuHover: [];
   switchAnimationUpdate: [];
   buttonHoverAnimationUpdate: [];
-  rowAddAbove: [number];
-  rowAddBelow: [number];
-  rowDelete: [number];
+  rowAddAbove: [Row];
+  rowAddBelow: [Row];
+  rowDelete: [Row];
+  rowPinChange: [Row, RowPinPosition | null];
   expand: [Row, number, boolean];
   checkboxChange: [CellInfo, boolean];
   radioChange: [CellInfo, unknown];
@@ -91,6 +94,7 @@ export class CanvasTable implements CanvasTableAPI {
 
   private dataManager: DataManager;
   private layoutManager: LayoutManager;
+  private rowPinManager: RowPinManager;
   private renderer: Renderer;
   private interactionManager: InteractionManager;
   private editorManager: EditorManager;
@@ -180,6 +184,8 @@ export class CanvasTable implements CanvasTableAPI {
 
     this.dataManager = new DataManager(props.rowKey);
     this.layoutManager = new LayoutManager(virtualScrollConfig, this.theme);
+    this.rowPinManager = new RowPinManager();
+    this.layoutManager.setRowPinManager(this.rowPinManager);
     this.layoutManager.setShowRowNumbers(props.showRowNumbers === true);
     this.layoutManager.setRowHeightFn(props.rowHeight);
     this.renderer = new Renderer(this.canvas, this.theme, this.layoutManager);
@@ -216,6 +222,8 @@ export class CanvasTable implements CanvasTableAPI {
     );
     this.interactionManager.setRowHeightResizeEnabled(props.enableRowHeightResize === true);
     this.interactionManager.setRowResizable(props.rowResizable);
+    this.interactionManager.setRowPinningEnabled(props.enableRowPinning === true);
+    this.interactionManager.setRowPinnable(props.rowPinnable);
     this.interactionManager.setGetScrollbarBounds(() => {
       const scrollState = this.interactionManager.getScrollState();
       return this.renderer.getScrollbarBounds(
@@ -307,11 +315,12 @@ export class CanvasTable implements CanvasTableAPI {
         const newHeight = _newHeight as number;
         void _rowIndex;
 
-        this.layoutManager.setRowHeight(row, newHeight);
-
-        const columns = this.dataManager.getColumns();
-        const rows = this.dataManager.getRows();
-        this.layoutManager.calculateLayout(columns, rows);
+        const updatedIncrementally = this.layoutManager.updateRowHeight(row, newHeight);
+        if (!updatedIncrementally) {
+          const columns = this.dataManager.getColumns();
+          const rows = this.dataManager.getRows();
+          this.layoutManager.calculateLayout(columns, rows);
+        }
         this.interactionManager.updateMaxScroll(
           this.layoutManager.getMaxScrollLeft(),
           this.layoutManager.getMaxScrollTop(),
@@ -641,33 +650,49 @@ export class CanvasTable implements CanvasTableAPI {
       this.showColumnInternal(columnKey);
     });
 
-    this.eventEmitter.on(Events.ROW_ADD_ABOVE, (_rowIndex: unknown) => {
-      const rowIndex = _rowIndex as number;
+    this.eventEmitter.on(Events.ROW_ADD_ABOVE, (_row: unknown) => {
+      const row = _row as Row;
       const columns = this.dataManager.getColumns();
       const emptyRow = this.props.createRowData
         ? this.props.createRowData(columns)
         : this.createDefaultRowData(columns);
-      this.dataManager.addRow(emptyRow, rowIndex);
+      this.dataManager.addRowRelativeTo(row, emptyRow, "above");
       this.updateLayout();
       this.render();
     });
 
-    this.eventEmitter.on(Events.ROW_ADD_BELOW, (_rowIndex: unknown) => {
-      const rowIndex = _rowIndex as number;
+    this.eventEmitter.on(Events.ROW_ADD_BELOW, (_row: unknown) => {
+      const row = _row as Row;
       const columns = this.dataManager.getColumns();
       const emptyRow = this.props.createRowData
         ? this.props.createRowData(columns)
         : this.createDefaultRowData(columns);
-      this.dataManager.addRow(emptyRow, rowIndex + 1);
+      this.dataManager.addRowRelativeTo(row, emptyRow, "below");
       this.updateLayout();
       this.render();
     });
 
-    this.eventEmitter.on(Events.ROW_DELETE, (_rowIndex: unknown) => {
-      const rowIndex = _rowIndex as number;
-      this.dataManager.deleteRow(rowIndex);
+    this.eventEmitter.on(Events.ROW_DELETE, (_row: unknown) => {
+      const row = _row as Row;
+      this.rowPinManager.remove(row);
+      this.dataManager.deleteRowByRef(row);
       this.updateLayout();
       this.render();
+    });
+
+    this.eventEmitter.on(Events.ROW_PIN_CHANGE, (_row: unknown, _position: unknown) => {
+      const row = _row as Row;
+      const position = _position as RowPinPosition | null;
+
+      if (position) {
+        this.rowPinManager.pin(row, position);
+      } else {
+        this.rowPinManager.remove(row);
+      }
+
+      this.updateLayout();
+      this.render();
+      this.props.onRowPinChange?.(row, position);
     });
 
     this.eventEmitter.on(Events.UNDO, () => {
@@ -1068,6 +1093,12 @@ export class CanvasTable implements CanvasTableAPI {
 
   getSelectedRows(): number[] {
     return this.interactionManager.getSelectedRows();
+  }
+
+  getPinnedRows(position: RowPinPosition): Row[] {
+    return position === "top"
+      ? this.rowPinManager.getTopRows()
+      : this.rowPinManager.getBottomRows();
   }
 
   setSelectedCells(cells: CellPosition[]): void {

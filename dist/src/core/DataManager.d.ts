@@ -61,7 +61,10 @@ export declare class DataManager {
     updateCell(rowIndex: number, columnKey: string, value: unknown, field?: string): Change;
     updateRow(rowIndex: number, data: Record<string, unknown>): Change[];
     addRow(data: Record<string, unknown>, index?: number): Change;
+    private findRootRowIndexByRef;
+    addRowRelativeTo(targetRow: Row, data: Record<string, unknown>, placement: "above" | "below"): Change;
     deleteRow(rowIndex: number): Change;
+    deleteRowByRef(row: Row): Change;
     toggleRowExpand(rowIndex: number): boolean;
     setRowSelected(rowIndex: number, selected: boolean): void;
     private findStateRow;

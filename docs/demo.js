@@ -475,6 +475,7 @@ function initDemo() {
     showRowNumbers: true,
     themeMode: 'auto',
     enableRowHeightResize: true,
+    enableRowPinning: true,
     rowHeight: function(row, rowIndex) {
       if (rowIndex % 10 === 0) return 100;
       if (rowIndex % 5 === 0) return 64;

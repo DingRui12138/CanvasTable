@@ -727,6 +727,28 @@ export class DataManager {
     };
   }
 
+  private findRootRowIndexByRef(targetRow: Row): number {
+    return this.state.rows.findIndex((row) => row === targetRow);
+  }
+
+  addRowRelativeTo(
+    targetRow: Row,
+    data: Record<string, unknown>,
+    placement: "above" | "below",
+  ): Change {
+    if ((targetRow.level ?? 0) > 0) {
+      throw new Error("Adding rows relative to child rows is not supported");
+    }
+
+    const targetIndex = this.findRootRowIndexByRef(targetRow);
+    if (targetIndex < 0) {
+      throw new Error("Target row not found");
+    }
+
+    const insertIndex = placement === "above" ? targetIndex : targetIndex + 1;
+    return this.addRow(data, insertIndex);
+  }
+
   deleteRow(rowIndex: number): Change {
     const row = this.state.sortedRows[rowIndex];
     if (!row) {
@@ -751,6 +773,34 @@ export class DataManager {
     return {
       type: "delete",
       rowIndex,
+      row,
+    };
+  }
+
+  deleteRowByRef(row: Row): Change {
+    if ((row.level ?? 0) > 0) {
+      throw new Error("Deleting child rows by reference is not supported");
+    }
+
+    const originalIndex = this.findRootRowIndexByRef(row);
+    if (originalIndex < 0) {
+      throw new Error("Row not found");
+    }
+
+    this.state.rows.splice(originalIndex, 1);
+
+    this.recordAction({
+      type: "delete",
+      rowId: row.id,
+      rowIndex: originalIndex,
+      rowData: { ...row, data: { ...row.data } },
+    });
+
+    this.applyFiltersAndSort();
+
+    return {
+      type: "delete",
+      rowIndex: originalIndex,
       row,
     };
   }

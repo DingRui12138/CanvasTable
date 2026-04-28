@@ -64,9 +64,10 @@ export interface InteractionEvents {
   columnHide: [string];
   columnShow: [string];
   switchAnimationUpdate: [];
-  rowAddAbove: [number];
-  rowAddBelow: [number];
-  rowDelete: [number];
+  rowAddAbove: [Row];
+  rowAddBelow: [Row];
+  rowDelete: [Row];
+  rowPinChange: [Row, "top" | "bottom" | null];
   columnReorder: [number, number];
   columnReorderDrag: [];
   columnSwap: [string, string];

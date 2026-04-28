@@ -72,4 +72,28 @@ test.describe('Context Menu', () => {
     await page.waitForTimeout(100);
     // Header context menu should appear with options like "Hide Column", etc.
   });
+
+  test('pins a row to the top from the context menu', async ({ page }) => {
+    const canvas = page.locator('canvas');
+
+    await canvas.click({
+      position: { x: 120, y: 180 },
+      button: 'right'
+    });
+    await page.waitForTimeout(100);
+
+    await canvas.click({
+      position: { x: 140, y: 196 }
+    });
+    await page.waitForTimeout(100);
+
+    const pinned = await page.evaluate(() => {
+      const table = (window as typeof window & {
+        table?: { getPinnedRows?: (position: 'top' | 'bottom') => unknown[] };
+      }).table;
+      return table?.getPinnedRows?.('top')?.length ?? 0;
+    });
+
+    expect(pinned).toBe(1);
+  });
 });

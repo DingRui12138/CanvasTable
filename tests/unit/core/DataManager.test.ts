@@ -95,6 +95,27 @@ describe('DataManager', () => {
     });
   });
 
+  describe('row reference operations', () => {
+    it('adds above a row by row reference after earlier insertions shift indexes', async () => {
+      const manyRows = createTestRows(100);
+      await dataManager.loadRows(manyRows);
+      const row50 = dataManager.getRows()[49]!;
+      const row30 = dataManager.getRows()[29]!;
+
+      dataManager.addRowRelativeTo(row30, { name: 'new' }, 'above');
+
+      expect(dataManager.getRows()[50]).toBe(row50);
+    });
+
+    it('deletes a row by row reference', () => {
+      const row = dataManager.getRows()[2]!;
+
+      dataManager.deleteRowByRef(row);
+
+      expect(dataManager.getRows()).not.toContain(row);
+    });
+  });
+
   describe('deleteRow', () => {
     it('should delete row by index', () => {
       const rowsBefore = dataManager.getRows();

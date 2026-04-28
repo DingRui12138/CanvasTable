@@ -1,4 +1,5 @@
-import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion } from "../types";
+import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion, RowBands, RowHitResult } from "../types";
+import { RowPinManager } from "./RowPinManager";
 export declare class LayoutManager {
     private layoutInfo;
     private visibleRange;
@@ -7,6 +8,18 @@ export declare class LayoutManager {
     private columnWidths;
     private rowHeights;
     private rowOffsets;
+    private rowBands;
+    private rowPinManager?;
+    private rowHeightByRow;
+    private rowIndexByRow;
+    private bodyRowIndexByRow;
+    private rowBandOffsetByRow;
+    private pinnedRowByRow;
+    private bodyRowHeights;
+    private bodyRowOffsets;
+    private pinnedTopHeight;
+    private pinnedBottomHeight;
+    private bodyViewportHeight;
     private columnOffsets;
     private columns;
     private headerDepth;
@@ -28,6 +41,7 @@ export declare class LayoutManager {
     private showRowNumbers;
     private rowNumberColumnWidth;
     constructor(config: VirtualScrollConfig | undefined, theme: TableTheme);
+    private createEmptyRowBands;
     setShowRowNumbers(show: boolean): void;
     getShowRowNumbers(): boolean;
     getRowNumberColumnWidth(): number;
@@ -40,7 +54,15 @@ export declare class LayoutManager {
     setViewportSize(width: number, height: number): void;
     setTheme(theme: TableTheme): void;
     setRowHeightFn(fn?: (row: Row, rowIndex: number) => number): void;
+    setRowPinManager(rowPinManager?: RowPinManager): void;
+    getRowBands(): RowBands;
+    getRowBandsForRender(): RowBands;
+    hasPinnedRows(): boolean;
+    getBodyViewportHeight(): number;
+    getBodyContentHeight(): number;
+    getRowPinPosition(row: Row): "top" | "bottom" | null;
     setRowHeight(row: Row, height: number): void;
+    updateRowHeight(row: Row, height: number): boolean;
     clearRowHeightOverrides(): void;
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     getScrollLeft(): number;
@@ -55,6 +77,16 @@ export declare class LayoutManager {
     private calculateColumnLayout;
     private calculateCellMerges;
     private calculateRowLayout;
+    private calculateRowBands;
+    private updatePinnedRowHeight;
+    private updatePinnedBandOffsets;
+    private updateRowBandGeometry;
+    private calculateRowsHeight;
+    private getResolvedRowHeight;
+    getRowIndexByRef(row: Row): number;
+    getBodyRowIndexByRef(row: Row): number;
+    getRowBandOffsetByRef(row: Row): number | null;
+    isRowInPinnedBand(row: Row): boolean;
     getColumnWidth(column: Column): number;
     setColumnWidth(columnKey: string, width: number): void;
     private recalculateColumnLayout;
@@ -67,6 +99,9 @@ export declare class LayoutManager {
     private calculateTotalHeight;
     private updateVisibleRange;
     private findRowIndexAtOffset;
+    private findBodyRowIndexAtOffset;
+    private findRowInBandAtOffset;
+    getRowViewportY(rowIndex: number, scrollTop?: number): number | null;
     private findColumnIndexAtOffset;
     getVisibleRange(): VisibleRange;
     getLayoutInfo(): LayoutInfo;
@@ -108,6 +143,11 @@ export declare class LayoutManager {
         height: number;
     };
     getCellAtPosition(x: number, y: number, scrollTop?: number): {
+        rowIndex: number;
+        columnIndex: number;
+    } | null;
+    getRowHitAtViewportPosition(viewportX: number, viewportY: number, scrollTop: number): RowHitResult | null;
+    getCellAtViewportPosition(viewportX: number, viewportY: number, scrollTop?: number): {
         rowIndex: number;
         columnIndex: number;
     } | null;
@@ -196,7 +236,9 @@ export declare class LayoutManager {
      * 检测单元格区域
      */
     private hitTestCell;
-    private hitTestRowResizeHandle;
+    private hitTestRowResizeHandleAtViewportPosition;
+    private findBodyResizeHandleAtViewportY;
+    private findResizeHandleInPinnedRows;
     /**
      * 在左侧固定列中查找列索引
      */

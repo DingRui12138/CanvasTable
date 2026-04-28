@@ -21,15 +21,14 @@ export class ContextMenuHandler extends BaseHandler {
   handleContextMenuClick(e: MouseEvent): boolean {
     if (!this.state.contextMenu) return false;
 
-    const { x, y, rowIndex } = this.state.contextMenu;
+    const { x, y, row, items } = this.state.contextMenu;
     const coords = this.getViewportCoords(e);
     const viewportX = coords.x;
     const viewportY = coords.y;
 
     const menuWidth = 140;
     const itemHeight = ContextMenuHandler.DROPDOWN_ITEM_HEIGHT;
-    const menuItems = 3;
-    const menuHeight = menuItems * itemHeight;
+    const menuHeight = items.length * itemHeight;
 
     if (
       viewportX >= x &&
@@ -39,13 +38,24 @@ export class ContextMenuHandler extends BaseHandler {
     ) {
       const relativeY = viewportY - y;
       const itemIndex = Math.floor(relativeY / itemHeight);
+      const item = items[itemIndex];
 
-      if (itemIndex === 0) {
-        this.eventEmitter.emit(TableEvents.ROW_ADD_ABOVE, rowIndex);
-      } else if (itemIndex === 1) {
-        this.eventEmitter.emit(TableEvents.ROW_ADD_BELOW, rowIndex);
-      } else if (itemIndex === 2) {
-        this.eventEmitter.emit(TableEvents.ROW_DELETE, rowIndex);
+      if (!item || item.disabled) {
+        return true;
+      }
+
+      if (item.key === "pin-top") {
+        this.eventEmitter.emit(TableEvents.ROW_PIN_CHANGE, row, "top");
+      } else if (item.key === "pin-bottom") {
+        this.eventEmitter.emit(TableEvents.ROW_PIN_CHANGE, row, "bottom");
+      } else if (item.key === "unpin") {
+        this.eventEmitter.emit(TableEvents.ROW_PIN_CHANGE, row, null);
+      } else if (item.key === "add-above") {
+        this.eventEmitter.emit(TableEvents.ROW_ADD_ABOVE, row);
+      } else if (item.key === "add-below") {
+        this.eventEmitter.emit(TableEvents.ROW_ADD_BELOW, row);
+      } else if (item.key === "delete") {
+        this.eventEmitter.emit(TableEvents.ROW_DELETE, row);
       }
 
       this.state.contextMenu = null;
@@ -62,15 +72,14 @@ export class ContextMenuHandler extends BaseHandler {
   handleContextMenuHover(e: MouseEvent): void {
     if (!this.state.contextMenu) return;
 
-    const { x, y, hoveredIndex: prevHoveredIndex } = this.state.contextMenu;
+    const { x, y, items, hoveredIndex: prevHoveredIndex } = this.state.contextMenu;
     const coords = this.getViewportCoords(e);
     const viewportX = coords.x;
     const viewportY = coords.y;
 
     const menuWidth = 140;
     const itemHeight = ContextMenuHandler.DROPDOWN_ITEM_HEIGHT;
-    const menuItems = 3;
-    const menuHeight = menuItems * itemHeight;
+    const menuHeight = items.length * itemHeight;
 
     let newHoveredIndex = -1;
 

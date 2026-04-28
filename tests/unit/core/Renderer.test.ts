@@ -1,5 +1,6 @@
 import { Renderer } from '@/core/Renderer';
 import { LayoutManager } from '@/core/LayoutManager';
+import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { VisibleRange, SortConfig, InteractionState, Column } from '@/types';
 
@@ -227,6 +228,129 @@ describe('Renderer', () => {
           }),
         });
       }).not.toThrow();
+    });
+
+    it('virtualizes fixed column rows instead of scanning every row', () => {
+      const baseColumns = createTestColumns();
+      const columns: Column[] = [
+        { ...baseColumns[0]!, fixed: 'left' },
+        ...baseColumns.slice(1),
+      ];
+      const rows = createTestRows(2000);
+      const visibleRange: VisibleRange = {
+        startRow: 100,
+        endRow: 110,
+        startColumn: 0,
+        endColumn: 3,
+      };
+      layoutManager.calculateLayout(columns, rows);
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
+      const getRowOffsetSpy = jest.spyOn(layoutManager, 'getRowOffset');
+
+      renderer.render(
+        columns,
+        rows,
+        visibleRange,
+        0,
+        mockTheme.row.height * 100,
+        createRenderOptions(),
+      );
+
+      expect(getRowOffsetSpy.mock.calls.length).toBeLessThan(100);
+    });
+
+    it('renders a pinned row once outside the scrolling body band', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(6);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[2]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setScrollPosition(0, mockTheme.row.height);
+
+      const ctx = canvas.getContext('2d')!;
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+
+      const user3Calls = fillTextSpy.mock.calls.filter((call) => call[0] === 'User 3');
+      expect(user3Calls).toHaveLength(1);
+      expect(user3Calls[0]?.[2]).toBeGreaterThanOrEqual(mockTheme.row.headerHeight);
+      expect(user3Calls[0]?.[2]).toBeLessThan(
+        mockTheme.row.headerHeight + mockTheme.row.height,
+      );
+    });
+
+    it('does not clone row bands during pinned row rendering', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(2000);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[1999]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      const getRowBandsSpy = jest.spyOn(layoutManager, 'getRowBands');
+
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+
+      expect(getRowBandsSpy).not.toHaveBeenCalled();
+    });
+
+    it('draws pinned rows after the scrolling body when their areas overlap', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(6);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[2]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setScrollPosition(0, mockTheme.row.height * 2);
+
+      const ctx = canvas.getContext('2d')!;
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+
+      renderer.render(
+        columns,
+        rows,
+        layoutManager.getVisibleRange(),
+        0,
+        mockTheme.row.height,
+        createRenderOptions(),
+      );
+
+      const bodyRowCall = findLastCallIndex(fillTextSpy.mock.calls, (call) => call[0] === 'User 2');
+      const pinnedRowCall = findLastCallIndex(
+        fillTextSpy.mock.calls,
+        (call) => call[0] === 'User 3',
+      );
+      expect(bodyRowCall).toBeGreaterThanOrEqual(0);
+      expect(pinnedRowCall).toBeGreaterThan(bodyRowCall);
+    });
+
+    it('draws selected pinned rows at their viewport band position', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(6);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[2]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+
+      const ctx = canvas.getContext('2d')!;
+      const strokeRectSpy = jest.spyOn(ctx, 'strokeRect');
+
+      renderer.render(
+        columns,
+        rows,
+        layoutManager.getVisibleRange(),
+        0,
+        mockTheme.row.height * 2,
+        createRenderOptions({
+          selectedCells: [{ start: { rowIndex: 2, columnIndex: 1 }, end: { rowIndex: 2, columnIndex: 1 } }],
+        }),
+      );
+
+      const selectionCall = strokeRectSpy.mock.calls.find(
+        (call) => call[1] === mockTheme.row.headerHeight,
+      );
+      expect(selectionCall).toBeDefined();
     });
 
     it('should render with selected cells', () => {
@@ -464,6 +588,40 @@ describe('Renderer', () => {
         lineWidth: mockTheme.row.resizeGuideWidth,
       });
     });
+
+    it('draws row resize guide at pinned row viewport position', () => {
+      const baseContext = canvas.getContext('2d');
+      expect(baseContext).not.toBeNull();
+      const inspectableContext = createInspectableContext(baseContext!);
+      jest.spyOn(canvas, 'getContext').mockReturnValue(inspectableContext);
+
+      const columns = createTestColumns();
+      const rows = createTestRows(10);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[3]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(columns, rows);
+      const rowResizeState: InteractionState['rowResizeState'] = {
+        rowIndex: 3,
+        startY: 0,
+        startHeight: mockTheme.row.height,
+        displayHeight: 49,
+      };
+
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
+      renderer.render(
+        columns,
+        rows,
+        layoutManager.getVisibleRange(),
+        0,
+        0,
+        createRenderOptions({ rowResizeState }),
+      );
+
+      const expectedY = mockTheme.row.headerHeight + rowResizeState.displayHeight;
+      expect(inspectableContext.moveTo).toHaveBeenCalledWith(0, expectedY);
+      expect(inspectableContext.lineTo).toHaveBeenCalledWith(canvas.width, expectedY);
+    });
   });
 
   describe('image cache', () => {
@@ -523,6 +681,64 @@ describe('Renderer', () => {
     it('should retry image', () => {
       renderer.retryImage('test-url');
       // Retry will attempt to reload the image
+    });
+
+    it('treats pinned rows as visible for image lazy loading', () => {
+      const rows = createTestRows(8);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[6]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(createTestColumns(), rows);
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
+
+      (
+        renderer as unknown as {
+          currentRows: typeof rows;
+          currentVisibleRange: VisibleRange;
+          isInLazyLoadRange: (rowIndex: number, threshold: number) => boolean;
+        }
+      ).currentRows = rows;
+      (
+        renderer as unknown as {
+          currentVisibleRange: VisibleRange;
+        }
+      ).currentVisibleRange = { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
+
+      expect(
+        (
+          renderer as unknown as {
+            isInLazyLoadRange: (rowIndex: number, threshold: number) => boolean;
+          }
+        ).isInLazyLoadRange(6, 0),
+      ).toBe(true);
+    });
+
+    it('uses body band row indexes for image lazy loading', () => {
+      const rows = createTestRows(8);
+      const rowPinManager = new RowPinManager();
+      rowPinManager.pin(rows[0]!, 'top');
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.calculateLayout(createTestColumns(), rows);
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
+
+      (
+        renderer as unknown as {
+          currentRows: typeof rows;
+          currentVisibleRange: VisibleRange;
+          isInLazyLoadRange: (rowIndex: number, threshold: number) => boolean;
+        }
+      ).currentRows = rows;
+      (
+        renderer as unknown as {
+          currentVisibleRange: VisibleRange;
+        }
+      ).currentVisibleRange = { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
+
+      const lazyRange = renderer as unknown as {
+        isInLazyLoadRange: (rowIndex: number, threshold: number) => boolean;
+      };
+      expect(lazyRange.isInLazyLoadRange(1, 0)).toBe(true);
+      expect(lazyRange.isInLazyLoadRange(2, 0)).toBe(false);
     });
   });
 

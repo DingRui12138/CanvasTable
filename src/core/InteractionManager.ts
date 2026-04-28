@@ -30,6 +30,7 @@ import {
   EditRenderResult,
   ColorPickerConfig,
   ColorPickerDropdownState,
+  ContextMenuItem,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
@@ -94,9 +95,10 @@ interface InteractionEvents {
   columnHide: [string];
   columnShow: [string];
   switchAnimationUpdate: [];
-  rowAddAbove: [number];
-  rowAddBelow: [number];
-  rowDelete: [number];
+  rowAddAbove: [Row];
+  rowAddBelow: [Row];
+  rowDelete: [Row];
+  rowPinChange: [Row, "top" | "bottom" | null];
   columnReorder: [number, number];
   columnReorderDrag: [];
   rowResizeDrag: [];
@@ -178,6 +180,8 @@ export class InteractionManager {
   private hasMoreData: boolean = true; // 是否还有更多数据
   private rowHeightResizeEnabled: boolean = false;
   private rowResizable: boolean | ((row: Row, rowIndex: number) => boolean) = true;
+  private enableRowPinning: boolean = false;
+  private rowPinnable: boolean | ((row: Row) => boolean) = true;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -658,17 +662,21 @@ export class InteractionManager {
     }
 
     // 单元格右键菜单
-    const x = viewportX + this.scrollState.scrollLeft;
-    const y = viewportY + this.scrollState.scrollTop;
-    const cell = this.layoutManager.getCellAtPosition(x, y, this.scrollState.scrollTop);
+    const hit = this.layoutManager.getRowHitAtViewportPosition(
+      viewportX,
+      viewportY,
+      this.scrollState.scrollTop,
+    );
 
-    if (!cell || cell.rowIndex < 0) return;
+    if (!hit) return;
+
+    const row = hit.row;
+    const items = this.getRowContextMenuItems(row);
 
     const canvasRect = this.canvas.getBoundingClientRect();
     const menuWidth = 140;
     const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-    const menuItems = 3;
-    const menuHeight = menuItems * itemHeight;
+    const menuHeight = items.length * itemHeight;
 
     let menuX = viewportX;
     let menuY = viewportY;
@@ -690,8 +698,9 @@ export class InteractionManager {
     this.state.contextMenu = {
       x: menuX,
       y: menuY,
-      rowIndex: cell.rowIndex,
+      row,
       hoveredIndex: -1,
+      items,
     };
 
     this.eventEmitter.emit(TableEvents.CONTEXT_MENU_OPEN);
@@ -2085,10 +2094,11 @@ export class InteractionManager {
       this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
     }
 
-    const x = viewportX + this.scrollState.scrollLeft;
-    const y = viewportY + this.scrollState.scrollTop;
-
-    const cell = this.layoutManager.getCellAtPosition(x, y, this.scrollState.scrollTop);
+    const cell = this.layoutManager.getCellAtViewportPosition(
+      viewportX,
+      viewportY,
+      this.scrollState.scrollTop,
+    );
     if (!cell || cell.rowIndex < 0) return;
 
     const leafColumns = this.layoutManager.getLeafColumns();
@@ -3962,6 +3972,46 @@ export class InteractionManager {
     resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined,
   ): void {
     this.rowResizable = resizable ?? true;
+  }
+
+  setRowPinningEnabled(enabled: boolean): void {
+    this.enableRowPinning = enabled;
+  }
+
+  setRowPinnable(pinnable: boolean | ((row: Row) => boolean) | undefined): void {
+    this.rowPinnable = pinnable ?? true;
+  }
+
+  private isRowPinnable(row: Row): boolean {
+    if (typeof this.rowPinnable === "function") {
+      return this.rowPinnable(row);
+    }
+    return this.rowPinnable;
+  }
+
+  private getRowContextMenuItems(row: Row): ContextMenuItem[] {
+    const items: ContextMenuItem[] = [];
+    const pinPosition = this.layoutManager.getRowPinPosition(row);
+
+    if (this.enableRowPinning && this.isRowPinnable(row)) {
+      if (pinPosition !== "top") {
+        items.push({ key: "pin-top", text: "固定到顶部" });
+      }
+      if (pinPosition !== "bottom") {
+        items.push({ key: "pin-bottom", text: "固定到底部" });
+      }
+      if (pinPosition) {
+        items.push({ key: "unpin", text: "取消固定" });
+      }
+    }
+
+    items.push(
+      { key: "add-above", text: "上方添加行" },
+      { key: "add-below", text: "下方添加行" },
+      { key: "delete", text: "删除行", danger: true },
+    );
+
+    return items;
   }
 
   private isRowResizable(rowIndex: number): boolean {

@@ -408,18 +408,17 @@ export class OverlayRenderer {
   }
 
   renderContextMenu(contextMenu: ContextMenuState): void {
-    const { x, y, hoveredIndex } = contextMenu;
+    const { x, y, hoveredIndex, items } = contextMenu;
     const menuWidth = 140;
     const itemHeight = 32;
-    const menuItems = [{ text: "上方添加行" }, { text: "下方添加行" }, { text: "删除行" }];
-    const menuHeight = menuItems.length * itemHeight;
+    const menuHeight = items.length * itemHeight;
 
     this.ctx.save();
     this.drawMenuPanel(x, y, menuWidth, menuHeight);
     this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
 
-    for (let i = 0; i < menuItems.length; i++) {
-      const item = menuItems[i]!;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
       const itemY = y + i * itemHeight;
 
       if (i === hoveredIndex) {
@@ -427,7 +426,7 @@ export class OverlayRenderer {
         this.ctx.fillRect(x, itemY, menuWidth, itemHeight);
       }
 
-      this.ctx.fillStyle = i === 2 ? "#f56c6c" : this.theme.colors.dropdown.text;
+      this.ctx.fillStyle = item.danger ? "#f56c6c" : this.theme.colors.dropdown.text;
       this.ctx.textBaseline = "middle";
       this.ctx.fillText(item.text, x + 12, itemY + itemHeight / 2);
     }

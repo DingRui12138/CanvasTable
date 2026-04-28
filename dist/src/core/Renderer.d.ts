@@ -43,6 +43,7 @@ export declare class Renderer {
     private currentFrameStats;
     private lastFrameStats;
     private currentVisibleRange;
+    private currentRows;
     private currentScrollTop;
     private rowHeight;
     private currentHoveredCell;
@@ -111,6 +112,9 @@ export declare class Renderer {
         progressDragState?: import("../types").InteractionState["progressDragState"];
         rowResizeState?: import("../types").InteractionState["rowResizeState"];
     }): void;
+    private shouldRenderRowBands;
+    private renderRowBandCells;
+    private renderRowBands;
     private renderCenterHeader;
     private renderHeaderCellMultiLevel;
     private renderCenterRows;

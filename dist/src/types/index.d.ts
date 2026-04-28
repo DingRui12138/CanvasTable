@@ -730,6 +730,7 @@ export interface TableEventHandlers {
     onRowClick?: (row: Row, rowIndex: number, event: MouseEvent) => void;
     onRowDblClick?: (row: Row, rowIndex: number, event: MouseEvent) => void;
     onRowHeightChange?: (row: Row, newHeight: number, rowIndex: number) => void;
+    onRowPinChange?: (row: Row, position: RowPinPosition | null) => void;
     onHeaderClick?: (column: Column, columnIndex: number, event: MouseEvent) => void;
     onScroll?: (scrollLeft: number, scrollTop: number) => void;
     onColumnResize?: (column: Column, width: number) => void;
@@ -802,6 +803,10 @@ export interface CanvasTableBaseProps {
     enableRowHeightResize?: boolean;
     /** 是否允许行高拖拽调整。可全局关闭，也可按行动态控制 */
     rowResizable?: boolean | ((row: Row, rowIndex: number) => boolean);
+    /** 是否启用行固定到顶部/底部 */
+    enableRowPinning?: boolean;
+    /** 是否允许行固定。可全局关闭，也可按行动态控制 */
+    rowPinnable?: boolean | ((row: Row) => boolean);
     /** 多选列分隔符，默认 ", " */
     multipleSelectSeparator?: string;
 }
@@ -1001,11 +1006,36 @@ export interface ImageEditorState {
     /** 是否为单图模式 */
     isSingleImage: boolean;
 }
+export type RowPinPosition = "top" | "bottom";
+export type RowBandType = "summary-top" | "pinned-top" | "body" | "pinned-bottom" | "summary-bottom";
+export interface RowBand {
+    type: RowBandType;
+    rows: Row[];
+    height: number;
+    y: number;
+}
+export interface RowBands {
+    pinnedTop: RowBand;
+    body: RowBand;
+    pinnedBottom: RowBand;
+}
+export interface RowHitResult {
+    row: Row;
+    band: RowBandType;
+    columnIndex: number;
+}
+export interface ContextMenuItem {
+    key: string;
+    text: string;
+    danger?: boolean;
+    disabled?: boolean;
+}
 export interface ContextMenuState {
     x: number;
     y: number;
-    rowIndex: number;
+    row: Row;
     hoveredIndex: number;
+    items: ContextMenuItem[];
 }
 export interface HeaderContextMenuState {
     x: number;
@@ -1055,6 +1085,7 @@ export interface CanvasTableAPI {
     };
     getSelectedCells(): CellPosition[];
     getSelectedRows(): number[];
+    getPinnedRows(position: RowPinPosition): Row[];
     setSelectedCells(cells: CellPosition[]): void;
     setSelectedRows(rows: number[]): void;
     clearSelection(): void;

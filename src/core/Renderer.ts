@@ -29,6 +29,7 @@ import {
   ImageConfig,
   ColorPickerDropdownState,
   ImageLoadConfig,
+  RowBand,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
@@ -140,6 +141,7 @@ export class Renderer {
 
   // 懒加载相关
   private currentVisibleRange: VisibleRange | null = null;
+  private currentRows: Row[] = [];
   private currentScrollTop: number = 0;
   private rowHeight: number = 0;
   private currentHoveredCell: CellPosition | null = null;
@@ -343,6 +345,7 @@ export class Renderer {
 
     // 保存可视区域信息用于图片懒加载
     this.currentVisibleRange = visibleRange;
+    this.currentRows = rows;
     this.currentScrollTop = scrollTop;
     this.rowHeight = this.theme.row.height;
 
@@ -382,25 +385,41 @@ export class Renderer {
       }
     }
 
+    const renderBands = this.shouldRenderRowBands();
+
     this.ctx.save();
     this.ctx.beginPath();
     this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
     this.ctx.clip();
 
-    this.renderCenterRows(
-      leafColumns,
-      rows,
-      startRow,
-      endRow,
-      centerColumnIndices,
-      scrollLeft,
-      scrollTop,
-      {
-        ...options,
-        dragColumnIndex: options.columnReorderState?.dragColumnIndex,
-        columnReorderState: options.columnReorderState,
-      },
-    );
+    if (renderBands) {
+      this.renderRowBands(
+        rows,
+        centerColumnIndices,
+        [],
+        [],
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        fixedInfo,
+        options,
+      );
+    } else {
+      this.renderCenterRows(
+        leafColumns,
+        rows,
+        startRow,
+        endRow,
+        centerColumnIndices,
+        scrollLeft,
+        scrollTop,
+        {
+          ...options,
+          dragColumnIndex: options.columnReorderState?.dragColumnIndex,
+          columnReorderState: options.columnReorderState,
+        },
+      );
+    }
 
     this.ctx.restore();
 
@@ -420,17 +439,40 @@ export class Renderer {
       );
     }
 
-    if (hasLeftFixed) {
-      this.renderFixedColumnsContent(leafColumns, rows, leftFixedIndices, 0, scrollTop, options);
+    if (hasLeftFixed && !renderBands) {
+      this.renderFixedColumnsContent(
+        leafColumns,
+        rows,
+        leftFixedIndices,
+        0,
+        scrollTop,
+        visibleRange,
+        options,
+      );
     }
 
-    if (hasRightFixed) {
+    if (hasRightFixed && !renderBands) {
       this.renderFixedColumnsContent(
         leafColumns,
         rows,
         rightFixedIndices,
         viewportWidth - fixedInfo.rightFixed.width,
         scrollTop,
+        visibleRange,
+        options,
+      );
+    }
+
+    if (renderBands && (hasLeftFixed || hasRightFixed)) {
+      this.renderRowBands(
+        rows,
+        [],
+        leftFixedIndices,
+        rightFixedIndices,
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        fixedInfo,
         options,
       );
     }
@@ -488,6 +530,225 @@ export class Renderer {
     this.commitVisibleImages();
 
     this.dirtyRegions = [];
+  }
+
+  private shouldRenderRowBands(): boolean {
+    return this.layoutManager.hasPinnedRows();
+  }
+
+  private renderRowBandCells(
+    band: RowBand,
+    allRows: Row[],
+    columnIndices: number[],
+    scrollLeft: number,
+    scrollTop: number,
+    visibleRange: VisibleRange,
+    options: {
+      hoveredCell: CellPosition | null;
+      selectedCells: CellRange[];
+      editingCell: CellPosition | null;
+      stripeRows: boolean;
+    },
+    startX?: number,
+  ): void {
+    let y = band.y;
+    if (band.type === "body") {
+      y -= scrollTop;
+    }
+
+    const startIndex = band.type === "body" ? visibleRange.startRow : 0;
+    const endIndex =
+      band.type === "body"
+        ? Math.min(visibleRange.endRow, band.rows.length - 1)
+        : band.rows.length - 1;
+
+    for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
+      const row = band.rows[bandRowIndex];
+      if (!row) {
+        continue;
+      }
+
+      const rowIndex = this.layoutManager.getRowIndexByRef(row);
+      if (rowIndex < 0) {
+        continue;
+      }
+
+      const rowHeight = this.layoutManager.getRowHeightByIndex(rowIndex);
+      if (band.type === "body") {
+        y = band.y - scrollTop + (this.layoutManager.getRowBandOffsetByRef(row) ?? 0);
+      }
+      const viewportHeight = this.canvas.height / this.dpr;
+      if (y + rowHeight < 0 || y > viewportHeight) {
+        y += rowHeight;
+        continue;
+      }
+
+      let backgroundColor = this.theme.colors.rowBackground;
+      if (options.stripeRows && rowIndex % 2 === 1) {
+        backgroundColor = this.theme.colors.rowAltBackground;
+      }
+      if (row.selected) {
+        backgroundColor = this.theme.colors.rowSelectedBackground;
+      }
+      if (options.hoveredCell?.rowIndex === rowIndex) {
+        backgroundColor = this.theme.colors.rowHoverBackground;
+      }
+
+      for (const colIndex of columnIndices) {
+        const column = this.layoutManager.getLeafColumn(colIndex);
+        if (!column) continue;
+
+        const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+        const x =
+          startX !== undefined
+            ? startX +
+              this.layoutManager.getColumnOffset(colIndex) -
+              this.layoutManager.getColumnOffset(columnIndices[0]!)
+            : this.layoutManager.getColumnOffset(colIndex) - scrollLeft;
+
+        this.ctx.fillStyle = backgroundColor;
+        this.ctx.fillRect(x, y, width, rowHeight);
+        this.renderCellWithPosition(
+          column,
+          row,
+          rowIndex,
+          colIndex,
+          row.data[getColumnField(column)],
+          x,
+          y,
+          width,
+          rowHeight,
+          options,
+        );
+      }
+
+      y += rowHeight;
+    }
+  }
+
+  private renderRowBands(
+    rows: Row[],
+    centerColumnIndices: number[],
+    leftFixedIndices: number[],
+    rightFixedIndices: number[],
+    scrollLeft: number,
+    scrollTop: number,
+    visibleRange: VisibleRange,
+    fixedInfo: ReturnType<LayoutManager["getFixedColumnsInfo"]>,
+    options: {
+      hoveredCell: CellPosition | null;
+      selectedCells: CellRange[];
+      editingCell: CellPosition | null;
+      stripeRows: boolean;
+    },
+  ): void {
+    const rowBands = this.layoutManager.getRowBandsForRender();
+    const pinnedBands = [rowBands.pinnedTop, rowBands.pinnedBottom];
+
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.rect(
+      0,
+      rowBands.body.y,
+      this.canvas.width / this.dpr,
+      this.layoutManager.getBodyViewportHeight(),
+    );
+    this.ctx.clip();
+    this.renderRowBandCells(
+      rowBands.body,
+      rows,
+      centerColumnIndices,
+      scrollLeft,
+      scrollTop,
+      visibleRange,
+      options,
+    );
+    this.ctx.restore();
+
+    for (const band of pinnedBands) {
+      this.renderRowBandCells(
+        band,
+        rows,
+        centerColumnIndices,
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        options,
+      );
+    }
+
+    if (leftFixedIndices.length > 0) {
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(
+        0,
+        rowBands.body.y,
+        this.canvas.width / this.dpr,
+        this.layoutManager.getBodyViewportHeight(),
+      );
+      this.ctx.clip();
+      this.renderRowBandCells(
+        rowBands.body,
+        rows,
+        leftFixedIndices,
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        options,
+        0,
+      );
+      this.ctx.restore();
+
+      for (const band of pinnedBands) {
+        this.renderRowBandCells(
+          band,
+          rows,
+          leftFixedIndices,
+          scrollLeft,
+          scrollTop,
+          visibleRange,
+          options,
+          0,
+        );
+      }
+    }
+
+    if (rightFixedIndices.length > 0) {
+      const viewportWidth = this.canvas.width / this.dpr;
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(
+        0,
+        rowBands.body.y,
+        this.canvas.width / this.dpr,
+        this.layoutManager.getBodyViewportHeight(),
+      );
+      this.ctx.clip();
+      this.renderRowBandCells(
+        rowBands.body,
+        rows,
+        rightFixedIndices,
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        options,
+        viewportWidth - fixedInfo.rightFixed.width,
+      );
+      this.ctx.restore();
+
+      for (const band of pinnedBands) {
+        this.renderRowBandCells(
+          band,
+          rows,
+          rightFixedIndices,
+          scrollLeft,
+          scrollTop,
+          visibleRange,
+          options,
+          viewportWidth - fixedInfo.rightFixed.width,
+        );
+      }
+    }
   }
 
   private renderCenterHeader(
@@ -955,6 +1216,7 @@ export class Renderer {
     fixedColumnIndices: number[],
     startX: number,
     scrollTop: number,
+    visibleRange: VisibleRange,
     options: {
       hoveredCell: CellPosition | null;
       selectedCells: CellRange[];
@@ -982,7 +1244,10 @@ export class Renderer {
     const renderedMerges = new Set<string>();
     const activeRowIndex = this.currentRowResizeState?.rowIndex;
 
-    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const startRow = Math.max(0, visibleRange.startRow);
+    const endRow = Math.min(rows.length - 1, visibleRange.endRow);
+
+    for (let rowIndex = startRow; rowIndex <= endRow; rowIndex++) {
       if (rowIndex === activeRowIndex) {
         continue;
       }
@@ -2409,6 +2674,7 @@ export class Renderer {
         // 收集可见图片
         this.collectVisibleImage(config.src);
       } else if (!this.imageLoadQueue.isLoading(config.src)) {
+        this.collectVisibleImage(config.src);
         // 图片未加载，开始加载（传递渲染尺寸用于预缩放）
         this.loadImage(config.src, Math.max(imgWidth, imgHeight));
         // 显示占位图
@@ -2587,6 +2853,7 @@ export class Renderer {
         // 收集可见图片
         this.collectVisibleImage(src);
       } else if (!this.imageLoadQueue.isLoading(src)) {
+        this.collectVisibleImage(src);
         this.loadImage(src, Math.max(imgWidth, imgHeight));
         this.renderImagePlaceholder(
           imgX,
@@ -2940,6 +3207,20 @@ export class Renderer {
     // 扩展后的范围
     const lazyStartRow = Math.max(0, startRow - extraRows);
     const lazyEndRow = endRow + extraRows;
+
+    const row = this.currentRows[rowIndex];
+    if (!row) {
+      return rowIndex >= lazyStartRow && rowIndex <= lazyEndRow;
+    }
+
+    if (this.layoutManager.isRowInPinnedBand(row)) {
+      return true;
+    }
+
+    const bodyRowIndex = this.layoutManager.getBodyRowIndexByRef(row);
+    if (bodyRowIndex >= 0) {
+      return bodyRowIndex >= lazyStartRow && bodyRowIndex <= lazyEndRow;
+    }
 
     return rowIndex >= lazyStartRow && rowIndex <= lazyEndRow;
   }
@@ -3338,7 +3619,8 @@ export class Renderer {
       if (!startCol || !endCol) continue;
       if (startCol.fixed || endCol.fixed) continue;
 
-      const drawY = this.layoutManager.getRowOffset(effectiveMinRow) - scrollTop;
+      const drawY = this.layoutManager.getRowViewportY(effectiveMinRow, scrollTop);
+      if (drawY === null) continue;
       const selectionHeight =
         this.layoutManager.getRowOffset(effectiveMaxRow) +
         this.layoutManager.getRowHeightByIndex(effectiveMaxRow) -
@@ -3382,7 +3664,8 @@ export class Renderer {
         effectiveMaxCol = merge.columnIndex + merge.colspan - 1;
       }
 
-      const drawY = this.layoutManager.getRowOffset(effectiveMinRow) - scrollTop;
+      const drawY = this.layoutManager.getRowViewportY(effectiveMinRow, scrollTop);
+      if (drawY === null) continue;
       const selectionHeight =
         this.layoutManager.getRowOffset(effectiveMaxRow) +
         this.layoutManager.getRowHeightByIndex(effectiveMaxRow) -
@@ -3739,10 +4022,15 @@ export class Renderer {
       return;
     }
 
-    const guideY =
-      this.layoutManager.getRowOffset(this.currentRowResizeState.rowIndex) +
-      this.currentRowResizeState.displayHeight -
-      this.currentScrollTop;
+    const rowY = this.layoutManager.getRowViewportY(
+      this.currentRowResizeState.rowIndex,
+      this.currentScrollTop,
+    );
+    if (rowY === null) {
+      return;
+    }
+
+    const guideY = rowY + this.currentRowResizeState.displayHeight;
 
     this.ctx.save();
     this.ctx.strokeStyle = this.theme.row.resizeGuideColor;

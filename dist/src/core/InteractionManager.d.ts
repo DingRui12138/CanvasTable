@@ -38,9 +38,10 @@ interface InteractionEvents {
     columnHide: [string];
     columnShow: [string];
     switchAnimationUpdate: [];
-    rowAddAbove: [number];
-    rowAddBelow: [number];
-    rowDelete: [number];
+    rowAddAbove: [Row];
+    rowAddBelow: [Row];
+    rowDelete: [Row];
+    rowPinChange: [Row, "top" | "bottom" | null];
     columnReorder: [number, number];
     columnReorderDrag: [];
     rowResizeDrag: [];
@@ -102,6 +103,8 @@ export declare class InteractionManager {
     private hasMoreData;
     private rowHeightResizeEnabled;
     private rowResizable;
+    private enableRowPinning;
+    private rowPinnable;
     constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig);
     /**
      * Initialize handler instances
@@ -267,6 +270,10 @@ export declare class InteractionManager {
     updateConfig(_selection: SelectionConfig, editing: EditingConfig): void;
     setRowHeightResizeEnabled(enabled: boolean): void;
     setRowResizable(resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined): void;
+    setRowPinningEnabled(enabled: boolean): void;
+    setRowPinnable(pinnable: boolean | ((row: Row) => boolean) | undefined): void;
+    private isRowPinnable;
+    private getRowContextMenuItems;
     private isRowResizable;
     private startSwitchAnimationLoop;
     getSwitchAnimations: () => Map<string, SwitchAnimationState>;

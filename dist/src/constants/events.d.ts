@@ -18,6 +18,7 @@ export declare const TableEvents: {
     readonly ROW_CLICK: "rowClick";
     readonly ROW_DBL_CLICK: "rowDblClick";
     readonly ROW_HEIGHT_CHANGE: "rowHeightChange";
+    readonly ROW_PIN_CHANGE: "rowPinChange";
     readonly ROW_ADD_ABOVE: "rowAddAbove";
     readonly ROW_ADD_BELOW: "rowAddBelow";
     readonly ROW_DELETE: "rowDelete";

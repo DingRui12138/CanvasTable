@@ -1,4 +1,4 @@
-import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig } from "./types";
+import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig, RowPinPosition } from "./types";
 interface TableEvents {
     load: [{
         rows: Row[];
@@ -37,9 +37,10 @@ interface TableEvents {
     contextMenuHover: [];
     switchAnimationUpdate: [];
     buttonHoverAnimationUpdate: [];
-    rowAddAbove: [number];
-    rowAddBelow: [number];
-    rowDelete: [number];
+    rowAddAbove: [Row];
+    rowAddBelow: [Row];
+    rowDelete: [Row];
+    rowPinChange: [Row, RowPinPosition | null];
     expand: [Row, number, boolean];
     checkboxChange: [CellInfo, boolean];
     radioChange: [CellInfo, unknown];
@@ -58,6 +59,7 @@ export declare class CanvasTable implements CanvasTableAPI {
     private props;
     private dataManager;
     private layoutManager;
+    private rowPinManager;
     private renderer;
     private interactionManager;
     private editorManager;
@@ -97,6 +99,7 @@ export declare class CanvasTable implements CanvasTableAPI {
     };
     getSelectedCells(): CellPosition[];
     getSelectedRows(): number[];
+    getPinnedRows(position: RowPinPosition): Row[];
     setSelectedCells(cells: CellPosition[]): void;
     setSelectedRows(rows: number[]): void;
     clearSelection(): void;

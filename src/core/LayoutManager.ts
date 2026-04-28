@@ -9,8 +9,11 @@ import {
   CellMerge,
   HitTestResult,
   MouseRegion,
+  RowBands,
+  RowHitResult,
 } from "../types";
 import { binarySearch, clamp } from "../utils";
+import { RowPinManager } from "./RowPinManager";
 
 const DEFAULT_ROW_BUFFER_SIZE = 5;
 const DEFAULT_COLUMN_BUFFER_SIZE = 2;
@@ -27,6 +30,18 @@ export class LayoutManager {
   private columnWidths: Map<string, number> = new Map();
   private rowHeights: number[] = [];
   private rowOffsets: number[] = [];
+  private rowBands: RowBands;
+  private rowPinManager?: RowPinManager;
+  private rowHeightByRow: WeakMap<Row, number> = new WeakMap();
+  private rowIndexByRow: WeakMap<Row, number> = new WeakMap();
+  private bodyRowIndexByRow: WeakMap<Row, number> = new WeakMap();
+  private rowBandOffsetByRow: WeakMap<Row, number> = new WeakMap();
+  private pinnedRowByRow: WeakMap<Row, boolean> = new WeakMap();
+  private bodyRowHeights: number[] = [];
+  private bodyRowOffsets: number[] = [];
+  private pinnedTopHeight: number = 0;
+  private pinnedBottomHeight: number = 0;
+  private bodyViewportHeight: number = 0;
   private columnOffsets: number[] = [];
   private columns: Column[] = [];
   private headerDepth: number = 1;
@@ -63,7 +78,16 @@ export class LayoutManager {
     this.theme = theme;
 
     this.layoutInfo = this.createEmptyLayoutInfo();
+    this.rowBands = this.createEmptyRowBands();
     this.visibleRange = { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
+  }
+
+  private createEmptyRowBands(): RowBands {
+    return {
+      pinnedTop: { type: "pinned-top", rows: [], height: 0, y: this.theme.row.headerHeight },
+      body: { type: "body", rows: [], height: 0, y: this.theme.row.headerHeight },
+      pinnedBottom: { type: "pinned-bottom", rows: [], height: 0, y: this.viewportHeight },
+    };
   }
 
   setShowRowNumbers(show: boolean): void {
@@ -135,11 +159,89 @@ export class LayoutManager {
     this.rowHeightsDirty = true;
   }
 
+  setRowPinManager(rowPinManager?: RowPinManager): void {
+    this.rowPinManager = rowPinManager;
+    this.rowHeightsDirty = true;
+  }
+
+  getRowBands(): RowBands {
+    return {
+      pinnedTop: { ...this.rowBands.pinnedTop, rows: [...this.rowBands.pinnedTop.rows] },
+      body: { ...this.rowBands.body, rows: [...this.rowBands.body.rows] },
+      pinnedBottom: {
+        ...this.rowBands.pinnedBottom,
+        rows: [...this.rowBands.pinnedBottom.rows],
+      },
+    };
+  }
+
+  getRowBandsForRender(): RowBands {
+    return this.rowBands;
+  }
+
+  hasPinnedRows(): boolean {
+    return this.rowBands.pinnedTop.rows.length > 0 || this.rowBands.pinnedBottom.rows.length > 0;
+  }
+
+  getBodyViewportHeight(): number {
+    return this.bodyViewportHeight;
+  }
+
+  getBodyContentHeight(): number {
+    return this.rowBands.body.height;
+  }
+
+  getRowPinPosition(row: Row): "top" | "bottom" | null {
+    return this.rowPinManager?.getPosition(row) ?? null;
+  }
+
   setRowHeight(row: Row, height: number): void {
     const clampedHeight = clamp(height, this.theme.row.minHeight, this.theme.row.maxHeight);
     this.rowHeightOverrides.set(row, clampedHeight);
     this.hasRowHeightOverrides = true;
     this.rowHeightsDirty = true;
+  }
+
+  updateRowHeight(row: Row, height: number): boolean {
+    const clampedHeight = clamp(height, this.theme.row.minHeight, this.theme.row.maxHeight);
+    this.rowHeightOverrides.set(row, clampedHeight);
+    this.hasRowHeightOverrides = true;
+
+    const rowIndex = this.rowIndexByRow.get(row);
+    if (rowIndex === undefined || rowIndex < 0 || rowIndex >= this.rowHeights.length) {
+      this.rowHeightsDirty = true;
+      return false;
+    }
+
+    const previousHeight = this.rowHeights[rowIndex] ?? this.theme.row.height;
+    const delta = clampedHeight - previousHeight;
+    if (delta === 0) {
+      return true;
+    }
+
+    this.rowHeights[rowIndex] = clampedHeight;
+    this.rowHeightByRow.set(row, clampedHeight);
+
+    for (let i = rowIndex + 1; i < this.rowOffsets.length; i++) {
+      this.rowOffsets[i] = (this.rowOffsets[i] ?? 0) + delta;
+    }
+    this.layoutInfo.rowOffsets = this.rowOffsets;
+
+    const bodyRowIndex = this.bodyRowIndexByRow.get(row);
+    if (bodyRowIndex !== undefined && bodyRowIndex >= 0) {
+      this.bodyRowHeights[bodyRowIndex] = clampedHeight;
+      for (let i = bodyRowIndex + 1; i < this.bodyRowOffsets.length; i++) {
+        this.bodyRowOffsets[i] = (this.bodyRowOffsets[i] ?? 0) + delta;
+      }
+      this.rowBands.body.height += delta;
+    } else {
+      this.updatePinnedRowHeight(row, delta);
+    }
+
+    this.updateRowBandGeometry();
+    this.layoutInfo.totalHeight = this.calculateTotalHeight(this.rowHeights.length);
+    this.updateVisibleRange();
+    return true;
   }
 
   clearRowHeightOverrides(): void {
@@ -564,12 +666,15 @@ export class LayoutManager {
 
     // 如果数据未变化且高度未标记为脏，跳过计算
     if (!rowsChanged && !this.rowHeightsDirty && this.rowHeights.length === rowCount) {
+      this.calculateRowBands(rows);
       return;
     }
 
     // 更新缓存
     this.cachedRows = [...rows];
     this.rowHeightsDirty = false;
+    this.rowHeightByRow = new WeakMap();
+    this.rowIndexByRow = new WeakMap();
 
     // 计算每行高度：override > rowHeightFn > default
     const fn = this.rowHeightFn;
@@ -585,6 +690,10 @@ export class LayoutManager {
 
       return defaultHeight;
     });
+    rows.forEach((row, index) => {
+      this.rowHeightByRow.set(row, this.rowHeights[index] ?? defaultHeight);
+      this.rowIndexByRow.set(row, index);
+    });
 
     // 累加计算 offsets
     this.rowOffsets = Array.from({ length: rowCount });
@@ -594,6 +703,162 @@ export class LayoutManager {
     }
 
     this.layoutInfo.rowOffsets = [...this.rowOffsets];
+    this.calculateRowBands(rows);
+  }
+
+  private calculateRowBands(rows: Row[]): void {
+    this.bodyRowIndexByRow = new WeakMap();
+    this.rowBandOffsetByRow = new WeakMap();
+    this.pinnedRowByRow = new WeakMap();
+
+    const visibleRows = new Set(rows);
+    const pinnedTopRows = this.rowPinManager
+      ? this.rowPinManager.getTopRows().filter((row) => visibleRows.has(row))
+      : [];
+    const pinnedBottomRows = this.rowPinManager
+      ? this.rowPinManager.getBottomRows().filter((row) => visibleRows.has(row))
+      : [];
+    const bodyRows = this.rowPinManager
+      ? rows.filter((row) => !this.rowPinManager!.isPinned(row))
+      : rows;
+
+    this.pinnedTopHeight = this.calculateRowsHeight(pinnedTopRows);
+    this.pinnedBottomHeight = this.calculateRowsHeight(pinnedBottomRows);
+    this.bodyViewportHeight = Math.max(
+      0,
+      this.viewportHeight -
+        this.layoutInfo.headerHeight -
+        this.pinnedTopHeight -
+        this.pinnedBottomHeight,
+    );
+
+    const pinnedTopY = this.layoutInfo.headerHeight;
+    const bodyY = pinnedTopY + this.pinnedTopHeight;
+    const pinnedBottomY =
+      this.viewportHeight > 0
+        ? Math.max(bodyY, this.viewportHeight - this.pinnedBottomHeight)
+        : bodyY + this.calculateRowsHeight(bodyRows);
+
+    this.rowBands = {
+      pinnedTop: {
+        type: "pinned-top",
+        rows: pinnedTopRows,
+        height: this.pinnedTopHeight,
+        y: pinnedTopY,
+      },
+      body: {
+        type: "body",
+        rows: bodyRows,
+        height: this.calculateRowsHeight(bodyRows),
+        y: bodyY,
+      },
+      pinnedBottom: {
+        type: "pinned-bottom",
+        rows: pinnedBottomRows,
+        height: this.pinnedBottomHeight,
+        y: pinnedBottomY,
+      },
+    };
+
+    this.bodyRowHeights = bodyRows.map((row) => this.getResolvedRowHeight(row));
+    this.bodyRowOffsets = Array.from({ length: bodyRows.length });
+    if (bodyRows.length > 0) {
+      this.bodyRowOffsets[0] = 0;
+      for (let i = 1; i < bodyRows.length; i++) {
+        this.bodyRowOffsets[i] = this.bodyRowOffsets[i - 1]! + this.bodyRowHeights[i - 1]!;
+      }
+    }
+
+    let pinnedTopOffset = 0;
+    for (const row of pinnedTopRows) {
+      this.pinnedRowByRow.set(row, true);
+      this.rowBandOffsetByRow.set(row, pinnedTopOffset);
+      pinnedTopOffset += this.getResolvedRowHeight(row);
+    }
+
+    for (let i = 0; i < bodyRows.length; i++) {
+      const row = bodyRows[i]!;
+      this.bodyRowIndexByRow.set(row, i);
+      this.rowBandOffsetByRow.set(row, this.bodyRowOffsets[i] ?? 0);
+    }
+
+    let pinnedBottomOffset = 0;
+    for (const row of pinnedBottomRows) {
+      this.pinnedRowByRow.set(row, true);
+      this.rowBandOffsetByRow.set(row, pinnedBottomOffset);
+      pinnedBottomOffset += this.getResolvedRowHeight(row);
+    }
+  }
+
+  private updatePinnedRowHeight(row: Row, delta: number): void {
+    const position = this.getRowPinPosition(row);
+    if (position === "top") {
+      this.pinnedTopHeight += delta;
+      this.rowBands.pinnedTop.height = this.pinnedTopHeight;
+      this.updatePinnedBandOffsets(this.rowBands.pinnedTop.rows);
+      return;
+    }
+
+    if (position === "bottom") {
+      this.pinnedBottomHeight += delta;
+      this.rowBands.pinnedBottom.height = this.pinnedBottomHeight;
+      this.updatePinnedBandOffsets(this.rowBands.pinnedBottom.rows);
+    }
+  }
+
+  private updatePinnedBandOffsets(rows: Row[]): void {
+    let offset = 0;
+    for (const pinnedRow of rows) {
+      this.rowBandOffsetByRow.set(pinnedRow, offset);
+      offset += this.getResolvedRowHeight(pinnedRow);
+    }
+  }
+
+  private updateRowBandGeometry(): void {
+    this.bodyViewportHeight = Math.max(
+      0,
+      this.viewportHeight -
+        this.layoutInfo.headerHeight -
+        this.pinnedTopHeight -
+        this.pinnedBottomHeight,
+    );
+
+    const bodyY = this.layoutInfo.headerHeight + this.pinnedTopHeight;
+    this.rowBands.pinnedTop.y = this.layoutInfo.headerHeight;
+    this.rowBands.body.y = bodyY;
+    this.rowBands.pinnedBottom.y =
+      this.viewportHeight > 0
+        ? Math.max(bodyY, this.viewportHeight - this.pinnedBottomHeight)
+        : bodyY + this.rowBands.body.height;
+  }
+
+  private calculateRowsHeight(rows: Row[]): number {
+    return rows.reduce((total, row) => total + this.getResolvedRowHeight(row), 0);
+  }
+
+  private getResolvedRowHeight(row: Row): number {
+    return this.rowHeightByRow.get(row) ?? this.theme.row.height;
+  }
+
+  getRowIndexByRef(row: Row): number {
+    return this.rowIndexByRow.get(row) ?? -1;
+  }
+
+  getBodyRowIndexByRef(row: Row): number {
+    return this.bodyRowIndexByRow.get(row) ?? -1;
+  }
+
+  getRowBandOffsetByRef(row: Row): number | null {
+    const bodyRowIndex = this.bodyRowIndexByRow.get(row);
+    if (bodyRowIndex !== undefined && bodyRowIndex >= 0) {
+      return this.bodyRowOffsets[bodyRowIndex] ?? null;
+    }
+
+    return this.rowBandOffsetByRow.get(row) ?? null;
+  }
+
+  isRowInPinnedBand(row: Row): boolean {
+    return this.pinnedRowByRow.has(row);
   }
 
   getColumnWidth(column: Column): number {
@@ -705,13 +970,13 @@ export class LayoutManager {
     return total;
   }
 
-  private calculateTotalHeight(rowCount: number): number {
-    // 动态行高模式：累加所有行高度
-    let total = this.layoutInfo.headerHeight;
-    for (let i = 0; i < rowCount && i < this.rowHeights.length; i++) {
-      total += this.rowHeights[i]!;
-    }
-    return total;
+  private calculateTotalHeight(_rowCount: number): number {
+    return (
+      this.layoutInfo.headerHeight +
+      this.pinnedTopHeight +
+      this.rowBands.body.height +
+      this.pinnedBottomHeight
+    );
   }
 
   private updateVisibleRange(): void {
@@ -729,11 +994,16 @@ export class LayoutManager {
     const rowBufferSize = this.config.rowBufferSize ?? DEFAULT_ROW_BUFFER_SIZE;
     const columnBufferSize = this.config.columnBufferSize ?? DEFAULT_COLUMN_BUFFER_SIZE;
 
-    const startRow = this.findRowIndexAtOffset(this.scrollTop - headerHeight);
-    const endRow = this.findRowIndexAtOffset(this.scrollTop + this.viewportHeight - headerHeight);
+    const bodyViewportHeight =
+      this.bodyViewportHeight > 0
+        ? this.bodyViewportHeight
+        : Math.max(0, this.viewportHeight - headerHeight);
+
+    const startRow = this.findBodyRowIndexAtOffset(this.scrollTop);
+    const endRow = this.findBodyRowIndexAtOffset(this.scrollTop + bodyViewportHeight);
 
     this.visibleRange.startRow = Math.max(0, startRow - rowBufferSize);
-    this.visibleRange.endRow = Math.min(this.rowHeights.length - 1, endRow + rowBufferSize);
+    this.visibleRange.endRow = Math.min(this.bodyRowHeights.length - 1, endRow + rowBufferSize);
 
     const startColumn = this.findColumnIndexAtOffset(this.scrollLeft);
     const endColumn = this.findColumnIndexAtOffset(this.scrollLeft + this.viewportWidth);
@@ -755,6 +1025,76 @@ export class LayoutManager {
     }
 
     return binarySearch(this.rowOffsets, offset, (item) => item);
+  }
+
+  private findBodyRowIndexAtOffset(offset: number): number {
+    if (offset <= 0) return 0;
+    if (this.bodyRowOffsets.length === 0) return 0;
+
+    const lastIndex = this.bodyRowOffsets.length - 1;
+    const lastOffset = this.bodyRowOffsets[lastIndex] ?? 0;
+    const lastHeight = this.bodyRowHeights[lastIndex] ?? 0;
+    if (offset >= lastOffset + lastHeight) {
+      return lastIndex;
+    }
+
+    let left = 0;
+    let right = lastIndex;
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const rowOffset = this.bodyRowOffsets[mid]!;
+      const rowHeight = this.bodyRowHeights[mid]!;
+
+      if (offset >= rowOffset && offset < rowOffset + rowHeight) {
+        return mid;
+      }
+
+      if (offset < rowOffset) {
+        right = mid - 1;
+      } else {
+        left = mid + 1;
+      }
+    }
+
+    return Math.max(0, Math.min(lastIndex, left));
+  }
+
+  private findRowInBandAtOffset(rows: Row[], offset: number): Row | null {
+    if (offset < 0) {
+      return null;
+    }
+
+    let currentOffset = 0;
+    for (const row of rows) {
+      const height = this.getResolvedRowHeight(row);
+      if (offset >= currentOffset && offset < currentOffset + height) {
+        return row;
+      }
+      currentOffset += height;
+    }
+
+    return null;
+  }
+
+  getRowViewportY(rowIndex: number, scrollTop: number = this.scrollTop): number | null {
+    const row = this.cachedRows[rowIndex];
+    if (!row) {
+      return null;
+    }
+
+    if (this.rowBands.pinnedTop.rows.includes(row)) {
+      return this.rowBands.pinnedTop.y + (this.getRowBandOffsetByRef(row) ?? 0);
+    }
+
+    if (this.getBodyRowIndexByRef(row) >= 0) {
+      return this.rowBands.body.y + (this.getRowBandOffsetByRef(row) ?? 0) - scrollTop;
+    }
+
+    if (this.rowBands.pinnedBottom.rows.includes(row)) {
+      return this.rowBands.pinnedBottom.y + (this.getRowBandOffsetByRef(row) ?? 0);
+    }
+
+    return null;
   }
 
   private findColumnIndexAtOffset(offset: number): number {
@@ -1075,6 +1415,81 @@ export class LayoutManager {
     return { rowIndex, columnIndex };
   }
 
+  getRowHitAtViewportPosition(
+    viewportX: number,
+    viewportY: number,
+    scrollTop: number,
+  ): RowHitResult | null {
+    const columnIndex = (() => {
+      const regionDetail = this.getMouseRegion(viewportX);
+      if (regionDetail === "left-fixed") {
+        return this.findColumnIndexInLeftFixed(viewportX);
+      }
+      if (regionDetail === "right-fixed") {
+        return this.findColumnIndexInRightFixed(viewportX);
+      }
+      return this.findColumnIndexInScrollable(viewportX + this.scrollLeft);
+    })();
+
+    if (columnIndex < 0 || columnIndex >= this.layoutInfo.columnWidths.length) {
+      return null;
+    }
+
+    if (viewportY < this.layoutInfo.headerHeight) {
+      return null;
+    }
+
+    if (viewportY < this.layoutInfo.headerHeight + this.pinnedTopHeight) {
+      const row = this.findRowInBandAtOffset(
+        this.rowBands.pinnedTop.rows,
+        viewportY - this.rowBands.pinnedTop.y,
+      );
+      return row ? { row, band: "pinned-top", columnIndex } : null;
+    }
+
+    if (this.pinnedBottomHeight > 0 && viewportY >= this.viewportHeight - this.pinnedBottomHeight) {
+      const row = this.findRowInBandAtOffset(
+        this.rowBands.pinnedBottom.rows,
+        viewportY - this.rowBands.pinnedBottom.y,
+      );
+      return row ? { row, band: "pinned-bottom", columnIndex } : null;
+    }
+
+    const bodyOffset = scrollTop + (viewportY - this.rowBands.body.y);
+    const bodyRowIndex = this.findBodyRowIndexAtOffset(bodyOffset);
+    const row = this.rowBands.body.rows[bodyRowIndex];
+    return row ? { row, band: "body", columnIndex } : null;
+  }
+
+  getCellAtViewportPosition(
+    viewportX: number,
+    viewportY: number,
+    scrollTop: number = this.scrollTop,
+  ): { rowIndex: number; columnIndex: number } | null {
+    if (viewportY < this.layoutInfo.headerHeight) {
+      const columnIndex = this.findColumnIndexAtPosition(viewportX + this.scrollLeft);
+      if (columnIndex < 0) return null;
+      return { rowIndex: -1, columnIndex };
+    }
+
+    const hit = this.getRowHitAtViewportPosition(viewportX, viewportY, scrollTop);
+    if (!hit) {
+      return null;
+    }
+
+    const rowIndex = this.getRowIndexByRef(hit.row);
+    if (rowIndex < 0) {
+      return null;
+    }
+
+    const merge = this.getCellMerge(rowIndex, hit.columnIndex);
+    if (merge) {
+      return { rowIndex: merge.rowIndex, columnIndex: merge.columnIndex };
+    }
+
+    return { rowIndex, columnIndex: hit.columnIndex };
+  }
+
   private findRowIndexAtPosition(y: number): number {
     // 二分查找优化（动态行高模式下更高效）
     let left = 0;
@@ -1182,7 +1597,7 @@ export class LayoutManager {
   }
 
   getMaxScrollTop(): number {
-    return Math.max(0, this.layoutInfo.totalHeight - this.viewportHeight);
+    return Math.max(0, this.rowBands.body.height - this.bodyViewportHeight);
   }
 
   getViewportWidth(): number {
@@ -1745,16 +2160,7 @@ export class LayoutManager {
    */
   private hitTestCell(viewportX: number, viewportY: number): HitTestResult {
     const regionDetail = this.getMouseRegion(viewportX);
-    const y = viewportY + this.scrollTop;
-    const rowResizeIndex = this.hitTestRowResizeHandle(y);
-
-    // 计算行索引
-    const rowIndex = this.findRowIndexAtPosition(y);
-    if (rowIndex < 0 || rowIndex >= this.rowHeights.length) {
-      if (rowResizeIndex < 0) {
-        return { region: "outside", viewport: { x: viewportX, y: viewportY } };
-      }
-    }
+    const rowResizeIndex = this.hitTestRowResizeHandleAtViewportPosition(viewportY);
 
     // 根据区域计算列索引
     let columnIndex: number;
@@ -1772,7 +2178,15 @@ export class LayoutManager {
       return { region: "outside", regionDetail, viewport: { x: viewportX, y: viewportY } };
     }
 
-    const resolvedRowIndex = rowResizeIndex >= 0 ? rowResizeIndex : rowIndex;
+    const cell = this.getCellAtViewportPosition(viewportX, viewportY, this.scrollTop);
+    if (!cell && rowResizeIndex < 0) {
+      return { region: "outside", regionDetail, viewport: { x: viewportX, y: viewportY } };
+    }
+
+    const resolvedRowIndex = rowResizeIndex >= 0 ? rowResizeIndex : (cell?.rowIndex ?? -1);
+    if (resolvedRowIndex < 0 || resolvedRowIndex >= this.rowHeights.length) {
+      return { region: "outside", regionDetail, viewport: { x: viewportX, y: viewportY } };
+    }
 
     // 检查合并单元格
     const merge = this.getCellMerge(resolvedRowIndex, columnIndex);
@@ -1797,13 +2211,80 @@ export class LayoutManager {
     };
   }
 
-  private hitTestRowResizeHandle(y: number): number {
+  private hitTestRowResizeHandleAtViewportPosition(viewportY: number): number {
     const tolerance = 4;
 
-    for (let rowIndex = 0; rowIndex < this.rowOffsets.length; rowIndex++) {
-      const bottom = (this.rowOffsets[rowIndex] ?? 0) + (this.rowHeights[rowIndex] ?? 0);
-      if (Math.abs(y - bottom) <= tolerance) {
-        return rowIndex;
+    const pinnedTopIndex = this.findResizeHandleInPinnedRows(
+      this.rowBands.pinnedTop.rows,
+      this.rowBands.pinnedTop.y,
+      viewportY,
+      tolerance,
+    );
+    if (pinnedTopIndex >= 0) {
+      return pinnedTopIndex;
+    }
+
+    const bodyIndex = this.findBodyResizeHandleAtViewportY(viewportY, tolerance);
+    if (bodyIndex >= 0) {
+      return bodyIndex;
+    }
+
+    const pinnedBottomIndex = this.findResizeHandleInPinnedRows(
+      this.rowBands.pinnedBottom.rows,
+      this.rowBands.pinnedBottom.y,
+      viewportY,
+      tolerance,
+    );
+    if (pinnedBottomIndex >= 0) {
+      return pinnedBottomIndex;
+    }
+
+    return -1;
+  }
+
+  private findBodyResizeHandleAtViewportY(viewportY: number, tolerance: number): number {
+    if (this.rowBands.body.rows.length === 0) {
+      return -1;
+    }
+
+    const bodyTop = this.rowBands.body.y;
+    const bodyBottom = bodyTop + this.bodyViewportHeight;
+    if (viewportY < bodyTop - tolerance || viewportY > bodyBottom + tolerance) {
+      return -1;
+    }
+
+    const bodyOffset = this.scrollTop + (viewportY - bodyTop);
+    const candidateBodyIndex = this.findBodyRowIndexAtOffset(Math.max(0, bodyOffset - tolerance));
+    const candidateIndexes = [candidateBodyIndex, candidateBodyIndex + 1];
+
+    for (const bodyIndex of candidateIndexes) {
+      const row = this.rowBands.body.rows[bodyIndex];
+      if (!row) continue;
+
+      const bottom =
+        bodyTop +
+        (this.bodyRowOffsets[bodyIndex] ?? 0) +
+        this.getResolvedRowHeight(row) -
+        this.scrollTop;
+      if (Math.abs(viewportY - bottom) <= tolerance) {
+        return this.getRowIndexByRef(row);
+      }
+    }
+
+    return -1;
+  }
+
+  private findResizeHandleInPinnedRows(
+    rows: Row[],
+    bandY: number,
+    viewportY: number,
+    tolerance: number,
+  ): number {
+    for (const row of rows) {
+      const bottom =
+        bandY + (this.getRowBandOffsetByRef(row) ?? 0) + this.getResolvedRowHeight(row);
+      if (Math.abs(viewportY - bottom) <= tolerance) {
+        return this.getRowIndexByRef(row);
       }
     }
 
