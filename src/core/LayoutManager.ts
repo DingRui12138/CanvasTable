@@ -11,6 +11,7 @@ import {
   MouseRegion,
   RowBands,
   RowHitResult,
+  RowPinPosition,
 } from "../types";
 import { binarySearch, clamp } from "../utils";
 import { RowPinManager } from "./RowPinManager";
@@ -238,6 +239,38 @@ export class LayoutManager {
       this.updatePinnedRowHeight(row, delta);
     }
 
+    this.updateRowBandGeometry();
+    this.layoutInfo.totalHeight = this.calculateTotalHeight(this.rowHeights.length);
+    this.updateVisibleRange();
+    return true;
+  }
+
+  updateRowPin(
+    row: Row,
+    previousPosition: RowPinPosition | null,
+    nextPosition: RowPinPosition | null,
+  ): boolean {
+    const rowIndex = this.rowIndexByRow.get(row);
+    if (rowIndex === undefined || rowIndex < 0 || rowIndex >= this.rowHeights.length) {
+      return false;
+    }
+
+    if (previousPosition === nextPosition) {
+      return true;
+    }
+
+    const height = this.getResolvedRowHeight(row);
+
+    if (!this.removeRowFromPinSource(row, previousPosition, height)) {
+      return false;
+    }
+
+    if (!this.addRowToPinTarget(row, nextPosition, rowIndex, height)) {
+      return false;
+    }
+
+    this.updatePinnedBandOffsets(this.rowBands.pinnedTop.rows);
+    this.updatePinnedBandOffsets(this.rowBands.pinnedBottom.rows);
     this.updateRowBandGeometry();
     this.layoutInfo.totalHeight = this.calculateTotalHeight(this.rowHeights.length);
     this.updateVisibleRange();
@@ -806,6 +839,124 @@ export class LayoutManager {
     }
   }
 
+  private removeRowFromPinSource(
+    row: Row,
+    previousPosition: RowPinPosition | null,
+    height: number,
+  ): boolean {
+    if (previousPosition === "top") {
+      return this.removePinnedRow(this.rowBands.pinnedTop.rows, row, () => {
+        this.pinnedTopHeight -= height;
+        this.rowBands.pinnedTop.height = this.pinnedTopHeight;
+      });
+    }
+
+    if (previousPosition === "bottom") {
+      return this.removePinnedRow(this.rowBands.pinnedBottom.rows, row, () => {
+        this.pinnedBottomHeight -= height;
+        this.rowBands.pinnedBottom.height = this.pinnedBottomHeight;
+      });
+    }
+
+    return this.removeBodyRow(row, height);
+  }
+
+  private addRowToPinTarget(
+    row: Row,
+    nextPosition: RowPinPosition | null,
+    rowIndex: number,
+    height: number,
+  ): boolean {
+    if (nextPosition === "top") {
+      this.rowBands.pinnedTop.rows.push(row);
+      this.pinnedTopHeight += height;
+      this.rowBands.pinnedTop.height = this.pinnedTopHeight;
+      this.pinnedRowByRow.set(row, true);
+      return true;
+    }
+
+    if (nextPosition === "bottom") {
+      this.rowBands.pinnedBottom.rows.push(row);
+      this.pinnedBottomHeight += height;
+      this.rowBands.pinnedBottom.height = this.pinnedBottomHeight;
+      this.pinnedRowByRow.set(row, true);
+      return true;
+    }
+
+    this.insertBodyRow(row, rowIndex, height);
+    this.pinnedRowByRow.delete(row);
+    return true;
+  }
+
+  private removePinnedRow(rows: Row[], row: Row, onRemoved: () => void): boolean {
+    const index = rows.indexOf(row);
+    if (index < 0) {
+      return false;
+    }
+
+    rows.splice(index, 1);
+    this.pinnedRowByRow.delete(row);
+    this.rowBandOffsetByRow.delete(row);
+    onRemoved();
+    return true;
+  }
+
+  private removeBodyRow(row: Row, height: number): boolean {
+    const bodyIndex = this.bodyRowIndexByRow.get(row);
+    if (bodyIndex === undefined || bodyIndex < 0) {
+      return false;
+    }
+
+    this.rowBands.body.rows.splice(bodyIndex, 1);
+    this.bodyRowHeights.splice(bodyIndex, 1);
+    this.bodyRowOffsets.splice(bodyIndex, 1);
+    this.rowBands.body.height -= height;
+    this.bodyRowIndexByRow.delete(row);
+    this.rowBandOffsetByRow.delete(row);
+    this.rebuildBodyBandFrom(bodyIndex);
+    return true;
+  }
+
+  private insertBodyRow(row: Row, rowIndex: number, height: number): void {
+    const bodyIndex = this.findBodyInsertionIndex(rowIndex);
+    this.rowBands.body.rows.splice(bodyIndex, 0, row);
+    this.bodyRowHeights.splice(bodyIndex, 0, height);
+    this.bodyRowOffsets.splice(bodyIndex, 0, 0);
+    this.rowBands.body.height += height;
+    this.rebuildBodyBandFrom(bodyIndex);
+  }
+
+  private findBodyInsertionIndex(rowIndex: number): number {
+    let left = 0;
+    let right = this.rowBands.body.rows.length;
+
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      const currentRow = this.rowBands.body.rows[mid];
+      const currentIndex = currentRow ? this.getRowIndexByRef(currentRow) : -1;
+
+      if (currentIndex < rowIndex) {
+        left = mid + 1;
+      } else {
+        right = mid;
+      }
+    }
+
+    return left;
+  }
+
+  private rebuildBodyBandFrom(startIndex: number): void {
+    const start = Math.max(0, startIndex);
+    for (let i = start; i < this.rowBands.body.rows.length; i++) {
+      this.bodyRowOffsets[i] =
+        i === 0 ? 0 : (this.bodyRowOffsets[i - 1] ?? 0) + (this.bodyRowHeights[i - 1] ?? 0);
+
+      const row = this.rowBands.body.rows[i]!;
+      this.bodyRowIndexByRow.set(row, i);
+      this.rowBandOffsetByRow.set(row, this.bodyRowOffsets[i] ?? 0);
+    }
+  }
+
   private updatePinnedBandOffsets(rows: Row[]): void {
     let offset = 0;
     for (const pinnedRow of rows) {
@@ -1095,6 +1246,14 @@ export class LayoutManager {
     }
 
     return null;
+  }
+
+  getCellViewportY(rowIndex: number, scrollTop: number = this.scrollTop): number {
+    if (rowIndex === -1) {
+      return 0;
+    }
+
+    return this.getRowViewportY(rowIndex, scrollTop) ?? this.getRowOffset(rowIndex) - scrollTop;
   }
 
   private findColumnIndexAtOffset(offset: number): number {

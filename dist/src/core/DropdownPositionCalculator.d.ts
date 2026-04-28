@@ -110,6 +110,7 @@ export declare class DropdownPositionCalculator {
      * Get cell position from params
      */
     private getCellPosition;
+    private getCellViewportY;
     /**
      * Get column from params
      */

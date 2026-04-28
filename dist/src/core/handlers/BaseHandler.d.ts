@@ -92,6 +92,7 @@ export declare abstract class BaseHandler {
     protected getCellViewportX(cellPos: {
         x: number;
     }, column: Column | undefined): number;
+    protected getCellViewportY(rowIndex: number): number;
     /**
      * Update expand column key
      */

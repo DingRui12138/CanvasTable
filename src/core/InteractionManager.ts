@@ -308,6 +308,10 @@ export class InteractionManager {
     return column?.fixed ? cellPos.x : cellPos.x - this.scrollState.scrollLeft;
   }
 
+  private getCellViewportY(rowIndex: number): number {
+    return this.layoutManager.getCellViewportY(rowIndex, this.scrollState.scrollTop);
+  }
+
   /**
    * 获取规范化的选择范围
    */
@@ -1207,7 +1211,7 @@ export class InteractionManager {
 
     const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
     const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
     const relativeX = mouseX - cellViewportX;
     const relativeY = mouseY - cellViewportY;
@@ -1333,7 +1337,7 @@ export class InteractionManager {
 
     const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
     const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
     // 计算相对位置
     const relativeX = mouseX - cellViewportX;
@@ -1471,7 +1475,7 @@ export class InteractionManager {
     // 获取单元格位置
     const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
     const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
     const buttonY = cellViewportY + (cellPos.height - buttonHeight) / 2;
 
     const relativeY = mouseY - buttonY;
@@ -1546,7 +1550,7 @@ export class InteractionManager {
     const isDisabled = resolveDisabled(column.disabled, row, column);
 
     const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
     const relativeX = mouseX - cellViewportX;
     const relativeY = mouseY - cellViewportY;
@@ -2138,7 +2142,7 @@ export class InteractionManager {
       if (renderResult.type === "color" && renderResult.color) {
         const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
         const cellViewportX = this.getCellViewportX(cellPos, column);
-        const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+        const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
         const padding = 8;
         const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
@@ -2239,7 +2243,7 @@ export class InteractionManager {
       const viewportY = e.clientY - rect.top;
 
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const checkboxSize = 16;
       const checkboxX = cellViewportX + (cellPos.width - checkboxSize) / 2;
@@ -2299,7 +2303,7 @@ export class InteractionManager {
       const viewportY = e.clientY - rect.top;
 
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const relativeX = viewportX - cellViewportX;
       const relativeY = viewportY - cellViewportY;
@@ -2344,7 +2348,7 @@ export class InteractionManager {
       const viewportY = e.clientY - rect.top;
 
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const relativeX = viewportX - cellViewportX;
       const relativeY = viewportY - cellViewportY;
@@ -2433,7 +2437,7 @@ export class InteractionManager {
       const viewportY = e.clientY - rect.top;
 
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const relativeX = viewportX - cellViewportX;
       const relativeY = viewportY - cellViewportY;
@@ -2493,7 +2497,7 @@ export class InteractionManager {
       const viewportY = e.clientY - rect.top;
 
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const relativeX = viewportX - cellViewportX;
       const relativeY = viewportY - cellViewportY;
@@ -2604,7 +2608,7 @@ export class InteractionManager {
       // 计算颜色块位置，只有点击颜色块才触发
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const rect = this.canvas.getBoundingClientRect();
       const clickViewportX = e.clientX - rect.left;
@@ -2643,7 +2647,7 @@ export class InteractionManager {
       // 计算单元格视口位置
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
       const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       // 计算相对位置
       const relativeX = clickViewportX - cellViewportX;
@@ -2773,7 +2777,7 @@ export class InteractionManager {
       this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
     } else if (shape === "circle" || shape === "dashboard") {
       const clickViewportY = e.clientY - rect.top;
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       let centerYOffset = 0;
       if (shape === "dashboard") {

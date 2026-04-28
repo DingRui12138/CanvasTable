@@ -255,6 +255,14 @@ export class DropdownPositionCalculator {
     return this.layoutManager.getCellPosition(0, params.columnIndex ?? 0);
   }
 
+  private getCellViewportY(params: BasePositionParams): number {
+    if (params.cell) {
+      return this.layoutManager.getCellViewportY(params.cell.rowIndex, this.scrollState.scrollTop);
+    }
+
+    return this.layoutManager.getCellViewportY(0, this.scrollState.scrollTop);
+  }
+
   /**
    * Get column from params
    */
@@ -292,7 +300,7 @@ export class DropdownPositionCalculator {
     cellViewportY: number;
   } {
     const cellPos = this.getCellPosition(params);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(params);
 
     switch (params.anchorType) {
       case "cell":
@@ -362,7 +370,7 @@ export class DropdownPositionCalculator {
    */
   isCellInViewport(params: DropdownUpdateParams): boolean {
     const cellPos = this.getCellPosition(params);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(params);
     const headerHeight = this.layoutManager.getLayoutInfo().headerHeight;
     const { height: canvasHeight } = this.getLogicalCanvasSize();
 

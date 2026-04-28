@@ -355,6 +355,20 @@ describe('LayoutManager', () => {
       );
     });
 
+    it('returns viewport y for pinned bottom rows without applying body scroll', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(20);
+      const rowPinManager = new RowPinManager();
+
+      layoutManager.setViewportSize(800, 240);
+      layoutManager.setRowPinManager(rowPinManager);
+      rowPinManager.pin(rows[19]!, 'bottom');
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setScrollPosition(0, theme.row.height * 10);
+
+      expect(layoutManager.getCellViewportY(19)).toBe(240 - theme.row.height);
+    });
+
     it('rebuilds row bands when pin state changes without row data changes', () => {
       const columns = createTestColumns();
       const rows = createTestRows(5);
@@ -369,6 +383,43 @@ describe('LayoutManager', () => {
       const bands = layoutManager.getRowBands();
       expect(bands.pinnedTop.rows).toEqual([rows[1]]);
       expect(bands.body.rows).toEqual([rows[0], rows[2], rows[3], rows[4]]);
+    });
+
+    it('updates row pinning without recalculating every row height', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      const rowHeightFn = jest.fn(() => theme.row.height);
+
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.setRowHeightFn(rowHeightFn);
+      layoutManager.calculateLayout(columns, rows);
+      rowHeightFn.mockClear();
+
+      rowPinManager.pin(rows[2]!, 'top');
+      const pinned = layoutManager.updateRowPin(rows[2]!, null, 'top');
+
+      expect(pinned).toBe(true);
+      expect(rowHeightFn).not.toHaveBeenCalled();
+      expect(layoutManager.getRowBands().pinnedTop.rows).toEqual([rows[2]]);
+      expect(layoutManager.getRowBands().body.rows).toEqual([
+        rows[0],
+        rows[1],
+        rows[3],
+        rows[4],
+      ]);
+      expect(layoutManager.getBodyRowIndexByRef(rows[3]!)).toBe(2);
+      expect(layoutManager.getRowBandOffsetByRef(rows[3]!)).toBe(theme.row.height * 2);
+
+      rowPinManager.remove(rows[2]!);
+      const unpinned = layoutManager.updateRowPin(rows[2]!, 'top', null);
+
+      expect(unpinned).toBe(true);
+      expect(rowHeightFn).not.toHaveBeenCalled();
+      expect(layoutManager.getRowBands().pinnedTop.rows).toEqual([]);
+      expect(layoutManager.getRowBands().body.rows).toEqual(rows);
+      expect(layoutManager.getBodyRowIndexByRef(rows[2]!)).toBe(2);
+      expect(layoutManager.getRowBandOffsetByRef(rows[3]!)).toBe(theme.row.height * 3);
     });
 
     it('calculates visible range from body viewport height', () => {

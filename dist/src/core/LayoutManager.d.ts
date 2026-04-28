@@ -1,4 +1,4 @@
-import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion, RowBands, RowHitResult } from "../types";
+import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion, RowBands, RowHitResult, RowPinPosition } from "../types";
 import { RowPinManager } from "./RowPinManager";
 export declare class LayoutManager {
     private layoutInfo;
@@ -63,6 +63,7 @@ export declare class LayoutManager {
     getRowPinPosition(row: Row): "top" | "bottom" | null;
     setRowHeight(row: Row, height: number): void;
     updateRowHeight(row: Row, height: number): boolean;
+    updateRowPin(row: Row, previousPosition: RowPinPosition | null, nextPosition: RowPinPosition | null): boolean;
     clearRowHeightOverrides(): void;
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     getScrollLeft(): number;
@@ -79,6 +80,13 @@ export declare class LayoutManager {
     private calculateRowLayout;
     private calculateRowBands;
     private updatePinnedRowHeight;
+    private removeRowFromPinSource;
+    private addRowToPinTarget;
+    private removePinnedRow;
+    private removeBodyRow;
+    private insertBodyRow;
+    private findBodyInsertionIndex;
+    private rebuildBodyBandFrom;
     private updatePinnedBandOffsets;
     private updateRowBandGeometry;
     private calculateRowsHeight;
@@ -102,6 +110,7 @@ export declare class LayoutManager {
     private findBodyRowIndexAtOffset;
     private findRowInBandAtOffset;
     getRowViewportY(rowIndex: number, scrollTop?: number): number | null;
+    getCellViewportY(rowIndex: number, scrollTop?: number): number;
     private findColumnIndexAtOffset;
     getVisibleRange(): VisibleRange;
     getLayoutInfo(): LayoutInfo;

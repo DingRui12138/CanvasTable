@@ -48,7 +48,7 @@ export class TooltipHandler extends BaseHandler {
     const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
 
     const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
     // Tags tooltip
     if (renderResult.type === "tag" && renderResult.tags) {
@@ -127,7 +127,7 @@ export class TooltipHandler extends BaseHandler {
     this.state.tooltip = {
       cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
       x: cellViewportX,
-      y: cellPos.y - this.scrollState.scrollTop,
+      y: this.getCellViewportY(cell.rowIndex),
       width: cellPos.width,
       content: { type: "tags", tags: tags },
     };
@@ -167,7 +167,7 @@ export class TooltipHandler extends BaseHandler {
         this.state.tooltip = {
           cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
           x: cellViewportX,
-          y: cellPos.y - this.scrollState.scrollTop,
+          y: this.getCellViewportY(cell.rowIndex),
           width: cellPos.width,
           content: { type: "text", text: displayText },
         };
@@ -264,7 +264,7 @@ export class TooltipHandler extends BaseHandler {
       this.state.tooltip = {
         cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
         x: cellViewportX,
-        y: cellPos.y - this.scrollState.scrollTop,
+        y: this.getCellViewportY(cell.rowIndex),
         width: cellPos.width,
         content: { type: "text", text: text },
       };
@@ -296,7 +296,7 @@ export class TooltipHandler extends BaseHandler {
       tooltipX = cellPos.x - this.scrollState.scrollLeft;
     }
 
-    const tooltipY = cellPos.y - this.scrollState.scrollTop;
+    const tooltipY = this.getCellViewportY(cell.rowIndex);
 
     this.state.tooltip.x = tooltipX;
     this.state.tooltip.y = tooltipY;

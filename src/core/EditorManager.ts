@@ -94,6 +94,7 @@ export class EditorManager {
     const merge = this.layoutManager.getCellMerge(cell.rowIndex, cell.columnIndex);
     let cellPos: { x: number; y: number; width: number; height: number };
 
+    const viewportRowIndex = merge ? merge.rowIndex : cell.rowIndex;
     if (merge) {
       // Use the merged cell's position (covers the entire merged area)
       cellPos = this.layoutManager.getMergedCellPosition(merge.rowIndex, merge.columnIndex)!;
@@ -110,7 +111,7 @@ export class EditorManager {
       cellViewportX = cellPos.x - this.scrollLeft;
     }
 
-    const cellViewportY = cellPos.y - this.scrollTop;
+    const cellViewportY = this.layoutManager.getCellViewportY(viewportRowIndex, this.scrollTop);
 
     const inputX = cellViewportX - 1;
     const inputY = cellViewportY - 1;
@@ -310,10 +311,17 @@ export class EditorManager {
 
       if (!column) return;
 
-      const cellPos = this.layoutManager.getCellPosition(
+      const merge = this.layoutManager.getCellMerge(
         this.editingCell.rowIndex,
         this.editingCell.columnIndex,
       );
+      const viewportRowIndex = merge ? merge.rowIndex : this.editingCell.rowIndex;
+      const cellPos = merge
+        ? this.layoutManager.getMergedCellPosition(merge.rowIndex, merge.columnIndex)!
+        : this.layoutManager.getCellPosition(
+            this.editingCell.rowIndex,
+            this.editingCell.columnIndex,
+          );
 
       let cellViewportX: number;
       if (column.fixed === "left") {
@@ -324,7 +332,7 @@ export class EditorManager {
         cellViewportX = cellPos.x - this.scrollLeft;
       }
 
-      const cellViewportY = cellPos.y - this.scrollTop;
+      const cellViewportY = this.layoutManager.getCellViewportY(viewportRowIndex, this.scrollTop);
 
       this.inputElement.style.left = `${cellViewportX - 1}px`;
       this.inputElement.style.top = `${cellViewportY - 1}px`;

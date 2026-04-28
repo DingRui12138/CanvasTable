@@ -53,7 +53,7 @@ export class ControlClickHandler extends BaseHandler {
       const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
 
       const barX = cellViewportX + padding;
-      const barY = cellPos.y - this.scrollState.scrollTop + (cellPos.height - barHeight) / 2;
+      const barY = this.getCellViewportY(cell.rowIndex) + (cellPos.height - barHeight) / 2;
 
       const clickViewportY = e.clientY - rect.top;
       const relativeX = clickViewportX - barX;
@@ -77,7 +77,7 @@ export class ControlClickHandler extends BaseHandler {
     } else if (shape === "circle" || shape === "dashboard") {
       // Circle/Dashboard: calculate progress from click angle
       const clickViewportY = e.clientY - rect.top;
-      const cellViewportY = cellPos.y - this.scrollState.scrollTop;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
       const size = config.size ?? "medium";
       let sizeRatio: number;
@@ -279,7 +279,7 @@ export class ControlClickHandler extends BaseHandler {
     const cellViewportX = this.getCellViewportX(cellPos, column);
 
     const relativeX = clickX - cellViewportX;
-    const relativeY = clickY - (cellPos.y - this.scrollState.scrollTop);
+    const relativeY = clickY - this.getCellViewportY(cell.rowIndex);
 
     const padding = 8;
     const size = 16;

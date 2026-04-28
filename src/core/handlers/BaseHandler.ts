@@ -154,6 +154,10 @@ export abstract class BaseHandler {
     return column?.fixed ? cellPos.x : cellPos.x - this.scrollState.scrollLeft;
   }
 
+  protected getCellViewportY(rowIndex: number): number {
+    return this.layoutManager.getCellViewportY(rowIndex, this.scrollState.scrollTop);
+  }
+
   /**
    * Update expand column key
    */

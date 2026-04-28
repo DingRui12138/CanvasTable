@@ -41,7 +41,9 @@ export class InputRenderer extends BaseCellRenderer {
       const lines = this.wrapText(ctx, text, maxTextWidth);
       const visibleLines = lines.slice(0, actualMaxRows);
 
-      let textY = y + padding + lineHeight / 2;
+      const visibleTextHeight = visibleLines.length * lineHeight;
+      const textBlockY = y + (height - visibleTextHeight) / 2;
+      let textY = textBlockY + lineHeight / 2;
 
       for (let i = 0; i < visibleLines.length; i++) {
         let lineText = visibleLines[i]!;

@@ -118,6 +118,7 @@ export declare class InteractionManager {
      * 计算单元格在视口中的 X 坐标
      */
     private getCellViewportX;
+    private getCellViewportY;
     /**
      * 获取规范化的选择范围
      */

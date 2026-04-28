@@ -683,6 +683,7 @@ export class CanvasTable implements CanvasTableAPI {
     this.eventEmitter.on(Events.ROW_PIN_CHANGE, (_row: unknown, _position: unknown) => {
       const row = _row as Row;
       const position = _position as RowPinPosition | null;
+      const previousPosition = this.rowPinManager.getPosition(row);
 
       if (position) {
         this.rowPinManager.pin(row, position);
@@ -690,7 +691,16 @@ export class CanvasTable implements CanvasTableAPI {
         this.rowPinManager.remove(row);
       }
 
-      this.updateLayout();
+      const updatedIncrementally = this.layoutManager.updateRowPin(row, previousPosition, position);
+      if (!updatedIncrementally) {
+        this.updateLayout();
+      } else {
+        this.interactionManager.updateMaxScroll(
+          this.layoutManager.getMaxScrollLeft(),
+          this.layoutManager.getMaxScrollTop(),
+        );
+        this.editorManager.updatePosition();
+      }
       this.render();
       this.props.onRowPinChange?.(row, position);
     });
