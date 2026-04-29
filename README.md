@@ -2,7 +2,7 @@
 
 一个基于 Canvas 的高性能数据表格组件，支持百万级数据流畅渲染。
 
-**[在线 Demo](https://your-username.github.io/canvas-table/)**
+**Demo**：本地打开 `docs/index.html`，或将 `docs/` 发布到 GitHub Pages。
 
 ## 特性
 
@@ -10,6 +10,7 @@
 - **虚拟滚动** - 仅渲染可视区域，支持百万级数据
 - **多级表头** - 支持无限层级嵌套的列分组
 - **固定列** - 支持左侧、右侧固定列
+- **固定行** - 支持右键将行固定到顶部/底部
 - **合并单元格** - 支持行合并、列合并
 - **层级数据** - 支持树形结构展示，可展开/折叠
 
@@ -33,13 +34,14 @@
 - **筛选** - 列筛选功能
 - **选择** - 单元格、行、列选择，支持范围选择和多选
 - **编辑** - 双击或 Enter 进入编辑模式
-- **右键菜单** - 删除行、上方插入行、下方插入行
+- **右键菜单** - 删除行、上方插入行、下方插入行、固定/取消固定行
 - **键盘导航** - 方向键导航，快捷键操作
 - **撤销** - Ctrl+Z (Windows/Linux) / Cmd+Z (macOS) 撤销操作
 - **重做** - Ctrl+Y (Windows/Linux) / Cmd+Y (macOS) 重做操作
 
 ### 其他特性
 - **主题** - 支持亮色、暗色、自动三种主题模式，可自定义主题颜色
+- **多语言** - 内置中文/英文文案，支持运行时切换和自定义文案覆盖
 - **水印** - 支持自定义水印内容、样式
 - **导出** - 支持 CSV 格式导出
 - **自适应** - 响应式布局，自适应容器大小
@@ -100,12 +102,16 @@ const table = new CanvasTable(container, {
 | `selection` | `SelectionOptions` | - | 选择配置 |
 | `editing` | `EditingOptions` | - | 编辑配置 |
 | `watermark` | `WatermarkOptions` | - | 水印配置 |
-| `loadingText` | `string` | `'Loading...'` | Loading overlay 文本 |
+| `loadingText` | `string` | locale.loadingText | Loading overlay 文本 |
+| `emptyText` | `string` | locale.emptyText | 空数据文本 |
+| `locale` | `LocaleConfig` | `'zh-CN'` | 多语言文案配置，支持 `'zh-CN'`、`'en-US'` 或局部覆盖 |
 | `lazyLoad` | `LazyLoadConfig` | - | 懒加载配置 |
 | `imageLoad` | `ImageLoadConfig` | - | 图片加载配置 |
 | `rowHeight` | `(row: Row, rowIndex: number) => number` | - | 动态行高计算函数，不指定则使用主题默认行高 |
 | `enableRowHeightResize` | `boolean` | `false` | 是否启用拖拽调整行高 |
 | `rowResizable` | `boolean \| ((row: Row, rowIndex: number) => boolean)` | `true` | 是否允许调整行高，可按行控制 |
+| `enableRowPinning` | `boolean` | `false` | 是否启用右键固定行到顶部/底部 |
+| `rowPinnable` | `boolean \| ((row: Row) => boolean)` | `true` | 是否允许固定行，可按行控制 |
 | `createRowData` | `(columns: Column[]) => Record<string, unknown>` | - | 新增行时的数据初始化函数 |
 
 ### Column 配置
@@ -597,6 +603,37 @@ table.addRow({ id: 999, name: '新用户' }, 2);  // 在索引 2 处插入
 
 // 删除行
 table.deleteRow(rowIndex);
+
+// 获取固定行
+const topPinnedRows = table.getPinnedRows('top');
+```
+
+### 多语言
+
+默认使用中文文案。可以初始化时指定英文，也可以运行时切换，或只覆盖部分文案：
+
+```typescript
+const table = new CanvasTable(container, {
+  rows,
+  columns,
+  locale: 'en-US'
+});
+
+table.setLocale('zh-CN');
+
+table.setLocale({
+  preset: 'en-US',
+  messages: {
+    filter: {
+      confirm: 'Apply'
+    },
+    contextMenu: {
+      pinTop: 'Pin row'
+    }
+  }
+});
+
+const currentLocale = table.getLocale();
 ```
 
 ### 排序与筛选
@@ -905,6 +942,22 @@ const table = new CanvasTable(container, {
 行高拖拽会写入内部覆盖值，优先级高于 `rowHeight` 返回值；数据行对象本身会作为覆盖值的 key，避免和业务数据里的 `id` 字段耦合。
 
 图片列在行高变大后会根据单元格高度自动排布更多图片。如果只想增加可排布行数，不希望单张图片跟着放大，可以在图片配置里设置 `scaleWithRowHeight: false`。
+
+## 固定行
+
+开启 `enableRowPinning` 后，右键菜单会出现“固定到顶部 / 固定到底部 / 取消固定”。固定行不复制行数据，只维护顶部/底部固定集合，编辑、选择、hover、图片加载和固定列命中检测都会基于固定区的视口坐标处理。
+
+```typescript
+const table = new CanvasTable(container, {
+  rows,
+  columns,
+  enableRowPinning: true,
+  rowPinnable: (row) => row.data.locked !== true,
+  onRowPinChange: (row, position) => {
+    console.log('固定状态变化:', row.id, position); // 'top' | 'bottom' | null
+  }
+});
+```
 
 ## 性能优化
 

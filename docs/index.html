@@ -390,6 +390,7 @@
           <button id="loadComplex">Complex</button>
           <button id="load1000Cols">1000 cols</button>
           <button id="loadMerged">Merged</button>
+          <button id="loadHierarchical">Hierarchical</button>
           <button id="loadLazy">Lazy Load</button>
         </div>
         <div class="controls-section">
@@ -397,6 +398,8 @@
           <button id="clearSort">Clear sort</button>
           <button id="clearFilter">Clear filter</button>
           <button id="exportCsv">Export CSV</button>
+          <button id="showHiddenColumn">Show hidden</button>
+          <button id="hideAgeColumn">Hide age</button>
         </div>
         <div class="controls-section">
           <span class="section-label">Theme</span>
@@ -404,8 +407,10 @@
             Toggle
             <span id="currentTheme"></span>
           </button>
-          <button id="showHiddenColumn">Show hidden</button>
-          <button id="hideAgeColumn">Hide age</button>
+          <button id="toggleLocale">
+            Language
+            <span id="currentLocale"></span>
+          </button>
         </div>
         <div class="controls-section">
           <span class="section-label">Debug</span>
@@ -434,6 +439,10 @@
           <div class="info-item">
             <strong>行高</strong>
             <span>支持动态行高、拖拽调整行高，图片列可随行高多行排布或固定单张图片尺寸</span>
+          </div>
+          <div class="info-item">
+            <strong>固定行</strong>
+            <span>右键可将行固定到顶部/底部，固定区支持编辑、悬浮、图片加载和交互命中</span>
           </div>
           <div class="info-item">
             <strong>排序</strong>
@@ -470,6 +479,10 @@
           <div class="info-item">
             <strong>主题</strong>
             <span>亮色、暗色、自动三种模式</span>
+          </div>
+          <div class="info-item">
+            <strong>多语言</strong>
+            <span>内置中文/英文文案，可运行时切换，也支持用户自定义文案覆盖</span>
           </div>
           <div class="info-item">
             <strong>导出</strong>

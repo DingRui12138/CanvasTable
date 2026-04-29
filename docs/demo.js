@@ -278,6 +278,26 @@ function initDemo() {
         { key: 'quarterly', title: '季度绩效', children: [{ key: 'q1', title: 'Q1', width: 60 }, { key: 'q2', title: 'Q2', width: 60 }, { key: 'q3', title: 'Q3', width: 60 }, { key: 'q4', title: 'Q4', width: 60 }] },
         { key: 'skills', title: '技能评估', children: [{ key: 'technical', title: '技术能力', width: 80 }, { key: 'communication', title: '沟通能力', width: 80 }, { key: 'leadership', title: '领导力', width: 80 }, { key: 'innovation', title: '创新力', width: 80 }] }
       ]},
+      { key: 'sales', title: '销售情况', children: [
+        { key: 'sales-phone', title: '手机', children: [
+          { key: 'sales-phone-name', field: 'name', title: '名称', width: 100 },
+          { key: 'sales-phone-sold', field: 'soldQuantity', title: '售出数量', width: 90, type: 'number' },
+          { key: 'sales-phone-amount', field: 'amount', title: '金额', width: 100, type: 'number' },
+          { key: 'sales-phone-stock', field: 'stockQuantity', title: '库存数量', width: 90, type: 'number' }
+        ]},
+        { key: 'sales-laptop', title: '电脑', children: [
+          { key: 'sales-laptop-name', field: 'name', title: '名称', width: 100 },
+          { key: 'sales-laptop-sold', field: 'soldQuantity', title: '售出数量', width: 90, type: 'number' },
+          { key: 'sales-laptop-amount', field: 'amount', title: '金额', width: 100, type: 'number' },
+          { key: 'sales-laptop-stock', field: 'stockQuantity', title: '库存数量', width: 90, type: 'number' }
+        ]},
+        { key: 'sales-accessory', title: '配件', children: [
+          { key: 'sales-accessory-name', field: 'name', title: '名称', width: 100 },
+          { key: 'sales-accessory-sold', field: 'soldQuantity', title: '售出数量', width: 90, type: 'number' },
+          { key: 'sales-accessory-amount', field: 'amount', title: '金额', width: 100, type: 'number' },
+          { key: 'sales-accessory-stock', field: 'stockQuantity', title: '库存数量', width: 90, type: 'number' }
+        ]}
+      ]},
       { key: 'status', title: '状态', width: 80, fixed: 'right' }
     ];
   }
@@ -291,6 +311,7 @@ function initDemo() {
     var positions = ['工程师', '高级工程师', '经理', '总监', '副总裁'];
     var levels = ['P5', 'P6', 'P7', 'P8', 'P9'];
     var grades = ['A', 'B', 'C', 'D'];
+    var productNames = ['标准款', '旗舰款', '企业版', '轻量版', '套装'];
 
     var rows = [];
     for (var i = 0; i < count; i++) {
@@ -327,11 +348,56 @@ function initDemo() {
           communication: Math.floor(random() * 40) + 60,
           leadership: Math.floor(random() * 40) + 60,
           innovation: Math.floor(random() * 40) + 60,
+          name: productNames[i % productNames.length],
+          soldQuantity: Math.floor(random() * 900) + 100,
+          amount: Math.floor(random() * 900000) + 100000,
+          stockQuantity: Math.floor(random() * 3000) + 200,
           status: i % 3 === 0 ? '在职' : i % 3 === 1 ? '离职' : '休假'
         }
       });
     }
     return rows;
+  }
+
+  function generateHierarchicalData() {
+    var hierarchicalColumns = [
+      { key: 'name', title: '名称', type: 'text', width: 200 },
+      { key: 'type', title: '类型', type: 'text', width: 100 },
+      { key: 'size', title: '大小', type: 'text', width: 100 },
+      { key: 'modified', title: '修改时间', type: 'text', width: 150 },
+      { key: 'status', title: '状态', type: 'text', width: 80, fixed: 'right' }
+    ];
+
+    var rows = [
+      {
+        id: 'folder-1',
+        data: { name: '项目文档', type: '文件夹', size: '-', modified: '2024-01-15', status: '正常' },
+        expanded: true,
+        children: [
+          { id: 'file-1-1', data: { name: '需求文档.docx', type: '文档', size: '2.5MB', modified: '2024-01-10', status: '正常' } },
+          { id: 'file-1-2', data: { name: '设计文档.pdf', type: '文档', size: '5.2MB', modified: '2024-01-12', status: '正常' } },
+          {
+            id: 'folder-1-1',
+            data: { name: '子文件夹', type: '文件夹', size: '-', modified: '2024-01-14', status: '正常' },
+            expanded: false,
+            children: [
+              { id: 'file-1-1-1', data: { name: '笔记.txt', type: '文本', size: '12KB', modified: '2024-01-14', status: '正常' } }
+            ]
+          }
+        ]
+      },
+      {
+        id: 'folder-2',
+        data: { name: '源代码', type: '文件夹', size: '-', modified: '2024-01-20', status: '正常' },
+        expanded: true,
+        children: [
+          { id: 'file-2-1', data: { name: 'index.ts', type: '代码', size: '45KB', modified: '2024-01-18', status: '正常' } },
+          { id: 'file-2-2', data: { name: 'utils.ts', type: '代码', size: '23KB', modified: '2024-01-19', status: '正常' } }
+        ]
+      }
+    ];
+
+    return { rows: rows, columns: hierarchicalColumns };
   }
 
   // 1000 columns generator
@@ -532,6 +598,16 @@ function initDemo() {
     themeDisplay.textContent = '(' + currentThemeMode + ')';
   });
 
+  var currentLocale = 'zh-CN';
+  var localeDisplay = document.getElementById('currentLocale');
+  localeDisplay.textContent = '(中文)';
+  document.getElementById('toggleLocale').addEventListener('click', function() {
+    currentLocale = currentLocale === 'zh-CN' ? 'en-US' : 'zh-CN';
+    table.setLocale(currentLocale);
+    localeDisplay.textContent = currentLocale === 'zh-CN' ? '(中文)' : '(English)';
+    console.log('Locale changed to:', currentLocale);
+  });
+
   document.getElementById('showHiddenColumn').addEventListener('click', function() { table.showColumn('secretCode'); });
   document.getElementById('hideAgeColumn').addEventListener('click', function() { table.hideColumn('age'); });
 
@@ -596,6 +672,15 @@ function initDemo() {
     setRowsWithMeasure(table, function() { return mergedData.rows; }, 'Load merged cells');
   });
 
+  document.getElementById('loadHierarchical').addEventListener('click', function() {
+    var hierarchicalData = generateHierarchicalData();
+    table.setColumns(hierarchicalData.columns);
+    setRowsWithMeasure(table, function() { return hierarchicalData.rows; }, 'Load hierarchical rows');
+    if (typeof table.setExpandColumnKey === 'function') {
+      table.setExpandColumnKey('name');
+    }
+  });
+
   // Lazy load demo
   var lazyLoadSeed = 10000;
   var BATCH_SIZE = 100;
@@ -612,7 +697,8 @@ function initDemo() {
       stripeRows: true,
       hoverable: true,
       showRowNumbers: true,
-      themeMode: 'auto',
+      themeMode: currentThemeMode,
+      locale: currentLocale,
       lazyLoad: { enabled: true, threshold: 10 },
       onLoadMore: function(params) {
         console.log('Load more triggered:', params);
@@ -632,6 +718,7 @@ function initDemo() {
       }
     });
 
+    table = lazyTable;
     window.table = lazyTable;
     var infoEl = document.createElement('div');
     infoEl.style.cssText = 'position: absolute; top: 10px; right: 10px; background: rgba(0,212,170,0.9); color: #0f1419; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-family: "JetBrains Mono", monospace; z-index: 100;';

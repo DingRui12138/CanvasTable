@@ -5125,12 +5125,17 @@ class $e {
       this.theme,
       (o) => this.measureTextWidth(o),
       s
-    ), this.filterDropdownRenderer = new Ce(this.ctx, this.theme, s), this.imageOverlayRenderer = new Re(this.ctx, this.theme, {
-      get: (o, n) => this.imageLoadQueue.get(o, n),
-      isLoading: (o) => this.imageLoadQueue.isLoading(o),
-      load: (o, n) => this.loadImage(o, n),
-      collectVisible: (o) => this.collectVisibleImage(o)
-    }, s), this.overlayRenderer = new Ie(
+    ), this.filterDropdownRenderer = new Ce(this.ctx, this.theme, s), this.imageOverlayRenderer = new Re(
+      this.ctx,
+      this.theme,
+      {
+        get: (o, n) => this.imageLoadQueue.get(o, n),
+        isLoading: (o) => this.imageLoadQueue.isLoading(o),
+        load: (o, n) => this.loadImage(o, n),
+        collectVisible: (o) => this.collectVisibleImage(o)
+      },
+      s
+    ), this.overlayRenderer = new Ie(
       this.canvas,
       this.ctx,
       this.theme,
