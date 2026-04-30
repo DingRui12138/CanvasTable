@@ -1,4 +1,4 @@
-import { Row, Column, SortConfig, FilterConfig, DataManagerState, Change, HistoryOptions } from "../types";
+import { Row, Column, SortConfig, FilterConfig, DataManagerState, Change, ExportContext, HistoryOptions } from "../types";
 import { RowVersionManager } from "./RenderCache";
 export declare class DataManager {
     private state;
@@ -132,7 +132,16 @@ export declare class DataManager {
         includeHeaders?: boolean;
         includeHidden?: boolean;
         selectedOnly?: boolean;
+        showRowNumbers?: boolean;
     }): unknown[][];
+    getExportContext(options: {
+        includeHeaders?: boolean;
+        includeHidden?: boolean;
+        selectedOnly?: boolean;
+        showRowNumbers?: boolean;
+    }): ExportContext;
     private getLeafColumnsList;
+    private getExportColumnTree;
+    private getHeaderDepth;
 }
 //# sourceMappingURL=DataManager.d.ts.map

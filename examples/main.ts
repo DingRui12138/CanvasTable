@@ -244,17 +244,20 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
   const levelOptions = ["junior", "middle", "senior", "expert"];
 
   const rows: Row[] = [];
+  let mergeBlockedUntil = -1;
   for (let i = 0; i < count; i++) {
     const cellMerges: CellMerge[] = [];
 
-    // 使用种子随机数决定是否合并单元格
-    if (random() > 0.8 && i + 1 < count) {
+    // 使用种子随机数决定是否合并单元格。
+    // 一旦当前行启动了 2 行合并，下一行就不能再次启动同列合并，否则会产生重叠 merge。
+    if (i > mergeBlockedUntil && random() > 0.8 && i + 1 < count) {
       cellMerges.push({
         rowIndex: i,
         columnIndex: 2,
         rowspan: 2,
         colspan: 1,
       });
+      mergeBlockedUntil = i + 1;
     }
 
     // 直接计算各项值（使用种子随机数）
@@ -1754,6 +1757,46 @@ document.getElementById("exportCsv")!.addEventListener("click", async () => {
   a.download = "data.csv";
   a.click();
   URL.revokeObjectURL(url);
+});
+
+document.getElementById("exportExcel")!.addEventListener("click", async () => {
+  const blob = await table.export({
+    format: "excel",
+    filename: "canvas-table-export-v2.xlsx",
+    excel: {
+      hierarchicalHeaders: true,
+      columnWidths: "view",
+      freeze: {
+        header: true,
+        leftFixedColumns: true,
+      },
+      formats: [
+        { key: "salary", type: "number", formatCode: "#,##0" },
+        { key: "bonus", type: "number", formatCode: "#,##0" },
+        { key: "score", type: "number", formatCode: "0" },
+        { key: "progress", type: "number", formatCode: "0" },
+        { key: "taskProgress", type: "number", formatCode: "0" },
+        { key: "completionRate", type: "number", formatCode: "0" },
+        { key: "q1", type: "number", formatCode: "#,##0" },
+        { key: "q2", type: "number", formatCode: "#,##0" },
+        { key: "q3", type: "number", formatCode: "#,##0" },
+        { key: "q4", type: "number", formatCode: "#,##0" },
+        { key: "halfYear", type: "number", formatCode: "#,##0" },
+        { key: "total", type: "number", formatCode: "#,##0" },
+        { key: "joinDate", type: "date", formatCode: "yyyy-mm-dd" },
+        { key: "probationEnd", type: "date", formatCode: "yyyy-mm-dd" },
+      ],
+    },
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "canvas-table-export-v2.xlsx";
+  a.click();
+  URL.revokeObjectURL(url);
+  console.log(
+    "Excel v2 exported. Try it after switching between Complex, Merged, and Hierarchical views.",
+  );
 });
 
 let currentThemeMode: "light" | "dark" | "auto" = "auto";

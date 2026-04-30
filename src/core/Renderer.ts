@@ -1087,6 +1087,7 @@ export class Renderer {
     const absRowY = this.layoutManager.getRowOffset(rowIndex);
     const rowHeight = this.getRenderedRowHeight(rowIndex);
     const rowY = absRowY - scrollTop;
+    const leafColumns = this.layoutManager.getLeafColumns();
 
     let backgroundColor = this.theme.colors.rowBackground;
 
@@ -1108,7 +1109,7 @@ export class Renderer {
         continue;
       }
 
-      const column = columns[colIndex];
+      const column = leafColumns[colIndex];
       if (!column) continue;
 
       const reorderedIndex = centerColumnIndices.indexOf(colIndex);
@@ -1148,7 +1149,7 @@ export class Renderer {
       const mergedPos = this.layoutManager.getMergedCellPosition(merge.rowIndex, merge.columnIndex);
       if (!mergedPos) continue;
 
-      const column = columns[merge.columnIndex];
+      const column = leafColumns[merge.columnIndex];
       if (!column) continue;
 
       const value = startRow.data[getColumnField(column)];
@@ -1185,7 +1186,7 @@ export class Renderer {
     }
 
     for (const colIndex of centerColumnIndices) {
-      const column = columns[colIndex];
+      const column = leafColumns[colIndex];
       if (!column) continue;
 
       if (this.layoutManager.isCellMerged(rowIndex, colIndex)) {
@@ -1260,6 +1261,7 @@ export class Renderer {
     },
   ): void {
     const viewportHeight = this.canvas.height / this.dpr;
+    const leafColumns = this.layoutManager.getLeafColumns();
 
     this.ctx.save();
 
@@ -1321,6 +1323,7 @@ export class Renderer {
       }
 
       const affectingMerges = this.layoutManager.getMergesAffectingRow(rowIndex);
+      const leafColumns = this.layoutManager.getLeafColumns();
       for (const merge of affectingMerges) {
         if (!fixedColumnIndices.includes(merge.columnIndex)) continue;
 
@@ -1336,7 +1339,7 @@ export class Renderer {
         );
         if (!mergedPos) continue;
 
-        const column = columns[merge.columnIndex];
+        const column = leafColumns[merge.columnIndex];
         if (!column) continue;
 
         const value = startRow.data[getColumnField(column)];
@@ -1385,7 +1388,7 @@ export class Renderer {
 
       let currentX = startX;
       for (const colIndex of fixedColumnIndices) {
-        const column = columns[colIndex];
+        const column = leafColumns[colIndex];
         if (!column) {
           currentX += this.layoutManager.getColumnWidthByIndex(colIndex);
           continue;
@@ -1463,6 +1466,7 @@ export class Renderer {
     const rowHeight = this.getRenderedRowHeight(rowIndex);
     const rowY = absRowY - scrollTop;
     const viewportHeight = this.canvas.height / this.dpr;
+    const leafColumns = this.layoutManager.getLeafColumns();
 
     if (absRowY + rowHeight < scrollTop || absRowY > scrollTop + viewportHeight) {
       return;
@@ -1485,7 +1489,7 @@ export class Renderer {
     let currentX = startX;
     for (const colIndex of fixedColumnIndices) {
       const width = this.layoutManager.getColumnWidthByIndex(colIndex);
-      const column = columns[colIndex];
+      const column = leafColumns[colIndex];
 
       if (!column) {
         currentX += width;
@@ -1542,6 +1546,7 @@ export class Renderer {
   ): void {
     const layoutInfo = this.layoutManager.getLayoutInfo();
     const headerHeight = layoutInfo.headerHeight;
+    const leafColumns = this.layoutManager.getLeafColumns();
     const headerCells = this.layoutManager.getHeaderCells();
 
     this.ctx.save();
@@ -1603,6 +1608,7 @@ export class Renderer {
   ): void {
     const layoutInfo = this.layoutManager.getLayoutInfo();
     const headerHeight = layoutInfo.headerHeight;
+    const leafColumns = this.layoutManager.getLeafColumns();
 
     this.ctx.save();
     this.ctx.translate(0, scrollTop);
@@ -1618,7 +1624,7 @@ export class Renderer {
     this.ctx.stroke();
 
     for (let colIndex = startColumn; colIndex <= endColumn; colIndex++) {
-      const column = columns[colIndex];
+      const column = leafColumns[colIndex];
       if (!column) continue;
 
       const { x, width } = this.layoutManager.getCellPosition(0, colIndex);

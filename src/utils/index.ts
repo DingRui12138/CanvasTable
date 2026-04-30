@@ -333,6 +333,7 @@ export function arrayToCsv(data: unknown[][], delimiter: string = ","): string {
     })
     .join("\n");
 }
+export { buildExcelExportModel, createXlsxBlob, createXlsxBlobFromModel } from "./xlsx";
 
 export function resolveDisabled(
   disabled: DisabledValue | undefined,

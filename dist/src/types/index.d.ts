@@ -726,12 +726,58 @@ export interface ViewConfig {
     sort: SortConfig[];
     filters: FilterConfig[];
 }
+export interface ExportMerge {
+    startRow: number;
+    startCol: number;
+    endRow: number;
+    endCol: number;
+}
+export interface ExcelExportFormat {
+    key: string;
+    type?: "number" | "date";
+    formatCode: string;
+}
+export interface ExcelFreezeOptions {
+    header?: boolean;
+    leftFixedColumns?: boolean;
+    xSplit?: number;
+    ySplit?: number;
+}
+export interface ExcelExportOptions {
+    hierarchicalHeaders?: boolean;
+    columnWidths?: "view" | "schema" | Array<{
+        key: string;
+        width: number;
+    }>;
+    merges?: ExportMerge[];
+    freeze?: ExcelFreezeOptions;
+    formats?: ExcelExportFormat[];
+}
+export interface ExportCellContext {
+    column: Column;
+    rawValue: unknown;
+    displayValue: string;
+}
+export interface ExportRowContext {
+    row: Row;
+    rowIndex: number;
+    cells: ExportCellContext[];
+}
+export interface ExportContext {
+    columnTree: Column[];
+    leafColumns: Column[];
+    rows: ExportRowContext[];
+    bodyMerges: ExportMerge[];
+    headerDepth: number;
+    leftFixedLeafColumnCount: number;
+}
 export interface ExportOptions {
     format: "csv" | "excel" | "json";
     filename?: string;
     includeHeaders?: boolean;
     includeHidden?: boolean;
     selectedOnly?: boolean;
+    excel?: ExcelExportOptions;
 }
 export interface Change {
     type: "update" | "add" | "delete";

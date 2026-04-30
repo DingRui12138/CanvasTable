@@ -711,6 +711,30 @@ table.setTheme({
 // 导出 CSV
 const blob = await table.export({ format: 'csv', filename: 'data.csv' });
 
+// 导出真实 XLSX 工作簿（第二版）
+const excelBlob = await table.export({
+  format: 'excel',
+  filename: 'report.xlsx',
+  excel: {
+    hierarchicalHeaders: true,
+    columnWidths: 'view',
+    freeze: {
+      header: true,
+      leftFixedColumns: true,
+    },
+    formats: [
+      { key: 'amount', type: 'number', formatCode: '#,##0.00' },
+      { key: 'createdAt', type: 'date', formatCode: 'yyyy-mm-dd' },
+    ],
+    merges: [
+      { startRow: 0, startCol: 0, endRow: 1, endCol: 0 },
+    ],
+  },
+});
+
+// 导出 JSON
+const jsonBlob = await table.export({ format: 'json', filename: 'data.json' });
+
 // 下载文件
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
@@ -719,6 +743,15 @@ a.download = 'data.csv';
 a.click();
 URL.revokeObjectURL(url);
 ```
+
+Excel 导出默认行为：
+
+- 默认导出完整多级表头，并自动生成横向/纵向合并
+- 默认使用当前视图列宽；也可切换为 schema 宽度或按列覆盖
+- 默认冻结表头行和左固定列
+- 默认使用当前视图中的单元格合并；传入 `excel.merges` 时以导出参数为准
+- `number` 和 `date` 列会尽量导出为 Excel 原生数值/日期单元格，而不是纯文本
+- 右固定列不会自动映射为 Excel 冻结窗格，因为 Excel 仅支持顶部和左侧冻结
 
 ### 其他
 

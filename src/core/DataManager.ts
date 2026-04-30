@@ -5,6 +5,7 @@ import {
   FilterConfig,
   DataManagerState,
   Change,
+  ExportContext,
   HistoryAction,
   HistoryOptions,
 } from "../types";
@@ -1114,37 +1115,78 @@ export class DataManager {
     includeHeaders?: boolean;
     includeHidden?: boolean;
     selectedOnly?: boolean;
+    showRowNumbers?: boolean;
   }): unknown[][] {
-    const { includeHeaders = true, selectedOnly = false } = options;
-
-    const rows = selectedOnly
-      ? this.state.sortedRows.filter((row) => row.selected)
-      : this.state.sortedRows;
-
-    const leafColumns = this.getLeafColumnsList();
+    const { includeHeaders = true } = options;
+    const context = this.getExportContext(options);
 
     const result: unknown[][] = [];
 
     if (includeHeaders) {
-      result.push(leafColumns.map((col) => col.title));
+      result.push(context.leafColumns.map((col) => col.title));
     }
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]!;
-      result.push(leafColumns.map((col) => getCellDisplayText(col, row, i)));
+    for (const row of context.rows) {
+      result.push(row.cells.map((cell) => cell.displayValue));
     }
 
     return result;
   }
 
-  private getLeafColumnsList(): Column[] {
+  getExportContext(options: {
+    includeHeaders?: boolean;
+    includeHidden?: boolean;
+    selectedOnly?: boolean;
+    showRowNumbers?: boolean;
+  }): ExportContext {
+    const { includeHidden = false, selectedOnly = false, showRowNumbers = false } = options;
+
+    const rows = selectedOnly
+      ? this.state.sortedRows.filter((row) => row.selected)
+      : this.state.sortedRows;
+
+    const columnTree = this.getExportColumnTree(includeHidden);
+    const leafColumns = this.getLeafColumnsList(includeHidden);
+    const headerDepth = this.getHeaderDepth(columnTree);
+    const leftFixedLeafColumnCount = leafColumns.filter((column) => column.fixed === "left").length;
+
+    return {
+      columnTree,
+      leafColumns,
+      rows: rows.map((row, rowIndex) => ({
+        row,
+        rowIndex,
+        cells: leafColumns.map((column) => {
+          const rawValue = row.data[getColumnField(column)];
+          return {
+            column,
+            rawValue,
+            displayValue: getCellDisplayText(column, row, rowIndex),
+          };
+        }),
+      })),
+      bodyMerges: rows.flatMap((row, rowIndex) =>
+        (row.cellMerges ?? []).map((merge) => ({
+          startRow: rowIndex,
+          startCol: Math.max(0, merge.columnIndex - (showRowNumbers ? 1 : 0)),
+          endRow: rowIndex + merge.rowspan - 1,
+          endCol: Math.max(0, merge.columnIndex - (showRowNumbers ? 1 : 0)) + merge.colspan - 1,
+        })),
+      ),
+      headerDepth,
+      leftFixedLeafColumnCount,
+    };
+  }
+
+  private getLeafColumnsList(includeHidden: boolean = false): Column[] {
     const leafColumns: Column[] = [];
 
-    const collectLeaves = (columns: Column[]): void => {
+    const collectLeaves = (columns: Column[], ancestorHidden: boolean = false): void => {
       for (const column of columns) {
+        const isHidden = ancestorHidden || column.hidden === true;
         if (column.children && column.children.length > 0) {
-          collectLeaves(column.children);
-        } else {
+          collectLeaves(column.children, isHidden);
+        } else if (includeHidden || !isHidden) {
           leafColumns.push(column);
         }
       }
@@ -1152,5 +1194,49 @@ export class DataManager {
 
     collectLeaves(this.state.columns);
     return leafColumns;
+  }
+
+  private getExportColumnTree(includeHidden: boolean = false): Column[] {
+    const cloneColumns = (columns: Column[], ancestorHidden: boolean = false): Column[] => {
+      const result: Column[] = [];
+
+      for (const column of columns) {
+        const isHidden = ancestorHidden || column.hidden === true;
+        const children = column.children ? cloneColumns(column.children, isHidden) : undefined;
+
+        if (children && children.length > 0) {
+          result.push({
+            ...column,
+            children,
+          });
+          continue;
+        }
+
+        if (includeHidden || !isHidden) {
+          result.push({
+            ...column,
+            children: undefined,
+          });
+        }
+      }
+
+      return result;
+    };
+
+    return cloneColumns(this.state.columns);
+  }
+
+  private getHeaderDepth(columns: Column[]): number {
+    if (columns.length === 0) {
+      return 0;
+    }
+
+    return Math.max(
+      ...columns.map((column) =>
+        column.children && column.children.length > 0
+          ? 1 + this.getHeaderDepth(column.children)
+          : 1,
+      ),
+    );
   }
 }

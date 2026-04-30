@@ -36,6 +36,7 @@ export declare function requestAnimationFrameThrottle<T extends (...args: unknow
 export declare function isPromise<T>(value: unknown): value is Promise<T>;
 export declare function downloadBlob(blob: Blob, filename: string): void;
 export declare function arrayToCsv(data: unknown[][], delimiter?: string): string;
+export { buildExcelExportModel, createXlsxBlob, createXlsxBlobFromModel } from "./xlsx";
 export declare function resolveDisabled(disabled: DisabledValue | undefined, row: Row, column: Column): boolean;
 export declare function getRenderResult(column: Column, row: Row, rowIndex: number): RenderResult;
 export declare function getCellDisplayText(column: Column, row: Row, rowIndex: number): string;

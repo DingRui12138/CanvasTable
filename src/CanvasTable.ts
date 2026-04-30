@@ -32,7 +32,13 @@ import { EventEmitter } from "./core/EventEmitter";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./core/RenderCache";
 import { ImageRenderer } from "./core/renderers";
 import { DEFAULT_THEME, DARK_THEME } from "./theme";
-import { arrayToCsv, debounce, getColumnField } from "./utils";
+import {
+  arrayToCsv,
+  buildExcelExportModel,
+  createXlsxBlobFromModel,
+  debounce,
+  getColumnField,
+} from "./utils";
 import { TableEvents as Events } from "./constants/events";
 import { LoadingOverlay } from "./core/LoadingOverlay";
 import { RowPinManager } from "./core/RowPinManager";
@@ -1233,34 +1239,66 @@ export class CanvasTable implements CanvasTableAPI {
   }
 
   async export(options: ExportOptions): Promise<Blob> {
-    const data = this.dataManager.exportData({
-      includeHeaders: options.includeHeaders ?? true,
-      includeHidden: options.includeHidden ?? false,
-      selectedOnly: options.selectedOnly ?? false,
-    });
-
-    let content: string;
-    let mimeType: string;
-
     switch (options.format) {
       case "csv":
-        content = arrayToCsv(data);
-        mimeType = "text/csv";
-        break;
+        return new Blob(
+          [
+            arrayToCsv(
+              this.dataManager.exportData({
+                includeHeaders: options.includeHeaders ?? true,
+                includeHidden: options.includeHidden ?? false,
+                selectedOnly: options.selectedOnly ?? false,
+                showRowNumbers: this.props.showRowNumbers === true,
+              }),
+            ),
+          ],
+          { type: "text/csv" },
+        );
       case "json":
-        content = JSON.stringify(data, null, 2);
-        mimeType = "application/json";
-        break;
-      case "excel":
-        content = arrayToCsv(data, "\t");
-        mimeType = "application/vnd.ms-excel";
-        break;
+        return new Blob(
+          [
+            JSON.stringify(
+              this.dataManager.exportData({
+                includeHeaders: options.includeHeaders ?? true,
+                includeHidden: options.includeHidden ?? false,
+                selectedOnly: options.selectedOnly ?? false,
+                showRowNumbers: this.props.showRowNumbers === true,
+              }),
+              null,
+              2,
+            ),
+          ],
+          { type: "application/json" },
+        );
+      case "excel": {
+        const context = this.dataManager.getExportContext({
+          includeHeaders: options.includeHeaders ?? true,
+          includeHidden: options.includeHidden ?? false,
+          selectedOnly: options.selectedOnly ?? false,
+          showRowNumbers: this.props.showRowNumbers === true,
+        });
+        const model = buildExcelExportModel(
+          context,
+          options.excel,
+          options.filename?.replace(/\.[^.]+$/, "") ?? "Sheet1",
+        );
+        return createXlsxBlobFromModel(model);
+      }
       default:
-        content = arrayToCsv(data);
-        mimeType = "text/csv";
+        return new Blob(
+          [
+            arrayToCsv(
+              this.dataManager.exportData({
+                includeHeaders: options.includeHeaders ?? true,
+                includeHidden: options.includeHidden ?? false,
+                selectedOnly: options.selectedOnly ?? false,
+                showRowNumbers: this.props.showRowNumbers === true,
+              }),
+            ),
+          ],
+          { type: "text/csv" },
+        );
     }
-
-    return new Blob([content], { type: mimeType });
   }
 
   // === 历史记录方法 ===

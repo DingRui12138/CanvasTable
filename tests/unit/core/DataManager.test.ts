@@ -128,6 +128,99 @@ describe('DataManager', () => {
     });
   });
 
+  describe('exportData', () => {
+    it('excludes hidden columns unless includeHidden is true', async () => {
+      dataManager.setColumns([
+        { key: 'id', title: 'ID' },
+        { key: 'secret', title: 'Secret', hidden: true },
+      ]);
+      await dataManager.loadRows([
+        { id: 'row-1', data: { id: 1, secret: 'hidden-value' } },
+      ]);
+
+      expect(dataManager.exportData({ includeHeaders: true })).toEqual([
+        ['ID'],
+        ['1'],
+      ]);
+      expect(dataManager.exportData({ includeHeaders: true, includeHidden: true })).toEqual([
+        ['ID', 'Secret'],
+        ['1', 'hidden-value'],
+      ]);
+    });
+
+    it('builds export context with visible leaf columns and typed raw values', async () => {
+      dataManager.setColumns([
+        {
+          key: 'group',
+          title: 'Group',
+          children: [
+            { key: 'amount', title: 'Amount', type: 'number', fixed: 'left' },
+            { key: 'createdAt', title: 'Created At', type: 'date' },
+          ],
+        },
+        { key: 'secret', title: 'Secret', hidden: true },
+      ]);
+      await dataManager.loadRows([
+        { id: 'row-1', data: { amount: 12.5, createdAt: '2026-04-29', secret: 'x' } },
+      ]);
+
+      const context = dataManager.getExportContext({
+        includeHeaders: true,
+        includeHidden: false,
+        selectedOnly: false,
+      });
+
+      expect(context.leafColumns.map((column) => column.key)).toEqual(['amount', 'createdAt']);
+      expect(context.rows[0]!.cells.map((cell) => cell.rawValue)).toEqual([12.5, '2026-04-29']);
+      expect(context.leftFixedLeafColumnCount).toBe(1);
+      expect(context.headerDepth).toBe(2);
+    });
+
+    it('filters selected rows in export context', () => {
+      const currentRows = dataManager.getRows();
+      currentRows[0]!.selected = true;
+      currentRows[1]!.selected = false;
+      currentRows[2]!.selected = false;
+      currentRows[3]!.selected = false;
+      currentRows[4]!.selected = false;
+
+      const context = dataManager.getExportContext({ selectedOnly: true });
+
+      expect(context.rows).toHaveLength(1);
+      expect(context.rows[0]!.row.id).toBe(currentRows[0]!.id);
+    });
+  });
+
+  describe('exportData', () => {
+    it('shifts body merge columns when row numbers are enabled for export context', async () => {
+      dataManager.setColumns([
+        { key: 'selected', title: '选择' },
+        { key: 'id', title: 'ID' },
+        { key: 'name', title: 'Name' },
+        { key: 'age', title: 'Age' },
+      ]);
+      await dataManager.loadRows([
+        {
+          id: 'row-1',
+          data: { selected: true, id: 1, name: 'Alice', age: 20 },
+          cellMerges: [{ rowIndex: 0, columnIndex: 2, rowspan: 2, colspan: 1 }],
+        },
+        {
+          id: 'row-2',
+          data: { selected: true, id: 2, name: 'Alice', age: 21 },
+        },
+      ]);
+
+      const context = dataManager.getExportContext({
+        showRowNumbers: true,
+      });
+
+      expect(context.bodyMerges).toEqual([
+        { startRow: 0, startCol: 1, endRow: 1, endCol: 1 },
+      ]);
+    });
+  });
+
   describe('sorting', () => {
     beforeEach(async () => {
       const unsortedRows: Row[] = [
