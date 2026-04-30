@@ -2,8 +2,9 @@
  * TagsRenderer - Renders tags cells
  */
 
-import { TagsConfig, TagItem, CellType } from "../../types";
+import { TagsConfig, CellType } from "../../types";
 import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
+import { layoutTags } from "../../utils";
 
 export class TagsRenderer extends BaseCellRenderer {
   readonly type: CellType = "tag";
@@ -24,12 +25,6 @@ export class TagsRenderer extends BaseCellRenderer {
     const tagRadius = 4;
     const gap = 4;
     const lineGap = 2;
-    const ellipsis = "...";
-
-    const availableWidth = width - padding * 2;
-    const autoMaxRows = Math.max(1, Math.floor((height - padding * 2) / (tagHeight + lineGap)));
-    const maxLineCount = Math.min(config.maxRows ?? autoMaxRows, autoMaxRows);
-
     const textWidthCache = new Map<string, number>();
     const measureTextCached = (text: string): number => {
       let measuredWidth = textWidthCache.get(text);
@@ -39,88 +34,8 @@ export class TagsRenderer extends BaseCellRenderer {
       }
       return measuredWidth;
     };
-
-    const moreTagWidth = (count: number) => {
-      const moreText = `+${count}`;
-      return measureTextCached(moreText) + tagPadding * 2;
-    };
-
-    const calculateTagWidth = (tag: TagItem): number => {
-      return measureTextCached(tag.text) + tagPadding * 2;
-    };
-
-    const ellipsisWidth = measureTextCached(ellipsis);
-
-    const lines: { tag: TagItem; displayText: string; width: number }[][] = [];
-    let currentLine: { tag: TagItem; displayText: string; width: number }[] = [];
-    let currentLineWidth = 0;
-    let processedTags = 0;
-
-    for (let i = 0; i < tags.length; i++) {
-      const tag = tags[i]!;
-      const tagWidth = calculateTagWidth(tag);
-
-      const isLastLine = lines.length >= maxLineCount - 1;
-      const remainingTags = tags.length - i;
-
-      if (isLastLine) {
-        const moreWidth = remainingTags > 1 ? moreTagWidth(remainingTags - 1) + gap : 0;
-        const remainingSpace = availableWidth - currentLineWidth - moreWidth;
-
-        if (tagWidth <= remainingSpace) {
-          currentLine.push({ tag, displayText: tag.text, width: tagWidth });
-          currentLineWidth += tagWidth + gap;
-          processedTags++;
-        } else {
-          const truncatedTagSpace = availableWidth - currentLineWidth - moreWidth;
-          if (truncatedTagSpace >= tagPadding * 2 + ellipsisWidth + 10) {
-            const maxTextWidth = truncatedTagSpace - tagPadding * 2 - ellipsisWidth;
-            let truncatedText = "";
-            let left = 0;
-            let right = tag.text.length;
-
-            while (left < right) {
-              const mid = Math.floor((left + right + 1) / 2);
-              const testText = tag.text.slice(0, mid);
-              if (measureTextCached(testText) <= maxTextWidth) {
-                left = mid;
-                truncatedText = testText;
-              } else {
-                right = mid - 1;
-              }
-            }
-            if (truncatedText.length > 0) {
-              const displayText = truncatedText + ellipsis;
-              const truncatedWidth = measureTextCached(displayText) + tagPadding * 2;
-              currentLine.push({ tag, displayText, width: truncatedWidth });
-              processedTags++;
-            }
-          }
-          break;
-        }
-      } else {
-        if (tagWidth <= availableWidth - currentLineWidth) {
-          currentLine.push({ tag, displayText: tag.text, width: tagWidth });
-          currentLineWidth += tagWidth + gap;
-          processedTags++;
-        } else {
-          if (currentLine.length > 0) {
-            lines.push(currentLine);
-          }
-          currentLine = [{ tag, displayText: tag.text, width: tagWidth }];
-          currentLineWidth = tagWidth + gap;
-          processedTags++;
-
-          if (lines.length >= maxLineCount) {
-            break;
-          }
-        }
-      }
-    }
-
-    if (currentLine.length > 0 && lines.length < maxLineCount) {
-      lines.push(currentLine);
-    }
+    const moreTagWidth = (count: number) => measureTextCached(`+${count}`) + tagPadding * 2;
+    const { lines, processedTags } = layoutTags(ctx, config, width, height, theme.font.size);
 
     const totalHeight = lines.length * tagHeight + (lines.length - 1) * lineGap;
     const startY = y + (height - totalHeight) / 2;

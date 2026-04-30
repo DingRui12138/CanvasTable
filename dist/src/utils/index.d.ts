@@ -1,4 +1,4 @@
-import type { Column, Row, RenderResult, DisabledValue, FilterMode, SelectOption } from "../types";
+import type { Column, Row, RenderResult, TagItem, TagsConfig, DisabledValue, FilterMode, SelectOption } from "../types";
 /**
  * 获取列的数据字段名
  * 优先使用 field，如果没有则使用 key
@@ -27,6 +27,22 @@ export declare function measureText(ctx: CanvasRenderingContext2D, text: string,
     width: number;
     height: number;
 };
+export declare function calculateMaxTextRows(cellHeight: number, lineHeight: number, padding?: number): number;
+export declare function layoutWrappedText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxRows: number): {
+    lines: string[];
+    isTruncated: boolean;
+};
+export interface TagLayoutItem {
+    tag: TagItem;
+    displayText: string;
+    width: number;
+}
+export interface TagLayoutResult {
+    lines: TagLayoutItem[][];
+    processedTags: number;
+    isTruncated: boolean;
+}
+export declare function layoutTags(ctx: CanvasRenderingContext2D, config: TagsConfig, width: number, height: number, fontSize: number): TagLayoutResult;
 export declare function getDevicePixelRatio(): number;
 export declare function createCanvas(width: number, height: number): {
     canvas: HTMLCanvasElement;

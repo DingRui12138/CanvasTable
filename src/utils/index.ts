@@ -3,6 +3,7 @@ import type {
   Row,
   RenderResult,
   TagItem,
+  TagsConfig,
   DisabledValue,
   FilterMode,
   SelectOption,
@@ -249,6 +250,184 @@ export function measureText(
   return {
     width: metrics.width,
     height: fontSize,
+  };
+}
+
+export function calculateMaxTextRows(
+  cellHeight: number,
+  lineHeight: number,
+  padding: number = 8,
+): number {
+  return Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
+}
+
+export function layoutWrappedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxRows: number,
+): { lines: string[]; isTruncated: boolean } {
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (const char of text) {
+    const testLine = currentLine + char;
+    if (ctx.measureText(testLine).width > maxWidth) {
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      currentLine = char;
+      if (lines.length >= maxRows) {
+        break;
+      }
+    } else {
+      currentLine = testLine;
+    }
+  }
+
+  if (currentLine && lines.length < maxRows) {
+    lines.push(currentLine);
+  }
+
+  const visibleText = lines.join("");
+  const isTruncated = text.length > visibleText.length;
+
+  if (isTruncated && lines.length === maxRows) {
+    const ellipsis = "...";
+    let truncated = lines[lines.length - 1] ?? "";
+    while (truncated.length > 0 && ctx.measureText(truncated + ellipsis).width > maxWidth) {
+      truncated = truncated.slice(0, -1);
+    }
+    lines[lines.length - 1] = truncated + ellipsis;
+  }
+
+  return { lines, isTruncated };
+}
+
+export interface TagLayoutItem {
+  tag: TagItem;
+  displayText: string;
+  width: number;
+}
+
+export interface TagLayoutResult {
+  lines: TagLayoutItem[][];
+  processedTags: number;
+  isTruncated: boolean;
+}
+
+export function layoutTags(
+  ctx: CanvasRenderingContext2D,
+  config: TagsConfig,
+  width: number,
+  height: number,
+  fontSize: number,
+): TagLayoutResult {
+  const padding = 8;
+  const tagPadding = 4;
+  const gap = 4;
+  const lineGap = 2;
+  const ellipsis = "...";
+  const tagHeight = fontSize + tagPadding * 2;
+  const availableWidth = width - padding * 2;
+  const autoMaxRows = Math.max(1, Math.floor((height - padding * 2) / (tagHeight + lineGap)));
+  const maxLineCount = Math.min(config.maxRows ?? autoMaxRows, autoMaxRows);
+  const tags = config.tags ?? [];
+
+  const textWidthCache = new Map<string, number>();
+  const measureTextCached = (text: string): number => {
+    let measuredWidth = textWidthCache.get(text);
+    if (measuredWidth === undefined) {
+      measuredWidth = ctx.measureText(text).width;
+      textWidthCache.set(text, measuredWidth);
+    }
+    return measuredWidth;
+  };
+
+  const moreTagWidth = (count: number) => {
+    const moreText = `+${count}`;
+    return measureTextCached(moreText) + tagPadding * 2;
+  };
+
+  const calculateTagWidth = (tag: TagItem): number => {
+    return measureTextCached(tag.text) + tagPadding * 2;
+  };
+
+  const ellipsisWidth = measureTextCached(ellipsis);
+  const lines: TagLayoutItem[][] = [];
+  let currentLine: TagLayoutItem[] = [];
+  let currentLineWidth = 0;
+  let processedTags = 0;
+
+  for (let i = 0; i < tags.length; i++) {
+    const tag = tags[i]!;
+    const tagWidth = calculateTagWidth(tag);
+
+    const isLastLine = lines.length >= maxLineCount - 1;
+    const remainingTags = tags.length - i;
+
+    if (isLastLine) {
+      const moreWidth = remainingTags > 1 ? moreTagWidth(remainingTags - 1) + gap : 0;
+      const remainingSpace = availableWidth - currentLineWidth - moreWidth;
+
+      if (tagWidth <= remainingSpace) {
+        currentLine.push({ tag, displayText: tag.text, width: tagWidth });
+        currentLineWidth += tagWidth + gap;
+        processedTags++;
+      } else {
+        const truncatedTagSpace = availableWidth - currentLineWidth - moreWidth;
+        if (truncatedTagSpace >= tagPadding * 2 + ellipsisWidth + 10) {
+          const maxTextWidth = truncatedTagSpace - tagPadding * 2 - ellipsisWidth;
+          let truncatedText = "";
+          let left = 0;
+          let right = tag.text.length;
+
+          while (left < right) {
+            const mid = Math.floor((left + right + 1) / 2);
+            const testText = tag.text.slice(0, mid);
+            if (measureTextCached(testText) <= maxTextWidth) {
+              left = mid;
+              truncatedText = testText;
+            } else {
+              right = mid - 1;
+            }
+          }
+
+          if (truncatedText.length > 0) {
+            const displayText = truncatedText + ellipsis;
+            const truncatedWidth = measureTextCached(displayText) + tagPadding * 2;
+            currentLine.push({ tag, displayText, width: truncatedWidth });
+            processedTags++;
+          }
+        }
+        break;
+      }
+    } else if (tagWidth <= availableWidth - currentLineWidth) {
+      currentLine.push({ tag, displayText: tag.text, width: tagWidth });
+      currentLineWidth += tagWidth + gap;
+      processedTags++;
+    } else {
+      if (currentLine.length > 0) {
+        lines.push(currentLine);
+      }
+      currentLine = [{ tag, displayText: tag.text, width: tagWidth }];
+      currentLineWidth = tagWidth + gap;
+      processedTags++;
+
+      if (lines.length >= maxLineCount) {
+        break;
+      }
+    }
+  }
+
+  if (currentLine.length > 0 && lines.length < maxLineCount) {
+    lines.push(currentLine);
+  }
+
+  return {
+    lines,
+    processedTags,
+    isTruncated: processedTags < tags.length,
   };
 }
 

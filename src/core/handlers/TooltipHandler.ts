@@ -6,10 +6,16 @@
  * is truncated or images need preview.
  */
 
-import { TooltipState, ImageTooltipState, SelectConfig, ImageConfig } from "../../types";
+import {
+  TooltipState,
+  ImageTooltipState,
+  SelectConfig,
+  ImageConfig,
+  TagsConfig,
+} from "../../types";
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
-import { getRenderResult } from "../../utils";
+import { calculateMaxTextRows, getRenderResult, layoutTags, layoutWrappedText } from "../../utils";
 
 // Constants for image tooltip
 const IMAGE_SIZE = 64;
@@ -52,7 +58,7 @@ export class TooltipHandler extends BaseHandler {
 
     // Tags tooltip
     if (renderResult.type === "tag" && renderResult.tags) {
-      this.handleTagsTooltip(cell, renderResult.tags.tags, cellPos, cellViewportX);
+      this.handleTagsTooltip(cell, renderResult.tags, cellPos, cellViewportX);
       return;
     }
 
@@ -82,44 +88,14 @@ export class TooltipHandler extends BaseHandler {
    */
   private handleTagsTooltip(
     cell: { rowIndex: number; columnIndex: number },
-    tags: { text: string; color?: string }[],
+    config: TagsConfig,
     cellPos: { width: number; y: number; height: number },
     cellViewportX: number,
   ): void {
-    const padding = 8;
-    const tagPadding = 4;
-    const gap = 4;
-    const availableWidth = cellPos.width - padding * 2;
+    const fontSize = this.getFontSize();
+    const { isTruncated } = layoutTags(this.ctx, config, cellPos.width, cellPos.height, fontSize);
 
-    let visibleCount = 0;
-    let usedWidth = 0;
-    let hasTruncation = false;
-
-    for (let i = 0; i < tags.length; i++) {
-      const tag = tags[i]!;
-      const tagWidth = this.ctx.measureText(tag.text).width + tagPadding * 2;
-
-      const remaining = tags.length - visibleCount;
-      const needMoreTag = remaining > 1;
-      const moreWidth = needMoreTag
-        ? this.ctx.measureText(`+${remaining - 1}`).width + tagPadding * 2 + gap
-        : 0;
-      const remainingSpace = availableWidth - usedWidth - moreWidth;
-
-      if (tagWidth <= remainingSpace) {
-        visibleCount++;
-        usedWidth += tagWidth + gap;
-      } else {
-        hasTruncation = true;
-        break;
-      }
-    }
-
-    if (visibleCount < tags.length) {
-      hasTruncation = true;
-    }
-
-    if (!hasTruncation) {
+    if (!isTruncated) {
       this.state.tooltip = null;
       return;
     }
@@ -129,7 +105,7 @@ export class TooltipHandler extends BaseHandler {
       x: cellViewportX,
       y: this.getCellViewportY(cell.rowIndex),
       width: cellPos.width,
-      content: { type: "tags", tags: tags },
+      content: { type: "tags", tags: config.tags },
     };
   }
 
@@ -253,14 +229,21 @@ export class TooltipHandler extends BaseHandler {
   private handleTextTooltip(
     cell: { rowIndex: number; columnIndex: number },
     text: string,
-    cellPos: { width: number; y: number },
+    cellPos: { width: number; y: number; height: number },
     cellViewportX: number,
   ): void {
     const padding = 8;
     const maxTextWidth = cellPos.width - padding * 2;
-    const textWidth = this.ctx.measureText(text).width;
+    const fontSize = this.getFontSize();
+    const lineHeight = fontSize * 1.5;
+    const maxRows = calculateMaxTextRows(cellPos.height, lineHeight, padding);
 
-    if (textWidth > maxTextWidth) {
+    const isTruncated =
+      maxRows > 1
+        ? layoutWrappedText(this.ctx, text, maxTextWidth, maxRows).isTruncated
+        : this.ctx.measureText(text).width > maxTextWidth;
+
+    if (isTruncated) {
       this.state.tooltip = {
         cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
         x: cellViewportX,
@@ -272,6 +255,11 @@ export class TooltipHandler extends BaseHandler {
     }
 
     this.state.tooltip = null;
+  }
+
+  private getFontSize(): number {
+    const match = this.ctx.font.match(/(\d+(?:\.\d+)?)px/);
+    return match ? Number(match[1]) : 13;
   }
 
   /**

@@ -37,6 +37,7 @@ export declare class TooltipHandler extends BaseHandler {
      * Handle text tooltip
      */
     private handleTextTooltip;
+    private getFontSize;
     /**
      * Update tooltip position on scroll
      */

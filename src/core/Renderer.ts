@@ -43,7 +43,14 @@ import {
   CellRendererRegistry,
   type CellRenderResult as StrategyCellRenderResult,
 } from "./renderers";
-import { truncateText, getDevicePixelRatio, resolveDisabled, getColumnField } from "../utils";
+import {
+  truncateText,
+  getDevicePixelRatio,
+  resolveDisabled,
+  getColumnField,
+  calculateMaxTextRows,
+  layoutWrappedText,
+} from "../utils";
 import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
 import { zhCN } from "../locale";
 
@@ -91,42 +98,14 @@ export class Renderer {
    * 根据单元格高度计算可显示行数
    */
   private calculateMaxRows(cellHeight: number, lineHeight: number, padding: number = 8): number {
-    return Math.max(1, Math.floor((cellHeight - padding * 2) / lineHeight));
+    return calculateMaxTextRows(cellHeight, lineHeight, padding);
   }
 
   /**
    * 多行文本换行
    */
   private wrapTextToLines(text: string, maxWidth: number, maxRows: number): string[] {
-    const lines: string[] = [];
-    let currentLine = "";
-
-    for (const char of text) {
-      const testLine = currentLine + char;
-      if (this.ctx.measureText(testLine).width > maxWidth) {
-        if (currentLine) lines.push(currentLine);
-        currentLine = char;
-        if (lines.length >= maxRows) break;
-      } else {
-        currentLine = testLine;
-      }
-    }
-    if (currentLine && lines.length < maxRows) {
-      lines.push(currentLine);
-    }
-
-    // 如果超出 maxRows，最后一行添加省略号
-    if (lines.length === maxRows && text.length > lines.join("").length) {
-      const lastLine = lines[lines.length - 1]!;
-      const ellipsis = "...";
-      let truncated = lastLine;
-      while (truncated.length > 0 && this.ctx.measureText(truncated + ellipsis).width > maxWidth) {
-        truncated = truncated.slice(0, -1);
-      }
-      lines[lines.length - 1] = truncated + ellipsis;
-    }
-
-    return lines;
+    return layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
   }
 
   // 性能监控
@@ -1261,7 +1240,6 @@ export class Renderer {
     },
   ): void {
     const viewportHeight = this.canvas.height / this.dpr;
-    const leafColumns = this.layoutManager.getLeafColumns();
 
     this.ctx.save();
 
@@ -1546,7 +1524,6 @@ export class Renderer {
   ): void {
     const layoutInfo = this.layoutManager.getLayoutInfo();
     const headerHeight = layoutInfo.headerHeight;
-    const leafColumns = this.layoutManager.getLeafColumns();
     const headerCells = this.layoutManager.getHeaderCells();
 
     this.ctx.save();

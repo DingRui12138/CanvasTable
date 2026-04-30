@@ -1,7 +1,7 @@
-var he = Object.defineProperty;
-var ce = (C, t, e) => t in C ? he(C, t, { enumerable: !0, configurable: !0, writable: !0, value: e }) : C[t] = e;
-var b = (C, t, e) => ce(C, typeof t != "symbol" ? t + "" : t, e);
-const Jt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", de = (() => {
+var ue = Object.defineProperty;
+var fe = (C, t, e) => t in C ? ue(C, t, { enumerable: !0, configurable: !0, writable: !0, value: e }) : C[t] = e;
+var b = (C, t, e) => fe(C, typeof t != "symbol" ? t + "" : t, e);
+const Jt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ge = (() => {
   const C = new Uint32Array(256);
   for (let t = 0; t < 256; t++) {
     let e = t;
@@ -11,7 +11,7 @@ const Jt = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
   }
   return C;
 })();
-function ue(C, t) {
+function me(C, t) {
   var s;
   const e = (s = t == null ? void 0 : t.formats) == null ? void 0 : s.find((i) => i.key === C.key);
   if (e != null && e.type && e.formatCode)
@@ -21,7 +21,7 @@ function ue(C, t) {
   if (C.type === "number")
     return { type: "number", formatCode: "General" };
 }
-function fe() {
+function pe() {
   const C = /* @__PURE__ */ new Map(), t = /* @__PURE__ */ new Map(), e = [], s = [{}];
   return {
     styles: s,
@@ -37,17 +37,17 @@ function fe() {
     }
   };
 }
-function ge(C) {
+function xe(C) {
   const t = C instanceof Date ? C : new Date(C);
   return Number.isNaN(t.getTime()) ? null : t.getTime() / 864e5 + 25569;
 }
-function me(C, t, e) {
+function we(C, t, e) {
   return C.rows.map((s) => ({
     kind: "body",
     cells: s.cells.map((i) => {
-      const o = ue(i.column, t);
+      const o = me(i.column, t);
       if ((o == null ? void 0 : o.type) === "date") {
-        const n = ge(i.rawValue);
+        const n = xe(i.rawValue);
         if (n !== null)
           return {
             value: n,
@@ -67,7 +67,7 @@ function me(C, t, e) {
     })
   }));
 }
-function pe(C, t) {
+function ye(C, t) {
   if (Array.isArray(t)) {
     const e = t.find((s) => s.key === C.key);
     if (e)
@@ -86,10 +86,10 @@ function te(C) {
 function Lt(C, t) {
   return `${te(t + 1)}${C + 1}`;
 }
-function xe(C) {
+function Ce(C) {
   return Math.max(0, C / 7).toFixed(2);
 }
-function we(C, t) {
+function be(C, t) {
   return C.map((e) => ({
     startRow: e.startRow + t,
     startCol: e.startCol,
@@ -97,7 +97,7 @@ function we(C, t) {
     endCol: e.endCol
   }));
 }
-function ye(C) {
+function ve(C) {
   for (const t of C)
     if (t.endRow < t.startRow || t.endCol < t.startCol)
       throw new Error(`Invalid merge range: ${JSON.stringify(t)}`);
@@ -108,7 +108,7 @@ function ye(C) {
         throw new Error(`Overlapping merge ranges: ${JSON.stringify(s)} and ${JSON.stringify(i)}`);
     }
 }
-function Ce(C, t, e) {
+function Re(C, t, e) {
   var o, n, r, a;
   const s = ((o = t == null ? void 0 : t.freeze) == null ? void 0 : o.xSplit) ?? (((n = t == null ? void 0 : t.freeze) == null ? void 0 : n.leftFixedColumns) === !1 ? 0 : C.leftFixedLeafColumnCount), i = ((r = t == null ? void 0 : t.freeze) == null ? void 0 : r.ySplit) ?? (((a = t == null ? void 0 : t.freeze) == null ? void 0 : a.header) === !1 ? 0 : e);
   if (!(s === 0 && i === 0))
@@ -118,22 +118,24 @@ function Ce(C, t, e) {
       topLeftCell: `${te(s + 1)}${i + 1}`
     };
 }
-function be(C) {
+function Ie(C) {
   const t = C.map(
-    (e, s) => e.width ? `<col min="${s + 1}" max="${s + 1}" width="${xe(e.width)}" customWidth="1"/>` : ""
+    (e, s) => e.width ? `<col min="${s + 1}" max="${s + 1}" width="${Ce(e.width)}" customWidth="1"/>` : ""
   ).filter(Boolean).join("");
   return t ? `<cols>${t}</cols>` : "";
 }
-function ve(C) {
+function Me(C) {
   return C ? `<sheetViews><sheetView workbookViewId="0"><pane xSplit="${C.xSplit}" ySplit="${C.ySplit}" topLeftCell="${C.topLeftCell}" state="frozen"/></sheetView></sheetViews>` : '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
 }
-function Re(C) {
+function Se(C) {
   if (C.length === 0)
     return "";
-  const t = C.map((e) => `<mergeCell ref="${Lt(e.startRow, e.startCol)}:${Lt(e.endRow, e.endCol)}"/>`).join("");
+  const t = C.map(
+    (e) => `<mergeCell ref="${Lt(e.startRow, e.startCol)}:${Lt(e.endRow, e.endCol)}"/>`
+  ).join("");
   return `<mergeCells count="${C.length}">${t}</mergeCells>`;
 }
-function Ie(C) {
+function Ee(C) {
   const t = C.numFmts.length ? `<numFmts count="${C.numFmts.length}">${C.numFmts.map((s) => `<numFmt numFmtId="${s.id}" formatCode="${bt(s.formatCode)}"/>`).join("")}</numFmts>` : "", e = (C.styles.length > 0 ? C.styles : [{}]).map(
     (s) => `<xf numFmtId="${s.numFmtId ?? 0}" fontId="0" fillId="0" borderId="0" xfId="0"${s.numFmtId ? ' applyNumberFormat="1"' : ""}/>`
   ).join("");
@@ -147,7 +149,7 @@ ${t}
 <cellXfs count="${C.styles.length > 0 ? C.styles.length : 1}">${e}</cellXfs>
 </styleSheet>`;
 }
-function Me(C) {
+function Te(C) {
   const t = C.rows.map((e, s) => {
     const i = s + 1, o = e.cells.map((n, r) => {
       const a = `${ee(r)}${i}`, l = n.styleId !== void 0 ? ` s="${n.styleId}"` : "";
@@ -156,15 +158,15 @@ function Me(C) {
     return `<row r="${i}">${o}</row>`;
   }).join("");
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${ve(C.freeze)}${be(C.columns)}<sheetData>${t}</sheetData>${Re(C.merges)}</worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${Me(C.freeze)}${Ie(C.columns)}<sheetData>${t}</sheetData>${Se(C.merges)}</worksheet>`;
 }
-function Se(C) {
+function De(C) {
   let t = 4294967295;
   for (const e of C)
-    t = de[(t ^ e) & 255] ^ t >>> 8;
+    t = ge[(t ^ e) & 255] ^ t >>> 8;
   return (t ^ 4294967295) >>> 0;
 }
-function Z(C, t, e) {
+function q(C, t, e) {
   C[t] = e & 255, C[t + 1] = e >>> 8 & 255;
 }
 function rt(C, t, e) {
@@ -209,7 +211,7 @@ function se(C) {
   const t = C.trim() || "Sheet1";
   return bt(t.slice(0, 31));
 }
-function Ee(C) {
+function He(C) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${C.map((e, s) => {
     const i = s + 1, o = e.map((n, r) => `<c r="${`${ee(r)}${i}`}" t="inlineStr"><is><t>${bt(n)}</t></is></c>`).join("");
@@ -220,15 +222,15 @@ function ie(C) {
   const t = [], e = [];
   let s = 0;
   for (const n of C) {
-    const r = Bt(n.name), a = Bt(n.content), l = Se(a), h = new Uint8Array(30 + r.length);
-    rt(h, 0, 67324752), Z(h, 4, 20), Z(h, 6, 0), Z(h, 8, 0), Z(h, 10, 0), Z(h, 12, 0), rt(h, 14, l), rt(h, 18, a.length), rt(h, 22, a.length), Z(h, 26, r.length), Z(h, 28, 0), h.set(r, 30), t.push(h, a);
+    const r = Bt(n.name), a = Bt(n.content), l = De(a), h = new Uint8Array(30 + r.length);
+    rt(h, 0, 67324752), q(h, 4, 20), q(h, 6, 0), q(h, 8, 0), q(h, 10, 0), q(h, 12, 0), rt(h, 14, l), rt(h, 18, a.length), rt(h, 22, a.length), q(h, 26, r.length), q(h, 28, 0), h.set(r, 30), t.push(h, a);
     const c = new Uint8Array(46 + r.length);
-    rt(c, 0, 33639248), Z(c, 4, 20), Z(c, 6, 20), Z(c, 8, 0), Z(c, 10, 0), Z(c, 12, 0), Z(c, 14, 0), rt(c, 16, l), rt(c, 20, a.length), rt(c, 24, a.length), Z(c, 28, r.length), Z(c, 30, 0), Z(c, 32, 0), Z(c, 34, 0), Z(c, 36, 0), rt(c, 38, 0), rt(c, 42, s), c.set(r, 46), e.push(c), s += h.length + a.length;
+    rt(c, 0, 33639248), q(c, 4, 20), q(c, 6, 20), q(c, 8, 0), q(c, 10, 0), q(c, 12, 0), q(c, 14, 0), rt(c, 16, l), rt(c, 20, a.length), rt(c, 24, a.length), q(c, 28, r.length), q(c, 30, 0), q(c, 32, 0), q(c, 34, 0), q(c, 36, 0), rt(c, 38, 0), rt(c, 42, s), c.set(r, 46), e.push(c), s += h.length + a.length;
   }
   const i = Wt(e), o = new Uint8Array(22);
-  return rt(o, 0, 101010256), Z(o, 4, 0), Z(o, 6, 0), Z(o, 8, C.length), Z(o, 10, C.length), rt(o, 12, i.length), rt(o, 16, s), Z(o, 20, 0), Wt([...t, i, o]);
+  return rt(o, 0, 101010256), q(o, 4, 0), q(o, 6, 0), q(o, 8, C.length), q(o, 10, C.length), rt(o, 12, i.length), rt(o, 16, s), q(o, 20, 0), Wt([...t, i, o]);
 }
-function Te(C, t) {
+function ke(C, t) {
   const e = Array.from({ length: t }, () => []), s = [], i = (n, r, a) => {
     if (n.children && n.children.length > 0) {
       e[r][a] = { value: n.title, type: "string" };
@@ -245,26 +247,34 @@ function Te(C, t) {
   return {
     rows: e.map((n) => ({
       kind: "header",
-      cells: Array.from({ length: o }, (r, a) => n[a] ?? { value: "", type: "blank" })
+      cells: Array.from(
+        { length: o },
+        (r, a) => n[a] ?? { value: "", type: "blank" }
+      )
     })),
     merges: s
   };
 }
-function De(C, t, e) {
-  const i = (t == null ? void 0 : t.hierarchicalHeaders) !== !1 && C.headerDepth > 0 ? Te(C.columnTree, C.headerDepth) : {
-    rows: C.leafColumns.length > 0 ? [{
-      kind: "header",
-      cells: C.leafColumns.map((h) => ({ value: h.title, type: "string" }))
-    }] : [],
+function Oe(C, t, e) {
+  const i = (t == null ? void 0 : t.hierarchicalHeaders) !== !1 && C.headerDepth > 0 ? ke(C.columnTree, C.headerDepth) : {
+    rows: C.leafColumns.length > 0 ? [
+      {
+        kind: "header",
+        cells: C.leafColumns.map((h) => ({
+          value: h.title,
+          type: "string"
+        }))
+      }
+    ] : [],
     merges: []
-  }, o = fe(), n = me(C, t, o), r = we((t == null ? void 0 : t.merges) ?? C.bodyMerges, i.rows.length), a = [...i.merges, ...r];
-  ye(a);
-  const l = Ce(C, t, i.rows.length);
+  }, o = pe(), n = we(C, t, o), r = be((t == null ? void 0 : t.merges) ?? C.bodyMerges, i.rows.length), a = [...i.merges, ...r];
+  ve(a);
+  const l = Re(C, t, i.rows.length);
   return {
     sheetName: e,
     columns: C.leafColumns.map((h) => ({
       key: h.key,
-      width: pe(h, t == null ? void 0 : t.columnWidths)
+      width: ye(h, t == null ? void 0 : t.columnWidths)
     })),
     rows: [...i.rows, ...n],
     merges: a,
@@ -273,7 +283,7 @@ function De(C, t, e) {
     numFmts: o.numFmts
   };
 }
-function He(C) {
+function Pe(C) {
   const t = se(C.sheetName), e = [
     {
       name: "[Content_Types].xml",
@@ -307,16 +317,16 @@ function He(C) {
     },
     {
       name: "xl/styles.xml",
-      content: Ie(C)
+      content: Ee(C)
     },
     {
       name: "xl/worksheets/sheet1.xml",
-      content: Me(C)
+      content: Te(C)
     }
   ], s = ie(e), i = new ArrayBuffer(s.byteLength);
   return new Uint8Array(i).set(s), new Blob([i], { type: Jt });
 }
-function Bs(C, t = "Sheet1") {
+function Fs(C, t = "Sheet1") {
   const e = se(t), s = [
     {
       name: "[Content_Types].xml",
@@ -350,15 +360,15 @@ function Bs(C, t = "Sheet1") {
     },
     {
       name: "xl/worksheets/sheet1.xml",
-      content: Ee(C)
+      content: He(C)
     }
   ], i = ie(s), o = new ArrayBuffer(i.byteLength);
   return new Uint8Array(o).set(i), new Blob([o], { type: Jt });
 }
-function N(C) {
+function _(C) {
   return C.field ?? C.key;
 }
-function ke(C, t) {
+function Le(C, t) {
   const { thousandSeparator: e = !0, decimalPlaces: s, prefix: i = "", suffix: o = "" } = t ?? {};
   if (!isFinite(C))
     return String(C);
@@ -369,17 +379,17 @@ function ke(C, t) {
   }
   return i + n + o;
 }
-function As(C, t = 2) {
-  return ke(C * 100, { decimalPlaces: t, suffix: "%" });
+function Ns(C, t = 2) {
+  return Le(C * 100, { decimalPlaces: t, suffix: "%" });
 }
-function _s(C, t = "YYYY-MM-DD") {
+function zs(C, t = "YYYY-MM-DD") {
   const e = C instanceof Date ? C : new Date(C);
   if (isNaN(e.getTime()))
     return String(C);
   const s = e.getFullYear(), i = String(e.getMonth() + 1).padStart(2, "0"), o = String(e.getDate()).padStart(2, "0"), n = String(e.getHours()).padStart(2, "0"), r = String(e.getMinutes()).padStart(2, "0"), a = String(e.getSeconds()).padStart(2, "0");
   return t.replace("YYYY", String(s)).replace("MM", i).replace("DD", o).replace("HH", n).replace("mm", r).replace("ss", a);
 }
-function Fs(C, t = "Yes", e = "No") {
+function Vs(C, t = "Yes", e = "No") {
   return C ? t : e;
 }
 function ft(C, t, e = "...") {
@@ -388,7 +398,7 @@ function ft(C, t, e = "...") {
 function At() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
-function Oe(C, t) {
+function We(C, t) {
   let e = null;
   return function(...s) {
     e !== null && clearTimeout(e), e = setTimeout(() => {
@@ -396,7 +406,7 @@ function Oe(C, t) {
     }, t);
   };
 }
-function Ns(C, t) {
+function Ys(C, t) {
   let e = !1;
   return function(...s) {
     e || (C.apply(this, s), e = !0, setTimeout(() => {
@@ -404,7 +414,7 @@ function Ns(C, t) {
     }, t));
   };
 }
-function J(C, t, e) {
+function Z(C, t, e) {
   return Math.min(Math.max(C, t), e);
 }
 function _t(C) {
@@ -417,7 +427,7 @@ function _t(C) {
     Object.prototype.hasOwnProperty.call(C, e) && (t[e] = _t(C[e]));
   return t;
 }
-function Pe(C, t) {
+function Be(C, t) {
   if (C === t)
     return !0;
   if (typeof C != typeof t)
@@ -430,11 +440,11 @@ function Pe(C, t) {
   if (i.length !== o.length)
     return !1;
   for (const n of i)
-    if (!Object.prototype.hasOwnProperty.call(s, n) || !Pe(e[n], s[n]))
+    if (!Object.prototype.hasOwnProperty.call(s, n) || !Be(e[n], s[n]))
       return !1;
   return !0;
 }
-function zs(C, t) {
+function Xs(C, t) {
   const e = t.split(".");
   let s = C;
   for (const i of e) {
@@ -444,7 +454,7 @@ function zs(C, t) {
   }
   return s;
 }
-function Vs(C, t, e) {
+function $s(C, t, e) {
   const s = t.split(".");
   let i = C;
   for (let o = 0; o < s.length - 1; o++) {
@@ -463,16 +473,83 @@ function Ft(C, t, e) {
   }
   return s;
 }
-function Ys(C, t, e, s) {
+function Gs(C, t, e, s) {
   return C.font = `${e}px ${s}`, {
     width: C.measureText(t).width,
     height: e
   };
 }
+function oe(C, t, e = 8) {
+  return Math.max(1, Math.floor((C - e * 2) / t));
+}
+function ne(C, t, e, s) {
+  const i = [];
+  let o = "";
+  for (const a of t) {
+    const l = o + a;
+    if (C.measureText(l).width > e) {
+      if (o && i.push(o), o = a, i.length >= s)
+        break;
+    } else
+      o = l;
+  }
+  o && i.length < s && i.push(o);
+  const n = i.join(""), r = t.length > n.length;
+  if (r && i.length === s) {
+    const a = "...";
+    let l = i[i.length - 1] ?? "";
+    for (; l.length > 0 && C.measureText(l + a).width > e; )
+      l = l.slice(0, -1);
+    i[i.length - 1] = l + a;
+  }
+  return { lines: i, isTruncated: r };
+}
+function re(C, t, e, s, i) {
+  const l = "...", h = i + 8, c = e - 8 * 2, d = Math.max(1, Math.floor((s - 8 * 2) / (h + 2))), u = Math.min(t.maxRows ?? d, d), f = t.tags ?? [], g = /* @__PURE__ */ new Map(), m = (S) => {
+    let E = g.get(S);
+    return E === void 0 && (E = C.measureText(S).width, g.set(S, E)), E;
+  }, p = (S) => {
+    const E = `+${S}`;
+    return m(E) + 4 * 2;
+  }, w = (S) => m(S.text) + 4 * 2, x = m(l), y = [];
+  let v = [], R = 0, I = 0;
+  for (let S = 0; S < f.length; S++) {
+    const E = f[S], T = w(E), D = y.length >= u - 1, H = f.length - S;
+    if (D) {
+      const k = H > 1 ? p(H - 1) + 4 : 0, O = c - R - k;
+      if (T <= O)
+        v.push({ tag: E, displayText: E.text, width: T }), R += T + 4, I++;
+      else {
+        const P = c - R - k;
+        if (P >= 4 * 2 + x + 10) {
+          const L = P - 8 - x;
+          let W = "", B = 0, A = E.text.length;
+          for (; B < A; ) {
+            const N = Math.floor((B + A + 1) / 2), Y = E.text.slice(0, N);
+            m(Y) <= L ? (B = N, W = Y) : A = N - 1;
+          }
+          if (W.length > 0) {
+            const N = W + l, Y = m(N) + 4 * 2;
+            v.push({ tag: E, displayText: N, width: Y }), I++;
+          }
+        }
+        break;
+      }
+    } else if (T <= c - R)
+      v.push({ tag: E, displayText: E.text, width: T }), R += T + 4, I++;
+    else if (v.length > 0 && y.push(v), v = [{ tag: E, displayText: E.text, width: T }], R = T + 4, I++, y.length >= u)
+      break;
+  }
+  return v.length > 0 && y.length < u && y.push(v), {
+    lines: y,
+    processedTags: I,
+    isTruncated: I < f.length
+  };
+}
 function yt() {
   return window.devicePixelRatio || 1;
 }
-function Xs(C, t) {
+function Us(C, t) {
   const e = document.createElement("canvas"), s = yt();
   e.width = C * s, e.height = t * s, e.style.width = `${C}px`, e.style.height = `${t}px`;
   const i = e.getContext("2d");
@@ -480,7 +557,7 @@ function Xs(C, t) {
     throw new Error("Failed to get 2D context");
   return i.scale(s, s), { canvas: e, ctx: i };
 }
-function $s(C) {
+function Ks(C) {
   let t = null, e = null;
   return function(...s) {
     e = s, t === null && (t = requestAnimationFrame(() => {
@@ -488,10 +565,10 @@ function $s(C) {
     }));
   };
 }
-function Le(C) {
+function Ae(C) {
   return C !== null && typeof C == "object" && typeof C.then == "function";
 }
-function Gs(C, t) {
+function js(C, t) {
   const e = URL.createObjectURL(C), s = document.createElement("a");
   s.href = e, s.download = t, document.body.appendChild(s), s.click(), document.body.removeChild(s), URL.revokeObjectURL(e);
 }
@@ -503,11 +580,11 @@ function Nt(C, t = ",") {
   }).join(t)).join(`
 `);
 }
-function st(C, t, e) {
+function et(C, t, e) {
   return C === void 0 ? !1 : typeof C == "function" ? C(t, e) : C;
 }
 function lt(C, t, e) {
-  const s = N(C), i = t.data[s];
+  const s = _(C), i = t.data[s];
   let o = {
     text: String(i ?? ""),
     type: C.type ?? "text"
@@ -528,9 +605,9 @@ function lt(C, t, e) {
     checked: !!i
   }), o;
 }
-function oe(C, t, e) {
+function ae(C, t, e) {
   var n, r;
-  const s = N(C), i = t.data[s], o = lt(C, t, e);
+  const s = _(C), i = t.data[s], o = lt(C, t, e);
   if (o.type === "switch" && o.switch)
     return o.switch.checked ? "是" : "否";
   if (o.type === "checkbox" && o.checkbox)
@@ -584,7 +661,7 @@ function oe(C, t, e) {
       return String(i ?? "");
   }
 }
-class Us {
+class Qs {
   constructor(t = 100) {
     b(this, "cache");
     b(this, "maxSize");
@@ -642,7 +719,7 @@ class Us {
     return this.cache.keys();
   }
 }
-const We = {
+const _e = {
   text: "search",
   link: "search",
   number: "range",
@@ -654,26 +731,26 @@ const We = {
   date: "dateRange",
   checkbox: "boolean",
   switch: "boolean"
-}, Be = ["button", "buttons", "image"];
-function Ae(C) {
+}, Fe = ["button", "buttons", "image"];
+function Ne(C) {
   var e, s;
   if ((e = C.filter) != null && e.mode)
     return C.filter.mode;
   if ((s = C.filter) != null && s.disabled)
     return null;
   const t = C.type ?? "text";
-  return Be.includes(t) ? null : We[t] ?? "search";
+  return Fe.includes(t) ? null : _e[t] ?? "search";
 }
-const _e = 100, Fe = 100;
-function ne(C, t, e = 0) {
+const ze = 100, Ve = 100;
+function le(C, t, e = 0) {
   var n;
   if ((n = C.filter) != null && n.options && C.filter.options.length > 0)
     return C.filter.options;
   if (!t || t.length === 0)
     return [];
-  const s = N(C), i = t.slice(e, e + _e), o = /* @__PURE__ */ new Map();
+  const s = _(C), i = t.slice(e, e + ze), o = /* @__PURE__ */ new Map();
   for (let r = 0; r < i.length; r++) {
-    const a = i[r], l = a.data[s], h = lt(C, a, e + r), c = Ne(h, l);
+    const a = i[r], l = a.data[s], h = lt(C, a, e + r), c = Ye(h, l);
     for (const d of c) {
       const u = String(d.value);
       o.has(u) || o.set(u, d);
@@ -681,7 +758,7 @@ function ne(C, t, e = 0) {
   }
   return Array.from(o.values());
 }
-function Ne(C, t) {
+function Ye(C, t) {
   var s, i, o, n;
   const e = [];
   if ((s = C.select) != null && s.options && e.push(...C.select.options), (i = C.tags) != null && i.options && e.push(
@@ -708,10 +785,10 @@ function Ne(C, t) {
       });
   return e;
 }
-function ze(C, t, e, s = Fe) {
+function Xe(C, t, e, s = Ve) {
   if (!e || e.trim() === "")
     return [];
-  const i = N(C), o = e.toLowerCase(), n = /* @__PURE__ */ new Map();
+  const i = _(C), o = e.toLowerCase(), n = /* @__PURE__ */ new Map();
   for (const r of t) {
     if (n.size >= s)
       break;
@@ -726,7 +803,7 @@ function ze(C, t, e, s = Fe) {
   }
   return Array.from(n.values());
 }
-class Ve {
+class $e {
   constructor() {
     b(this, "map", /* @__PURE__ */ new WeakMap());
     b(this, "counter", 0);
@@ -745,7 +822,7 @@ class Ve {
     this.map = /* @__PURE__ */ new WeakMap(), this.counter = 0;
   }
 }
-class Ye {
+class Ge {
   constructor() {
     b(this, "map", /* @__PURE__ */ new WeakMap());
     b(this, "counter", 0);
@@ -764,7 +841,7 @@ class Ye {
     this.map = /* @__PURE__ */ new WeakMap(), this.counter = 0;
   }
 }
-class Xe {
+class Ue {
   constructor() {
     b(this, "map", /* @__PURE__ */ new WeakMap());
   }
@@ -789,7 +866,7 @@ class Xe {
       this.incrementVersion(e);
   }
 }
-class $e {
+class Ke {
   constructor(t, e, s, i = 3e3) {
     /** 单元格缓存：key = rowId-columnId */
     b(this, "cellCache", /* @__PURE__ */ new Map());
@@ -937,7 +1014,7 @@ class $e {
   }
 }
 const Rt = 200;
-class Ge {
+class je {
   constructor(t, e) {
     b(this, "state", {
       rows: [],
@@ -956,7 +1033,7 @@ class Ge {
     /** 历史记录配置 */
     b(this, "historyOptions");
     /** 行版本管理器（用于渲染缓存） */
-    b(this, "rowVersionManager", new Xe());
+    b(this, "rowVersionManager", new Ue());
     this.historyOptions = {
       maxActions: (e == null ? void 0 : e.maxActions) ?? Rt
     };
@@ -971,7 +1048,7 @@ class Ge {
     this.state.loading = !0, this.state.error = null, this.state.filters = [], this.state.sort = [];
     try {
       let e;
-      typeof t == "function" ? e = await t() : Le(t) ? e = await t : e = t, this.state.rows = this.processRows(e), this.historyStack = [], this.redoStack = [], this.applyFiltersAndSort();
+      typeof t == "function" ? e = await t() : Ae(t) ? e = await t : e = t, this.state.rows = this.processRows(e), this.historyStack = [], this.redoStack = [], this.applyFiltersAndSort();
     } catch (e) {
       throw this.state.error = e instanceof Error ? e : new Error(String(e)), e;
     } finally {
@@ -1157,7 +1234,7 @@ class Ge {
       const i = this.state.filters.every((o) => {
         const n = e(this.state.columns, o.column);
         if (!n) return !0;
-        const r = s.data[N(n)];
+        const r = s.data[_(n)];
         return this.matchesFilter(r, o, s, n);
       });
       return i && s.children && this.applyFilters(s.children).length > 0 ? !0 : i;
@@ -1239,7 +1316,7 @@ class Ge {
       for (const n of this.state.sort) {
         const r = e(this.state.columns, n.column);
         if (!r) continue;
-        const a = N(r), l = i.data[a], h = o.data[a];
+        const a = _(r), l = i.data[a], h = o.data[a];
         let c = this.compareValues(l, h, r.type);
         if (c !== 0)
           return n.direction === "desc" ? -c : c;
@@ -1619,11 +1696,11 @@ class Ge {
         row: h,
         rowIndex: c,
         cells: r.map((d) => {
-          const u = h.data[N(d)];
+          const u = h.data[_(d)];
           return {
             column: d,
             rawValue: u,
-            displayValue: oe(d, h, c)
+            displayValue: ae(d, h, c)
           };
         })
       })),
@@ -1677,7 +1754,7 @@ class Ge {
     );
   }
 }
-const zt = 5, Vt = 2, Ue = 32, It = 150, Yt = 50, Xt = 500, at = class at {
+const zt = 5, Vt = 2, Qe = 32, It = 150, Yt = 50, Xt = 500, at = class at {
   constructor(t, e) {
     b(this, "layoutInfo");
     b(this, "visibleRange");
@@ -1725,7 +1802,7 @@ const zt = 5, Vt = 2, Ue = 32, It = 150, Yt = 50, Xt = 500, at = class at {
       enabled: (t == null ? void 0 : t.enabled) ?? !0,
       rowBufferSize: (t == null ? void 0 : t.rowBufferSize) ?? zt,
       columnBufferSize: (t == null ? void 0 : t.columnBufferSize) ?? Vt,
-      estimatedRowHeight: (t == null ? void 0 : t.estimatedRowHeight) ?? Ue,
+      estimatedRowHeight: (t == null ? void 0 : t.estimatedRowHeight) ?? Qe,
       estimatedColumnWidth: (t == null ? void 0 : t.estimatedColumnWidth) ?? It
     }, this.theme = e, this.layoutInfo = this.createEmptyLayoutInfo(), this.rowBands = this.createEmptyRowBands(), this.visibleRange = { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
   }
@@ -1808,11 +1885,11 @@ const zt = 5, Vt = 2, Ue = 32, It = 150, Yt = 50, Xt = 500, at = class at {
     return ((e = this.rowPinManager) == null ? void 0 : e.getPosition(t)) ?? null;
   }
   setRowHeight(t, e) {
-    const s = J(e, this.theme.row.minHeight, this.theme.row.maxHeight);
+    const s = Z(e, this.theme.row.minHeight, this.theme.row.maxHeight);
     this.rowHeightOverrides.set(t, s), this.hasRowHeightOverrides = !0, this.rowHeightsDirty = !0;
   }
   updateRowHeight(t, e) {
-    const s = J(e, this.theme.row.minHeight, this.theme.row.maxHeight);
+    const s = Z(e, this.theme.row.minHeight, this.theme.row.maxHeight);
     this.rowHeightOverrides.set(t, s), this.hasRowHeightOverrides = !0;
     const i = this.rowIndexByRow.get(t);
     if (i === void 0 || i < 0 || i >= this.rowHeights.length)
@@ -2097,7 +2174,7 @@ const zt = 5, Vt = 2, Ue = 32, It = 150, Yt = 50, Xt = 500, at = class at {
     const o = this.rowHeightFn;
     this.rowHeights = t.map((n, r) => {
       const a = this.rowHeightOverrides.get(n);
-      return a !== void 0 ? J(a, this.theme.row.minHeight, this.theme.row.maxHeight) : o ? o(n, r) : s;
+      return a !== void 0 ? Z(a, this.theme.row.minHeight, this.theme.row.maxHeight) : o ? o(n, r) : s;
     }), t.forEach((n, r) => {
       this.rowHeightByRow.set(n, this.rowHeights[r] ?? s), this.rowIndexByRow.set(n, r);
     }), this.rowOffsets = Array.from({ length: e }), this.rowOffsets[0] = this.layoutInfo.headerHeight;
@@ -2236,12 +2313,12 @@ const zt = 5, Vt = 2, Ue = 32, It = 150, Yt = 50, Xt = 500, at = class at {
       return s;
     }
     let e = t.width ?? this.config.estimatedColumnWidth ?? It;
-    return e = J(e, t.minWidth ?? Yt, t.maxWidth ?? Xt), e;
+    return e = Z(e, t.minWidth ?? Yt, t.maxWidth ?? Xt), e;
   }
   setColumnWidth(t, e) {
     const s = this.getColumnByKey(t);
     if (s) {
-      const i = J(
+      const i = Z(
         e,
         s.minWidth ?? Yt,
         s.maxWidth ?? Xt
@@ -3327,7 +3404,7 @@ const ot = {
     weekdays: ["日", "一", "二", "三", "四", "五", "六"],
     yearMonthFormat: "{year}年 {month}"
   }
-}, Ke = {
+}, qe = {
   emptyText: "No data",
   loadingText: "Loading...",
   contextMenu: {
@@ -3387,9 +3464,9 @@ const ot = {
   }
 }, Gt = {
   "zh-CN": ot,
-  "en-US": Ke
+  "en-US": qe
 };
-function je(C) {
+function Ze(C) {
   return typeof C == "object" && C !== null && ("preset" in C || "messages" in C);
 }
 function Et(C) {
@@ -3416,13 +3493,13 @@ function Ut(C) {
     return mt(ot);
   if (typeof C == "string")
     return mt(Gt[C] ?? ot);
-  if (je(C)) {
+  if (Ze(C)) {
     const t = C.preset ?? "zh-CN";
     return mt(Gt[t] ?? ot, C.messages);
   }
   return mt(ot, C);
 }
-class Qe {
+class Je {
   constructor(t, e, s, i = ot) {
     b(this, "ctx");
     b(this, "theme");
@@ -3558,7 +3635,7 @@ class Qe {
     this.ctx.fillStyle = this.theme.colors.dropdown.background, this.ctx.strokeStyle = this.theme.colors.dropdown.border, this.ctx.lineWidth = 1, this.ctx.shadowColor = this.theme.colors.shadow.color, this.ctx.shadowBlur = this.theme.colors.shadow.blur, this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX, this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY, this.ctx.beginPath(), this.ctx.roundRect(t, e, s, i, 4), this.ctx.fill(), this.ctx.stroke(), this.ctx.shadowColor = "transparent", this.ctx.shadowBlur = 0, this.ctx.shadowOffsetX = 0, this.ctx.shadowOffsetY = 0;
   }
 }
-class qe {
+class ts {
   constructor(t, e, s = ot) {
     b(this, "ctx");
     b(this, "theme");
@@ -3627,21 +3704,21 @@ class qe {
         T === r && (this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg, this.ctx.fillRect(e, H, i, d));
         const k = e + l, O = H + (d - v) / 2;
         this.ctx.strokeStyle = D.checked ? this.theme.colors.checkbox.checkedBg : this.theme.colors.checkbox.border, this.ctx.lineWidth = 1, this.ctx.beginPath(), this.ctx.roundRect(k, O, v, v, 2), this.ctx.stroke(), D.checked && (this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg, this.ctx.beginPath(), this.ctx.roundRect(k, O, v, v, 2), this.ctx.fill(), this.ctx.strokeStyle = this.theme.colors.checkbox.checkmark, this.ctx.lineWidth = 2, this.ctx.beginPath(), this.ctx.moveTo(k + 3, O + 7), this.ctx.lineTo(k + 6, O + 10), this.ctx.lineTo(k + 11, O + 4), this.ctx.stroke()), this.ctx.fillStyle = this.theme.colors.dropdown.text, this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`, this.ctx.textBaseline = "middle";
-        const L = k + v + R, P = i - l * 2 - v - R, B = String(D.value);
-        if (/^#[0-9A-Fa-f]{6}$/.test(B)) {
-          const V = H + (d - 16) / 2, Y = L;
-          this.ctx.fillStyle = B, this.ctx.beginPath(), this.ctx.roundRect(Y, V, 16, 16, 2), this.ctx.fill(), this.ctx.strokeStyle = this.theme.colors.dropdown.border, this.ctx.lineWidth = 1, this.ctx.stroke(), this.ctx.fillStyle = this.theme.colors.dropdown.text;
-          const _ = Y + 16 + 6, F = P - 16 - 6, $ = ft(
-            B.toUpperCase(),
-            Math.floor(F / (this.theme.font.size * 0.6))
+        const P = k + v + R, L = i - l * 2 - v - R, W = String(D.value);
+        if (/^#[0-9A-Fa-f]{6}$/.test(W)) {
+          const N = H + (d - 16) / 2, Y = P;
+          this.ctx.fillStyle = W, this.ctx.beginPath(), this.ctx.roundRect(Y, N, 16, 16, 2), this.ctx.fill(), this.ctx.strokeStyle = this.theme.colors.dropdown.border, this.ctx.lineWidth = 1, this.ctx.stroke(), this.ctx.fillStyle = this.theme.colors.dropdown.text;
+          const z = Y + 16 + 6, V = L - 16 - 6, $ = ft(
+            W.toUpperCase(),
+            Math.floor(V / (this.theme.font.size * 0.6))
           );
-          this.ctx.fillText($, _, H + d / 2);
+          this.ctx.fillText($, z, H + d / 2);
         } else {
           const A = ft(
             D.label,
-            Math.floor(P / (this.theme.font.size * 0.6))
+            Math.floor(L / (this.theme.font.size * 0.6))
           );
-          this.ctx.fillText(A, L, H + d / 2);
+          this.ctx.fillText(A, P, H + d / 2);
         }
       }
       if (this.ctx.restore(), o.length > u) {
@@ -3733,25 +3810,25 @@ class qe {
     D < e && (D = e), D + y > e + i && (D = e + i - y);
     const H = S + d + u, k = r === "startDate" ? o : n;
     this.ctx.save(), this.ctx.fillStyle = this.theme.colors.dropdown.background, this.ctx.shadowColor = this.theme.colors.shadow.color, this.ctx.shadowBlur = this.theme.colors.shadow.blur, this.ctx.shadowOffsetX = this.theme.colors.shadow.offsetX, this.ctx.shadowOffsetY = this.theme.colors.shadow.offsetY, this.ctx.beginPath(), this.ctx.roundRect(D, H, y, x, 6), this.ctx.fill(), this.ctx.shadowColor = "transparent", this.ctx.shadowBlur = 0, this.ctx.shadowOffsetX = 0, this.ctx.shadowOffsetY = 0, this.ctx.strokeStyle = this.theme.colors.dropdown.border, this.ctx.lineWidth = 1, this.ctx.stroke();
-    const O = this.locale.calendar.months[l] ?? String(l + 1), L = this.locale.calendar.yearMonthFormat.replace("{year}", String(a)).replace("{month}", O);
-    this.ctx.fillStyle = this.theme.colors.dropdown.text, this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`, this.ctx.textAlign = "center", this.ctx.textBaseline = "middle", this.ctx.fillText(L, D + y / 2, H + f / 2);
-    const P = 6, B = D + 20, W = D + y - 20, A = H + f / 2;
-    this.ctx.fillStyle = this.theme.colors.placeholderText, this.ctx.beginPath(), this.ctx.moveTo(B + P, A - P), this.ctx.lineTo(B - P, A), this.ctx.lineTo(B + P, A + P), this.ctx.closePath(), this.ctx.fill(), this.ctx.beginPath(), this.ctx.moveTo(W - P, A - P), this.ctx.lineTo(W + P, A), this.ctx.lineTo(W - P, A + P), this.ctx.closePath(), this.ctx.fill();
-    const V = this.locale.calendar.weekdays, Y = (y - p * 2) / 7;
+    const O = this.locale.calendar.months[l] ?? String(l + 1), P = this.locale.calendar.yearMonthFormat.replace("{year}", String(a)).replace("{month}", O);
+    this.ctx.fillStyle = this.theme.colors.dropdown.text, this.ctx.font = `bold ${this.theme.font.size}px ${this.theme.font.family}`, this.ctx.textAlign = "center", this.ctx.textBaseline = "middle", this.ctx.fillText(P, D + y / 2, H + f / 2);
+    const L = 6, W = D + 20, B = D + y - 20, A = H + f / 2;
+    this.ctx.fillStyle = this.theme.colors.placeholderText, this.ctx.beginPath(), this.ctx.moveTo(W + L, A - L), this.ctx.lineTo(W - L, A), this.ctx.lineTo(W + L, A + L), this.ctx.closePath(), this.ctx.fill(), this.ctx.beginPath(), this.ctx.moveTo(B - L, A - L), this.ctx.lineTo(B + L, A), this.ctx.lineTo(B - L, A + L), this.ctx.closePath(), this.ctx.fill();
+    const N = this.locale.calendar.weekdays, Y = (y - p * 2) / 7;
     this.ctx.font = `${this.theme.font.size - 1}px ${this.theme.font.family}`, this.ctx.fillStyle = this.theme.colors.placeholderText;
     for (let U = 0; U < 7; U++) {
-      const j = D + p + U * Y + Y / 2, et = H + f + g / 2;
-      this.ctx.fillText(V[U], j, et);
+      const J = D + p + U * Y + Y / 2, st = H + f + g / 2;
+      this.ctx.fillText(N[U], J, st);
     }
-    const F = new Date(a, l, 1).getDay(), $ = new Date(a, l + 1, 0).getDate(), G = /* @__PURE__ */ new Date();
+    const V = new Date(a, l, 1).getDay(), $ = new Date(a, l + 1, 0).getDate(), G = /* @__PURE__ */ new Date();
     G.setHours(0, 0, 0, 0), this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
     for (let U = 1; U <= $; U++) {
-      const j = F + U - 1, et = Math.floor(j / 7), X = j % 7, K = D + p + X * Y, dt = H + f + g + et * m, ht = K + Y / 2, wt = dt + m / 2, vt = new Date(a, l, U), re = k && vt.getTime() === k.getTime(), ae = h && vt.getTime() === h.getTime(), le = vt.getTime() === G.getTime();
-      if (re)
+      const J = V + U - 1, st = Math.floor(J / 7), X = J % 7, K = D + p + X * Y, dt = H + f + g + st * m, ht = K + Y / 2, wt = dt + m / 2, vt = new Date(a, l, U), he = k && vt.getTime() === k.getTime(), ce = h && vt.getTime() === h.getTime(), de = vt.getTime() === G.getTime();
+      if (he)
         this.ctx.fillStyle = this.theme.colors.primary, this.ctx.beginPath(), this.ctx.arc(ht, wt, m / 2 - 2, 0, Math.PI * 2), this.ctx.fill(), this.ctx.fillStyle = "#ffffff";
-      else if (ae)
+      else if (ce)
         this.ctx.fillStyle = this.theme.colors.rowHoverBackground, this.ctx.beginPath(), this.ctx.arc(ht, wt, m / 2 - 2, 0, Math.PI * 2), this.ctx.fill(), this.ctx.fillStyle = this.theme.colors.dropdown.text;
-      else if (le) {
+      else if (de) {
         this.ctx.fillStyle = this.theme.colors.primary, this.ctx.fillText(String(U), ht, wt), this.ctx.fillStyle = this.theme.colors.dropdown.text;
         continue;
       } else
@@ -3776,21 +3853,21 @@ class qe {
     return e.replace("YYYY", String(s)).replace("MM", i).replace("DD", o);
   }
 }
-function Ze(C) {
+function es(C) {
   C.shadowColor = "transparent", C.shadowBlur = 0, C.shadowOffsetX = 0, C.shadowOffsetY = 0;
 }
-function Je(C, t) {
+function ss(C, t) {
   C.shadowColor = t.colors.shadow.color, C.shadowBlur = t.colors.shadow.blur, C.shadowOffsetX = t.colors.shadow.offsetX, C.shadowOffsetY = t.colors.shadow.offsetY;
 }
 function Ct(C, t, e) {
   const s = e.radius ?? 6;
-  e.shadow && Je(C, t), C.fillStyle = e.fillStyle, C.beginPath(), C.roundRect(e.x, e.y, e.width, e.height, s), C.fill(), e.shadow && Ze(C), e.clip && (C.beginPath(), C.roundRect(e.x, e.y, e.width, e.height, s), C.clip()), e.strokeStyle && (C.strokeStyle = e.strokeStyle, C.lineWidth = 1, C.beginPath(), C.roundRect(e.x, e.y, e.width, e.height, s), C.stroke());
+  e.shadow && ss(C, t), C.fillStyle = e.fillStyle, C.beginPath(), C.roundRect(e.x, e.y, e.width, e.height, s), C.fill(), e.shadow && es(C), e.clip && (C.beginPath(), C.roundRect(e.x, e.y, e.width, e.height, s), C.clip()), e.strokeStyle && (C.strokeStyle = e.strokeStyle, C.lineWidth = 1, C.beginPath(), C.roundRect(e.x, e.y, e.width, e.height, s), C.stroke());
 }
 function Kt(C, t, e, s, i, o, n, r) {
   const a = C.globalAlpha;
   C.globalAlpha = t.colors.scrollbar.opacity, C.fillStyle = t.colors.scrollbar.track, C.fillRect(e, s, i, o), C.fillStyle = t.colors.scrollbar.thumb, C.fillRect(e, n, i, r), C.globalAlpha = a;
 }
-class ts {
+class is {
   constructor(t, e, s, i = ot) {
     b(this, "ctx");
     b(this, "theme");
@@ -3922,7 +3999,7 @@ class ts {
     }
   }
 }
-class es {
+class os {
   constructor(t, e, s, i, o, n = ot) {
     b(this, "ctx");
     b(this, "canvas");
@@ -4113,26 +4190,26 @@ class es {
     const S = new Date(o, n, 1).getDay(), E = new Date(o, n + 1, 0).getDate(), T = /* @__PURE__ */ new Date();
     T.setHours(0, 0, 0, 0), this.ctx.font = `${this.theme.font.size}px ${this.theme.font.family}`;
     for (let D = 1; D <= E; D++) {
-      const H = S + D - 1, k = Math.floor(H / 7), O = H % 7, L = e + d + O * R, P = s + l + h + k * c, B = new Date(o, n, D), W = B.getTime() === T.getTime(), A = r && B.getFullYear() === r.getFullYear() && B.getMonth() === r.getMonth() && B.getDate() === r.getDate(), V = a && B.getFullYear() === a.getFullYear() && B.getMonth() === a.getMonth() && B.getDate() === a.getDate();
+      const H = S + D - 1, k = Math.floor(H / 7), O = H % 7, P = e + d + O * R, L = s + l + h + k * c, W = new Date(o, n, D), B = W.getTime() === T.getTime(), A = r && W.getFullYear() === r.getFullYear() && W.getMonth() === r.getMonth() && W.getDate() === r.getDate(), N = a && W.getFullYear() === a.getFullYear() && W.getMonth() === a.getMonth() && W.getDate() === a.getDate();
       A ? (this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg, this.ctx.beginPath(), this.ctx.arc(
-        L + R / 2,
-        P + c / 2,
+        P + R / 2,
+        L + c / 2,
         Math.min(R, c) / 2 - 2,
         0,
         Math.PI * 2
-      ), this.ctx.fill(), this.ctx.fillStyle = "#ffffff") : V ? (this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg, this.ctx.beginPath(), this.ctx.arc(
-        L + R / 2,
-        P + c / 2,
+      ), this.ctx.fill(), this.ctx.fillStyle = "#ffffff") : N ? (this.ctx.fillStyle = this.theme.colors.dropdown.hoverBg, this.ctx.beginPath(), this.ctx.arc(
+        P + R / 2,
+        L + c / 2,
         Math.min(R, c) / 2 - 2,
         0,
         Math.PI * 2
-      ), this.ctx.fill(), this.ctx.fillStyle = this.theme.colors.dropdown.text) : W ? (this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg, this.ctx.beginPath(), this.ctx.arc(
-        L + R / 2,
-        P + c / 2,
+      ), this.ctx.fill(), this.ctx.fillStyle = this.theme.colors.dropdown.text) : B ? (this.ctx.fillStyle = this.theme.colors.checkbox.checkedBg, this.ctx.beginPath(), this.ctx.arc(
+        P + R / 2,
+        L + c / 2,
         Math.min(R, c) / 2 - 2,
         0,
         Math.PI * 2
-      ), this.ctx.fill(), this.ctx.fillStyle = "#ffffff") : this.ctx.fillStyle = this.theme.colors.dropdown.text, this.ctx.fillText(String(D), L + R / 2, P + c / 2);
+      ), this.ctx.fill(), this.ctx.fillStyle = "#ffffff") : this.ctx.fillStyle = this.theme.colors.dropdown.text, this.ctx.fillText(String(D), P + R / 2, L + c / 2);
     }
     this.ctx.strokeStyle = this.theme.colors.dropdown.border, this.ctx.lineWidth = 1, this.ctx.beginPath(), this.ctx.roundRect(e, s, i, f, 6), this.ctx.stroke(), this.ctx.restore();
   }
@@ -4245,7 +4322,7 @@ class jt extends nt {
     return e == null ? "" : s.formatter ? s.formatter(e, i, s) : String(e);
   }
 }
-class ss extends nt {
+class ns extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "number");
@@ -4265,7 +4342,7 @@ class ss extends nt {
     return e == null ? "" : s.formatter ? s.formatter(e, i, s) : typeof e == "number" ? e.toLocaleString() : String(e);
   }
 }
-class is extends nt {
+class rs extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "checkbox");
@@ -4275,7 +4352,7 @@ class is extends nt {
     return s.fillStyle = g ? i.colors.checkbox.disabledBg : i.colors.button.background, s.strokeStyle = i.colors.checkbox.border, s.lineWidth = 1, s.beginPath(), s.roundRect(u, f, d, d, 3), s.fill(), s.stroke(), c.indeterminate ? (s.strokeStyle = g ? i.colors.checkbox.border : i.colors.checkbox.checkedBg, s.lineWidth = 2, s.beginPath(), s.moveTo(u + 4, f + d / 2), s.lineTo(u + d - 4, f + d / 2), s.stroke()) : c.checked && (s.strokeStyle = g ? i.colors.checkbox.border : i.colors.checkbox.checkedBg, s.lineWidth = 2, s.lineCap = "round", s.lineJoin = "round", s.beginPath(), s.moveTo(u + 4, f + d / 2), s.lineTo(u + d / 2 - 1, f + d - 5), s.lineTo(u + d - 3, f + 4), s.stroke()), { type: "checkbox", config: c };
   }
 }
-class os extends nt {
+class as extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "radio");
@@ -4306,7 +4383,7 @@ class os extends nt {
     return s.restore(), { type: "radio", config: c };
   }
 }
-class ns extends nt {
+class ls extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "button");
@@ -4386,7 +4463,7 @@ class ns extends nt {
     } : { r: 0, g: 0, b: 0 };
   }
 }
-class rs extends nt {
+class hs extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "switch");
@@ -4394,8 +4471,8 @@ class rs extends nt {
   render(e) {
     const { ctx: s, theme: i, x: o, y: n, width: r, height: a, value: l, isDisabled: h, switchAnimation: c } = e, d = l, u = 44, f = 22, g = 18, m = o + (r - u) / 2, p = n + (a - f) / 2, w = f / 2, x = d.checked ?? !1, y = h ?? !1, v = (c == null ? void 0 : c.progress) ?? (x ? 1 : 0), R = u - g - 4, I = m + 2 + v * R, S = p + (f - g) / 2;
     s.save();
-    const E = y ? i.colors.switch.disabledOffBg : i.colors.switch.offBg, T = y ? i.colors.switch.disabledOnBg : i.colors.switch.onBg, D = this.hexToRgb(E), H = this.hexToRgb(T), k = Math.round(D.r + (H.r - D.r) * v), O = Math.round(D.g + (H.g - D.g) * v), L = Math.round(D.b + (H.b - D.b) * v);
-    return s.fillStyle = `rgb(${k}, ${O}, ${L})`, s.beginPath(), s.roundRect(m, p, u, f, w), s.fill(), s.fillStyle = i.colors.switch.thumb, s.beginPath(), s.arc(I + g / 2, S + g / 2, g / 2, 0, Math.PI * 2), s.fill(), s.shadowColor = i.colors.shadow.color, s.shadowBlur = i.colors.shadow.blur, s.shadowOffsetX = i.colors.shadow.offsetX, s.shadowOffsetY = i.colors.shadow.offsetY, s.restore(), { type: "switch", config: d };
+    const E = y ? i.colors.switch.disabledOffBg : i.colors.switch.offBg, T = y ? i.colors.switch.disabledOnBg : i.colors.switch.onBg, D = this.hexToRgb(E), H = this.hexToRgb(T), k = Math.round(D.r + (H.r - D.r) * v), O = Math.round(D.g + (H.g - D.g) * v), P = Math.round(D.b + (H.b - D.b) * v);
+    return s.fillStyle = `rgb(${k}, ${O}, ${P})`, s.beginPath(), s.roundRect(m, p, u, f, w), s.fill(), s.fillStyle = i.colors.switch.thumb, s.beginPath(), s.arc(I + g / 2, S + g / 2, g / 2, 0, Math.PI * 2), s.fill(), s.shadowColor = i.colors.shadow.color, s.shadowBlur = i.colors.shadow.blur, s.shadowOffsetX = i.colors.shadow.offsetX, s.shadowOffsetY = i.colors.shadow.offsetY, s.restore(), { type: "switch", config: d };
   }
   hexToRgb(e) {
     const s = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(e);
@@ -4407,7 +4484,7 @@ class rs extends nt {
   }
 }
 const Qt = 32;
-class as extends nt {
+class cs extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "progress");
@@ -4496,7 +4573,7 @@ class as extends nt {
     } : { r: 0, g: 0, b: 0 };
   }
 }
-const ls = 32, it = class it extends nt {
+const ds = 32, it = class it extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "image");
@@ -4559,12 +4636,12 @@ const ls = 32, it = class it extends nt {
     ), h && d.hoverable !== !1 && this.renderImageHover(s, i, y, v, p, w, x), { type: "image", config: d };
   }
   renderMultipleImages(e, s, i, o, n, r, a, l, h) {
-    const c = a.images, d = 4, u = this.getMaxImageSize(n, r, d, a), f = a.width ?? 32, g = a.height ?? 32, m = Math.min(f, u), p = Math.min(g, u), w = a.gap ?? 4, x = a.circle ? Math.min(m, p) / 2 : a.borderRadius ?? 0, y = a.showMoreCount !== !1, v = n - d * 2, R = r - d * 2, I = Math.max(1, Math.floor((v + w) / (m + w))), S = Math.max(1, Math.floor((R + w) / (p + w))), E = I * S, T = a.maxVisible ?? E, H = y && c.length > T ? Math.max(1, E - 1) : E, k = Math.max(1, Math.min(T, H)), O = c.length > k, L = O ? k : c.length, P = c.slice(0, L), B = O ? c.length - k : 0, W = L + (O && y ? 1 : 0), A = Math.max(1, Math.ceil(W / I)), V = Math.min(W, I), Y = V * m + Math.max(0, V - 1) * w, _ = A * p + Math.max(0, A - 1) * w;
-    let F = i + (n - Y) / 2;
-    F = Math.max(i + d, F);
-    const $ = o + (r - _) / 2;
-    for (let G = 0; G < P.length; G++) {
-      const U = P[G], j = Math.floor(G / I), et = G % I, X = F + et * (m + w), K = $ + j * (p + w), dt = l && a.hoverable !== !1 && h === G;
+    const c = a.images, d = 4, u = this.getMaxImageSize(n, r, d, a), f = a.width ?? 32, g = a.height ?? 32, m = Math.min(f, u), p = Math.min(g, u), w = a.gap ?? 4, x = a.circle ? Math.min(m, p) / 2 : a.borderRadius ?? 0, y = a.showMoreCount !== !1, v = n - d * 2, R = r - d * 2, I = Math.max(1, Math.floor((v + w) / (m + w))), S = Math.max(1, Math.floor((R + w) / (p + w))), E = I * S, T = a.maxVisible ?? E, H = y && c.length > T ? Math.max(1, E - 1) : E, k = Math.max(1, Math.min(T, H)), O = c.length > k, P = O ? k : c.length, L = c.slice(0, P), W = O ? c.length - k : 0, B = P + (O && y ? 1 : 0), A = Math.max(1, Math.ceil(B / I)), N = Math.min(B, I), Y = N * m + Math.max(0, N - 1) * w, z = A * p + Math.max(0, A - 1) * w;
+    let V = i + (n - Y) / 2;
+    V = Math.max(i + d, V);
+    const $ = o + (r - z) / 2;
+    for (let G = 0; G < L.length; G++) {
+      const U = L[G], J = Math.floor(G / I), st = G % I, X = V + st * (m + w), K = $ + J * (p + w), dt = l && a.hoverable !== !1 && h === G;
       if (e.fillStyle = s.colors.image.placeholderBg, e.beginPath(), x > 0 ? e.roundRect(X, K, m, p, x) : e.rect(X, K, m, p), e.fill(), it.failedImages.has(U)) {
         this.renderImageError(
           e,
@@ -4599,16 +4676,16 @@ const ls = 32, it = class it extends nt {
       ), dt && this.renderImageHover(e, s, X, K, m, p, x);
     }
     if (O && y) {
-      const G = Math.floor(L / I), U = L % I, j = F + U * (m + w), et = $ + G * (p + w), X = l && a.hoverable !== !1 && h === L;
+      const G = Math.floor(P / I), U = P % I, J = V + U * (m + w), st = $ + G * (p + w), X = l && a.hoverable !== !1 && h === P;
       this.renderMoreCount(
         e,
         s,
-        j,
-        et,
+        J,
+        st,
         m,
         p,
         x,
-        B,
+        W,
         X
       );
     }
@@ -4618,7 +4695,7 @@ const ls = 32, it = class it extends nt {
     e.fillStyle = s.colors.image.placeholderBg, e.beginPath(), a > 0 ? e.roundRect(i, o, n, r, a) : e.rect(i, o, n, r), e.fill(), l && (e.fillStyle = s.colors.placeholderText, e.font = `${Math.min(12, n / 4)}px ${s.font.family}`, e.textAlign = "center", e.textBaseline = "middle", e.fillText(l, i + n / 2, o + r / 2), e.textAlign = "left");
   }
   getMaxImageSize(e, s, i, o) {
-    const n = o.scaleWithRowHeight === !1 ? Math.min(s, ls) : s;
+    const n = o.scaleWithRowHeight === !1 ? Math.min(s, ds) : s;
     return Math.max(0, Math.min(e, n) - i * 2);
   }
   renderImageError(e, s, i, o, n, r, a, l) {
@@ -4671,7 +4748,7 @@ const ls = 32, it = class it extends nt {
  */
 b(it, "imageCache", /* @__PURE__ */ new Map()), b(it, "loadingImages", /* @__PURE__ */ new Set()), b(it, "failedImages", /* @__PURE__ */ new Set());
 let xt = it;
-class hs extends nt {
+class us extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "tag");
@@ -4680,66 +4757,33 @@ class hs extends nt {
     const { ctx: s, theme: i, x: o, y: n, width: r, height: a, value: l } = e, h = l, c = 8, { tags: d } = h;
     if (!d || d.length === 0)
       return { type: "tag", config: h };
-    const u = 4, f = i.font.size + u * 2, g = 4, m = 4, p = 2, w = "...", x = r - c * 2, y = Math.max(1, Math.floor((a - c * 2) / (f + p))), v = Math.min(h.maxRows ?? y, y), R = /* @__PURE__ */ new Map(), I = (B) => {
-      let W = R.get(B);
-      return W === void 0 && (W = s.measureText(B).width, R.set(B, W)), W;
-    }, S = (B) => {
-      const W = `+${B}`;
-      return I(W) + u * 2;
-    }, E = (B) => I(B.text) + u * 2, T = I(w), D = [];
-    let H = [], k = 0, O = 0;
-    for (let B = 0; B < d.length; B++) {
-      const W = d[B], A = E(W), V = D.length >= v - 1, Y = d.length - B;
-      if (V) {
-        const _ = Y > 1 ? S(Y - 1) + m : 0, F = x - k - _;
-        if (A <= F)
-          H.push({ tag: W, displayText: W.text, width: A }), k += A + m, O++;
-        else {
-          const $ = x - k - _;
-          if ($ >= u * 2 + T + 10) {
-            const G = $ - u * 2 - T;
-            let U = "", j = 0, et = W.text.length;
-            for (; j < et; ) {
-              const X = Math.floor((j + et + 1) / 2), K = W.text.slice(0, X);
-              I(K) <= G ? (j = X, U = K) : et = X - 1;
-            }
-            if (U.length > 0) {
-              const X = U + w, K = I(X) + u * 2;
-              H.push({ tag: W, displayText: X, width: K }), O++;
-            }
-          }
-          break;
-        }
-      } else if (A <= x - k)
-        H.push({ tag: W, displayText: W.text, width: A }), k += A + m, O++;
-      else if (H.length > 0 && D.push(H), H = [{ tag: W, displayText: W.text, width: A }], k = A + m, O++, D.length >= v)
-        break;
-    }
-    H.length > 0 && D.length < v && D.push(H);
-    const L = D.length * f + (D.length - 1) * p, P = n + (a - L) / 2;
-    for (let B = 0; B < D.length; B++) {
-      const W = D[B], A = P + B * (f + p);
-      let V = o + c;
-      for (const { tag: Y, displayText: _, width: F } of W) {
-        let $ = Y.bgColor ?? (i.colors.tagColors.default || "#f0f0f0"), G = Y.color ?? i.colors.cellText;
-        s.fillStyle = $, s.beginPath(), s.roundRect(V, A, F, f, g), s.fill(), s.fillStyle = G, s.font = `${i.font.size}px ${i.font.family}`, s.textBaseline = "middle";
-        const U = A + f / 2, j = V + (F - I(_)) / 2;
-        s.fillText(_, j, U), V += F + m;
+    const u = 4, f = i.font.size + u * 2, g = 4, m = 4, p = 2, w = /* @__PURE__ */ new Map(), x = (E) => {
+      let T = w.get(E);
+      return T === void 0 && (T = s.measureText(E).width, w.set(E, T)), T;
+    }, y = (E) => x(`+${E}`) + u * 2, { lines: v, processedTags: R } = re(s, h, r, a, i.font.size), I = v.length * f + (v.length - 1) * p, S = n + (a - I) / 2;
+    for (let E = 0; E < v.length; E++) {
+      const T = v[E], D = S + E * (f + p);
+      let H = o + c;
+      for (const { tag: k, displayText: O, width: P } of T) {
+        let L = k.bgColor ?? (i.colors.tagColors.default || "#f0f0f0"), W = k.color ?? i.colors.cellText;
+        s.fillStyle = L, s.beginPath(), s.roundRect(H, D, P, f, g), s.fill(), s.fillStyle = W, s.font = `${i.font.size}px ${i.font.family}`, s.textBaseline = "middle";
+        const B = D + f / 2, A = H + (P - x(O)) / 2;
+        s.fillText(O, A, B), H += P + m;
       }
-      if (B === D.length - 1) {
-        const Y = d.length - O;
-        if (Y > 0) {
-          const _ = `+${Y}`, F = S(Y);
-          s.fillStyle = i.colors.moreCount.background, s.beginPath(), s.roundRect(V, A, F, f, g), s.fill(), s.fillStyle = i.colors.moreCount.text, s.font = `${i.font.size}px ${i.font.family}`, s.textBaseline = "middle";
-          const $ = A + f / 2, G = V + (F - I(_)) / 2;
-          s.fillText(_, G, $);
+      if (E === v.length - 1) {
+        const k = d.length - R;
+        if (k > 0) {
+          const O = `+${k}`, P = y(k);
+          s.fillStyle = i.colors.moreCount.background, s.beginPath(), s.roundRect(H, D, P, f, g), s.fill(), s.fillStyle = i.colors.moreCount.text, s.font = `${i.font.size}px ${i.font.family}`, s.textBaseline = "middle";
+          const L = D + f / 2, W = H + (P - x(O)) / 2;
+          s.fillText(O, W, L);
         }
       }
     }
     return { type: "tag", config: h };
   }
 }
-class cs extends nt {
+class fs extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "date");
@@ -4774,7 +4818,7 @@ class cs extends nt {
     return s.replace("YYYY", String(i)).replace("MM", o).replace("DD", n).replace("HH", r).replace("mm", a).replace("ss", l);
   }
 }
-class ds extends nt {
+class gs extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "select");
@@ -4831,7 +4875,7 @@ class ds extends nt {
     return r && n.push(r), n.slice(0, o);
   }
 }
-class us extends nt {
+class ms extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "input");
@@ -4907,7 +4951,7 @@ class us extends nt {
     return s.slice(0, c) + o;
   }
 }
-class fs extends nt {
+class ps extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "rating");
@@ -4970,14 +5014,14 @@ class fs extends nt {
     return n;
   }
 }
-const gs = 32;
-class ms extends nt {
+const xs = 32;
+class ws extends nt {
   constructor() {
     super(...arguments);
     b(this, "type", "color");
   }
   render(e) {
-    const { ctx: s, theme: i, x: o, y: n, width: r, height: a, value: l, isDisabled: h } = e, c = l, u = Math.min(gs - 8 * 2, 24), f = o + (r - u) / 2, g = n + (a - u) / 2;
+    const { ctx: s, theme: i, x: o, y: n, width: r, height: a, value: l, isDisabled: h } = e, c = l, u = Math.min(xs - 8 * 2, 24), f = o + (r - u) / 2, g = n + (a - u) / 2;
     return s.fillStyle = c.value || "#ffffff", s.fillRect(f, g, u, u), s.strokeStyle = h ? "#bdbdbd" : "#d9d9d9", s.lineWidth = 1, s.strokeRect(f, g, u, u), c.showText && (s.fillStyle = this.getContrastColor(c.value || "#ffffff"), s.font = `${i.font.size}px ${i.font.family}`, s.textAlign = "center", s.textBaseline = "middle", s.fillText(c.value || "", f + u / 2, g + u / 2)), { type: "color", config: c };
   }
   getContrastColor(e) {
@@ -4993,7 +5037,7 @@ class ms extends nt {
     } : { r: 255, g: 255, b: 255 };
   }
 }
-class ps {
+class ys {
   constructor() {
     b(this, "enabled", !1);
     b(this, "stats", /* @__PURE__ */ new Map());
@@ -5130,18 +5174,18 @@ class ps {
   }
 }
 let Mt = null;
-function xs() {
-  return Mt || (Mt = new ps()), Mt;
+function Cs() {
+  return Mt || (Mt = new ys()), Mt;
 }
-class ws {
+class bs {
   constructor(t = ot) {
     b(this, "renderers", /* @__PURE__ */ new Map());
     b(this, "defaultRenderer");
     b(this, "performanceMonitor");
     b(this, "locale");
-    this.locale = t, this.register(new jt()), this.register(new ss()), this.register(new is()), this.register(new os());
-    const e = new ns();
-    this.register(e), this.renderers.set("buttons", e), this.register(new rs()), this.register(new as()), this.register(new xt()), this.register(new hs()), this.register(new cs()), this.register(new ds()), this.register(new us()), this.register(new fs()), this.register(new ms()), this.defaultRenderer = new jt(), this.performanceMonitor = xs();
+    this.locale = t, this.register(new jt()), this.register(new ns()), this.register(new rs()), this.register(new as());
+    const e = new ls();
+    this.register(e), this.renderers.set("buttons", e), this.register(new hs()), this.register(new cs()), this.register(new xt()), this.register(new us()), this.register(new fs()), this.register(new gs()), this.register(new ms()), this.register(new ps()), this.register(new ws()), this.defaultRenderer = new jt(), this.performanceMonitor = Cs();
   }
   setLocale(t) {
     this.locale = t;
@@ -5208,7 +5252,7 @@ class ws {
     return { ...t, locale: t.locale ?? this.locale };
   }
 }
-class ys {
+class vs {
   constructor(t) {
     b(this, "measurementEngine");
     b(this, "layoutResults", []);
@@ -5306,7 +5350,7 @@ class ys {
     }
   }
 }
-class Cs {
+class Rs {
   constructor(t) {
     b(this, "ctx");
     this.ctx = t;
@@ -5357,7 +5401,7 @@ class Cs {
     return { x: o, y: r, width: n - o, height: a - r };
   }
 }
-class bs {
+class Is {
   constructor(t, e, s) {
     b(this, "ctx");
     b(this, "layoutEngine");
@@ -5473,8 +5517,8 @@ class bs {
     return { x: o, y: r, width: n - o, height: a - r };
   }
 }
-const vs = 32;
-class Rs {
+const Ms = 32;
+class Ss {
   constructor(t, e, s, i = ot) {
     b(this, "canvas");
     b(this, "ctx");
@@ -5527,16 +5571,16 @@ class Rs {
     b(this, "currentRowResizeState");
     // 渲染缓存相关
     b(this, "renderCache", null);
-    b(this, "rowIdManager", new Ve());
-    b(this, "columnIdManager", new Ye());
+    b(this, "rowIdManager", new $e());
+    b(this, "columnIdManager", new Ge());
     // 图片加载完成后的渲染触发回调
     b(this, "onImageLoaded", null);
-    this.canvas = t, this.ctx = this.getContext(t), this.theme = e, this.layoutManager = s, this.locale = i, this.dpr = yt(), this.offscreenCanvas = document.createElement("canvas"), this.offscreenCtx = this.getContext(this.offscreenCanvas), this.cellRendererRegistry = new ws(i), this.dropdownRenderer = new Qe(
+    this.canvas = t, this.ctx = this.getContext(t), this.theme = e, this.layoutManager = s, this.locale = i, this.dpr = yt(), this.offscreenCanvas = document.createElement("canvas"), this.offscreenCtx = this.getContext(this.offscreenCanvas), this.cellRendererRegistry = new bs(i), this.dropdownRenderer = new Je(
       this.ctx,
       this.theme,
       (o) => this.measureTextWidth(o),
       i
-    ), this.filterDropdownRenderer = new qe(this.ctx, this.theme, i), this.imageOverlayRenderer = new ts(
+    ), this.filterDropdownRenderer = new ts(this.ctx, this.theme, i), this.imageOverlayRenderer = new is(
       this.ctx,
       this.theme,
       {
@@ -5546,7 +5590,7 @@ class Rs {
         collectVisible: (o) => this.collectVisibleImage(o)
       },
       i
-    ), this.overlayRenderer = new es(
+    ), this.overlayRenderer = new os(
       this.canvas,
       this.ctx,
       this.theme,
@@ -5561,29 +5605,13 @@ class Rs {
    * 根据单元格高度计算可显示行数
    */
   calculateMaxRows(t, e, s = 8) {
-    return Math.max(1, Math.floor((t - s * 2) / e));
+    return oe(t, e, s);
   }
   /**
    * 多行文本换行
    */
   wrapTextToLines(t, e, s) {
-    const i = [];
-    let o = "";
-    for (const n of t) {
-      const r = o + n;
-      if (this.ctx.measureText(r).width > e) {
-        if (o && i.push(o), o = n, i.length >= s) break;
-      } else
-        o = r;
-    }
-    if (o && i.length < s && i.push(o), i.length === s && t.length > i.join("").length) {
-      const n = i[i.length - 1], r = "...";
-      let a = n;
-      for (; a.length > 0 && this.ctx.measureText(a + r).width > e; )
-        a = a.slice(0, -1);
-      i[i.length - 1] = a + r;
-    }
-    return i;
+    return ne(this.ctx, t, e, s).lines;
   }
   getContext(t) {
     const e = t.getContext("2d");
@@ -5782,7 +5810,7 @@ class Rs {
           f,
           g,
           x,
-          f.data[N(y)],
+          f.data[_(y)],
           R,
           l,
           v,
@@ -5918,25 +5946,25 @@ class Rs {
     this.endFrame(), this.ctx.restore();
   }
   renderHeaderCellMultiLevel(t, e, s, i, o, n, r, a, l, h = !1, c = !1, d = -1) {
-    var O, L;
+    var O, P;
     if (t.key.startsWith("__hidden_placeholder__")) {
-      const P = this.hoveredPlaceholderColumnIndex === d;
-      this.ctx.fillStyle = P ? this.theme.colors.hiddenPlaceholder.hoverBg : this.theme.colors.headerBackground, this.ctx.fillRect(e, s, i, o), this.ctx.strokeStyle = this.theme.colors.cellBorder, this.ctx.lineWidth = this.theme.border.width, this.ctx.strokeRect(e, s, i, o);
+      const L = this.hoveredPlaceholderColumnIndex === d;
+      this.ctx.fillStyle = L ? this.theme.colors.hiddenPlaceholder.hoverBg : this.theme.colors.headerBackground, this.ctx.fillRect(e, s, i, o), this.ctx.strokeStyle = this.theme.colors.cellBorder, this.ctx.lineWidth = this.theme.border.width, this.ctx.strokeRect(e, s, i, o);
       return;
     }
     const u = 8, g = t.reorderable !== !1 && h, m = g ? 10 : 0;
     this.ctx.fillStyle = this.theme.colors.headerBackground, this.ctx.fillRect(e, s, i, o), this.ctx.fillStyle = this.theme.colors.headerText, this.ctx.font = `${this.theme.font.headerSize}px ${this.theme.font.family}`, this.ctx.textBaseline = "middle";
-    const p = a.find((P) => P.column === t.key), w = (p == null ? void 0 : p.direction) ?? "none", x = t.sortable !== !1, y = !((O = t.children) != null && O.length) && x && (w !== "none" || h), v = y ? 20 : 0, R = l.some((P) => P.column === t.key), I = !((L = t.children) != null && L.length) && t.filterable && (R || h), S = I ? 20 : 0, E = i - u * 2 - v - S - m - (g ? 4 : 0), T = ft(t.title, Math.floor(E / 7)), D = t.align ?? "center";
+    const p = a.find((L) => L.column === t.key), w = (p == null ? void 0 : p.direction) ?? "none", x = t.sortable !== !1, y = !((O = t.children) != null && O.length) && x && (w !== "none" || h), v = y ? 20 : 0, R = l.some((L) => L.column === t.key), I = !((P = t.children) != null && P.length) && t.filterable && (R || h), S = I ? 20 : 0, E = i - u * 2 - v - S - m - (g ? 4 : 0), T = ft(t.title, Math.floor(E / 7)), D = t.align ?? "center";
     let H = e + u + m + (g ? 4 : 0);
     D === "center" ? (H = e + (i - this.ctx.measureText(T).width - v - S) / 2, g && (H = Math.max(H, e + u + m + 4))) : D === "right" && (H = e + i - u - this.ctx.measureText(T).width - v - S);
     const k = s + o / 2;
     if (this.ctx.fillText(T, H, k), g && this.renderDragHandle(e + u, s + o / 2), I) {
-      const P = e + i - u - 10;
+      const L = e + i - u - 10;
       y && this.renderSortIndicator(
-        P - 16,
+        L - 16,
         k,
         w === "none" ? "hover" : w
-      ), this.renderFilterIndicator(P, k, R);
+      ), this.renderFilterIndicator(L, k, R);
     } else y && this.renderSortIndicator(
       e + i - u - 10,
       k,
@@ -6008,7 +6036,7 @@ class Rs {
       if (!R) continue;
       const I = u[x.columnIndex];
       if (!I) continue;
-      const S = v.data[N(I)], T = ((w = a.hoveredCell) == null ? void 0 : w.rowIndex) !== void 0 && a.hoveredCell.rowIndex >= x.rowIndex && a.hoveredCell.rowIndex < x.rowIndex + x.rowspan ? this.theme.colors.rowHoverBackground : f, D = R.x - n, H = R.y - r;
+      const S = v.data[_(I)], T = ((w = a.hoveredCell) == null ? void 0 : w.rowIndex) !== void 0 && a.hoveredCell.rowIndex >= x.rowIndex && a.hoveredCell.rowIndex < x.rowIndex + x.rowspan ? this.theme.colors.rowHoverBackground : f, D = R.x - n, H = R.y - r;
       this.ctx.fillStyle = T, this.ctx.fillRect(D, H, R.width, R.height), this.renderCellWithPosition(
         I,
         v,
@@ -6026,13 +6054,13 @@ class Rs {
       const y = u[x];
       if (!y || this.layoutManager.isCellMerged(i, x) || this.layoutManager.getCellMerge(i, x))
         continue;
-      const R = s.data[N(y)], I = o.indexOf(x);
+      const R = s.data[_(y)], I = o.indexOf(x);
       let S;
       if (I !== -1) {
         let k = 0;
-        for (let L = 0; L < I; L++) {
-          const P = o[L];
-          P !== void 0 && (k += this.layoutManager.getColumnWidthByIndex(P));
+        for (let P = 0; P < I; P++) {
+          const L = o[P];
+          L !== void 0 && (k += this.layoutManager.getColumnWidthByIndex(L));
         }
         S = this.layoutManager.getColumnOffset(o[0]) - n + k;
       } else
@@ -6055,7 +6083,7 @@ class Rs {
   renderFixedColumnsContent(t, e, s, i, o, n, r) {
     var g, m, p;
     const a = this.canvas.height / this.dpr;
-    this.layoutManager.getLeafColumns(), this.ctx.save();
+    this.ctx.save();
     let l = 0;
     for (const w of s)
       l += this.layoutManager.getColumnWidthByIndex(w);
@@ -6083,31 +6111,31 @@ class Rs {
         if (h.has(k)) continue;
         const O = e[H.rowIndex];
         if (!O) continue;
-        const L = this.layoutManager.getMergedCellPosition(
+        const P = this.layoutManager.getMergedCellPosition(
           H.rowIndex,
           H.columnIndex
         );
-        if (!L) continue;
-        const P = T[H.columnIndex];
         if (!P) continue;
-        const B = O.data[N(P)];
-        let W = 0;
+        const L = T[H.columnIndex];
+        if (!L) continue;
+        const W = O.data[_(L)];
+        let B = 0;
         const A = i + this.layoutManager.getColumnOffset(H.columnIndex) - this.layoutManager.getColumnOffset(s[0]);
-        for (let F = 0; F < H.colspan; F++) {
-          const $ = H.columnIndex + F;
-          s.includes($) && (W += this.layoutManager.getColumnWidthByIndex($));
+        for (let V = 0; V < H.colspan; V++) {
+          const $ = H.columnIndex + V;
+          s.includes($) && (B += this.layoutManager.getColumnWidthByIndex($));
         }
-        const Y = ((p = r.hoveredCell) == null ? void 0 : p.rowIndex) !== void 0 && r.hoveredCell.rowIndex >= H.rowIndex && r.hoveredCell.rowIndex < H.rowIndex + H.rowspan ? this.theme.colors.rowHoverBackground : I, _ = L.y - o;
-        this.ctx.fillStyle = Y, this.ctx.fillRect(A, _, W, L.height), this.renderCellWithPosition(
-          P,
+        const Y = ((p = r.hoveredCell) == null ? void 0 : p.rowIndex) !== void 0 && r.hoveredCell.rowIndex >= H.rowIndex && r.hoveredCell.rowIndex < H.rowIndex + H.rowspan ? this.theme.colors.rowHoverBackground : I, z = P.y - o;
+        this.ctx.fillStyle = Y, this.ctx.fillRect(A, z, B, P.height), this.renderCellWithPosition(
+          L,
           O,
           H.rowIndex,
           H.columnIndex,
-          B,
-          A,
-          _,
           W,
-          L.height,
+          A,
+          z,
+          B,
+          P.height,
           r
         ), h.add(k);
       }
@@ -6126,19 +6154,19 @@ class Rs {
           D += this.layoutManager.getColumnWidthByIndex(H);
           continue;
         }
-        const L = this.layoutManager.getColumnWidthByIndex(H), P = x.data[N(k)];
+        const P = this.layoutManager.getColumnWidthByIndex(H), L = x.data[_(k)];
         this.renderCellWithPosition(
           k,
           x,
           w,
           H,
-          P,
+          L,
           D,
           R,
-          L,
+          P,
           v,
           r
-        ), D += L;
+        ), D += P;
       }
     }
     const f = c !== void 0 ? e[c] : void 0;
@@ -6176,7 +6204,7 @@ class Rs {
         continue;
       }
       this.ctx.fillStyle = u, this.ctx.fillRect(f, h, p, l);
-      const y = e.data[N(w)];
+      const y = e.data[_(w)];
       this.renderCellWithPosition(
         w,
         e,
@@ -6193,9 +6221,7 @@ class Rs {
   }
   renderFixedColumnsHeader(t, e, s, i, o, n, r) {
     var f;
-    const a = this.layoutManager.getLayoutInfo(), l = a.headerHeight;
-    this.layoutManager.getLeafColumns();
-    const h = this.layoutManager.getHeaderCells();
+    const a = this.layoutManager.getLayoutInfo(), l = a.headerHeight, h = this.layoutManager.getHeaderCells();
     this.ctx.save();
     let c = 0;
     for (const g of e)
@@ -6276,7 +6302,7 @@ class Rs {
     for (let f = i; f <= o; f++) {
       const g = t[f];
       if (!g) continue;
-      const m = e.data[N(g)];
+      const m = e.data[_(g)];
       this.renderCell(g, e, s, f, m, n);
     }
   }
@@ -6573,15 +6599,15 @@ class Rs {
       }
       if (m === "custom" && t.jsxRender) {
         this.measureRender("jsx", () => {
-          const H = t.jsxRender(), k = new Cs(this.ctx), O = new ys(k), L = new bs(this.ctx, O, this.theme), P = O.layout(H, 0, 0);
-          let B = 0;
-          for (const _ of P) {
-            const F = _.y + _.height;
-            F > B && (B = F);
+          const H = t.jsxRender(), k = new Rs(this.ctx), O = new vs(k), P = new Is(this.ctx, O, this.theme), L = O.layout(H, 0, 0);
+          let W = 0;
+          for (const z of L) {
+            const V = z.y + z.height;
+            V > W && (W = V);
           }
-          const W = o - n * 2;
-          let A, V, Y;
-          B <= W ? (A = (W - B) / 2, V = e + n, Y = s + n + A) : (A = (o - B) / 2, V = e + n, Y = s + A), L.render(H, V, Y);
+          const B = o - n * 2;
+          let A, N, Y;
+          W <= B ? (A = (B - W) / 2, N = e + n, Y = s + n + A) : (A = (o - W) / 2, N = e + n, Y = s + A), P.render(H, N, Y);
         });
         return;
       }
@@ -6604,13 +6630,13 @@ class Rs {
         let H = g, k = (p == null ? void 0 : p.color) ?? this.theme.colors.cellText;
         if (m === "link" && I && (H = I.text || I.link, k = (p == null ? void 0 : p.color) ?? this.theme.colors.linkColor), !H) return;
         this.ctx.fillStyle = k;
-        const O = (p == null ? void 0 : p.horizontalAlign) ?? r ?? "left", L = (p == null ? void 0 : p.verticalAlign) ?? "middle", P = this.theme.font.size, B = P * 1.5, W = i - n * 2, A = this.calculateMaxRows(o, B, n);
+        const O = (p == null ? void 0 : p.horizontalAlign) ?? r ?? "left", P = (p == null ? void 0 : p.verticalAlign) ?? "middle", L = this.theme.font.size, W = L * 1.5, B = i - n * 2, A = this.calculateMaxRows(o, W, n);
         if (A > 1) {
-          const V = this.wrapTextToLines(H, W, A), Y = V.length * B;
-          let _;
-          L === "top" ? _ = s + n : L === "bottom" ? _ = s + o - n - Y : _ = s + (o - Y) / 2, this.ctx.textBaseline = "top";
-          for (let F = 0; F < V.length; F++) {
-            const $ = V[F];
+          const N = this.wrapTextToLines(H, B, A), Y = N.length * W;
+          let z;
+          P === "top" ? z = s + n : P === "bottom" ? z = s + o - n - Y : z = s + (o - Y) / 2, this.ctx.textBaseline = "top";
+          for (let V = 0; V < N.length; V++) {
+            const $ = N[V];
             let G;
             switch (O) {
               case "center":
@@ -6622,43 +6648,43 @@ class Rs {
               default:
                 G = e + n;
             }
-            this.ctx.fillText($, G, _ + F * B);
+            this.ctx.fillText($, G, z + V * W);
           }
         } else {
-          const V = "...";
-          if (this.ctx.measureText(H).width > W) {
+          const N = "...";
+          if (this.ctx.measureText(H).width > B) {
             let $ = H;
-            for (; $.length > 0 && this.ctx.measureText($ + V).width > W; )
+            for (; $.length > 0 && this.ctx.measureText($ + N).width > B; )
               $ = $.slice(0, -1);
-            H = $ + V;
+            H = $ + N;
           }
-          let _;
+          let z;
           switch (O) {
             case "center":
-              _ = e + (i - this.ctx.measureText(H).width) / 2;
+              z = e + (i - this.ctx.measureText(H).width) / 2;
               break;
             case "right":
-              _ = e + i - n - this.ctx.measureText(H).width;
+              z = e + i - n - this.ctx.measureText(H).width;
               break;
             default:
-              _ = e + n;
+              z = e + n;
           }
-          let F;
-          switch (L) {
+          let V;
+          switch (P) {
             case "top":
-              this.ctx.textBaseline = "top", F = s + n;
+              this.ctx.textBaseline = "top", V = s + n;
               break;
             case "bottom":
-              this.ctx.textBaseline = "bottom", F = s + o - n;
+              this.ctx.textBaseline = "bottom", V = s + o - n;
               break;
             default:
-              this.ctx.textBaseline = "middle", F = s + o / 2;
+              this.ctx.textBaseline = "middle", V = s + o / 2;
           }
           if (m === "tag")
-            this.renderTag(H, _, F, P);
-          else if (this.ctx.fillText(H, _, F), m === "link") {
+            this.renderTag(H, z, V, L);
+          else if (this.ctx.fillText(H, z, V), m === "link") {
             const $ = this.ctx.measureText(H).width;
-            this.ctx.strokeStyle = k, this.ctx.lineWidth = 1, this.ctx.beginPath(), this.ctx.moveTo(_, F + P / 2 + 2), this.ctx.lineTo(_ + $, F + P / 2 + 2), this.ctx.stroke();
+            this.ctx.strokeStyle = k, this.ctx.lineWidth = 1, this.ctx.beginPath(), this.ctx.moveTo(z, V + L / 2 + 2), this.ctx.lineTo(z + $, V + L / 2 + 2), this.ctx.stroke();
           }
         }
       });
@@ -6749,19 +6775,19 @@ class Rs {
     r && o.hoverable !== !1 && this.renderImageHover(g, m, d, u, f);
   }
   getMaxImageSize(t, e, s, i) {
-    const o = i.scaleWithRowHeight === !1 ? Math.min(e, vs) : e;
+    const o = i.scaleWithRowHeight === !1 ? Math.min(e, Ms) : e;
     return Math.max(0, Math.min(t, o) - s * 2);
   }
   renderMultipleImages(t, e, s, i, o, n, r) {
     const a = o.images, l = 4, h = this.getMaxImageSize(s, i, l, o), c = o.width ?? 32, d = o.height ?? 32, u = Math.min(c, h), f = Math.min(d, h), g = o.gap ?? 4, m = o.circle ? Math.min(u, f) / 2 : o.borderRadius ?? 0, p = o.showMoreCount !== !1, w = s - l * 2, x = i - l * 2, y = Math.max(1, Math.floor((w + g) / (u + g))), v = Math.max(1, Math.floor((x + g) / (f + g))), R = y * v, I = o.maxVisible ?? R, E = p && a.length > I ? Math.max(1, R - 1) : R, T = Math.max(1, Math.min(I, E)), D = o.lazy !== !1, H = o.lazyThreshold ?? 200;
     let k = !0;
     D && n !== void 0 && this.currentVisibleRange && (k = this.isInLazyLoadRange(n, H));
-    const O = a.length > T, L = O ? T : a.length, P = a.slice(0, L), B = O ? a.length - T : 0, W = L + (O && p ? 1 : 0), A = Math.max(1, Math.ceil(W / y)), V = Math.min(W, y), Y = V * u + Math.max(0, V - 1) * g, _ = A * f + Math.max(0, A - 1) * g;
-    let F = t + (s - Y) / 2;
-    F = Math.max(t + l, F);
-    const $ = e + (i - _) / 2;
-    for (let G = 0; G < P.length; G++) {
-      const U = P[G], j = Math.floor(G / y), et = G % y, X = F + et * (u + g), K = $ + j * (f + g), dt = r && o.hoverable !== !1 && this.currentHoveredImageIndex === G;
+    const O = a.length > T, P = O ? T : a.length, L = a.slice(0, P), W = O ? a.length - T : 0, B = P + (O && p ? 1 : 0), A = Math.max(1, Math.ceil(B / y)), N = Math.min(B, y), Y = N * u + Math.max(0, N - 1) * g, z = A * f + Math.max(0, A - 1) * g;
+    let V = t + (s - Y) / 2;
+    V = Math.max(t + l, V);
+    const $ = e + (i - z) / 2;
+    for (let G = 0; G < L.length; G++) {
+      const U = L[G], J = Math.floor(G / y), st = G % y, X = V + st * (u + g), K = $ + J * (f + g), dt = r && o.hoverable !== !1 && this.currentHoveredImageIndex === G;
       if (this.ctx.fillStyle = this.theme.colors.image.placeholderBg, this.ctx.beginPath(), m > 0 ? this.ctx.roundRect(X, K, u, f, m) : this.ctx.rect(X, K, u, f), this.ctx.fill(), !k) {
         this.renderImagePlaceholder(
           X,
@@ -6795,14 +6821,14 @@ class Rs {
       )), dt && this.renderImageHover(X, K, u, f, m);
     }
     if (O && p) {
-      const G = Math.floor(L / y), U = L % y, j = F + U * (u + g), et = $ + G * (f + g), X = r && o.hoverable !== !1 && this.currentHoveredImageIndex === L;
+      const G = Math.floor(P / y), U = P % y, J = V + U * (u + g), st = $ + G * (f + g), X = r && o.hoverable !== !1 && this.currentHoveredImageIndex === P;
       this.renderMoreCount(
-        j,
-        et,
+        J,
+        st,
         u,
         f,
         m,
-        B,
+        W,
         X
       );
     }
@@ -7333,7 +7359,7 @@ class Rs {
       if (f + u < s || f > this.canvas.height / this.dpr)
         continue;
       this.ctx.fillStyle = this.theme.colors.rowBackground, this.ctx.fillRect(e, f, r, u), this.ctx.strokeStyle = this.theme.colors.cellBorder, this.ctx.lineWidth = 1, this.ctx.beginPath(), this.ctx.moveTo(e, f + u), this.ctx.lineTo(e + r, f + u), this.ctx.stroke();
-      const g = c.data[N(t)];
+      const g = c.data[_(t)];
       this.renderGhostCellValue(t, c, h, g, e, f, r, u);
     }
   }
@@ -7371,7 +7397,7 @@ class Rs {
       } catch (d) {
         console.error("Error rendering ghost cell:", d), h = { text: "[Error]", type: "text" };
       }
-    const c = st(t.disabled, e, t);
+    const c = et(t.disabled, e, t);
     this.renderCellContent(
       h,
       o,
@@ -7815,7 +7841,7 @@ class ct {
     });
   }
 }
-class Is extends ct {
+class Es extends ct {
   constructor(t, e) {
     super(t, e);
   }
@@ -7878,7 +7904,7 @@ class Is extends ct {
    */
   moveSelection(t, e) {
     if (this.state.selectedCells.length === 0) return;
-    const s = this.layoutManager.getLeafColumns(), i = this.state.selectedCells[0].start, o = J(i.rowIndex + t, 0, this.rows.length - 1), n = J(i.columnIndex + e, 0, s.length - 1), r = { rowIndex: o, columnIndex: n };
+    const s = this.layoutManager.getLeafColumns(), i = this.state.selectedCells[0].start, o = Z(i.rowIndex + t, 0, this.rows.length - 1), n = Z(i.columnIndex + e, 0, s.length - 1), r = { rowIndex: o, columnIndex: n };
     this.handleSingleSelection(r), this.scrollToCell(r);
   }
   /**
@@ -7922,7 +7948,7 @@ class Is extends ct {
     return t;
   }
 }
-class Ms extends ct {
+class Ts extends ct {
   constructor(e, s, i, o) {
     super(e, s);
     b(this, "selectionHandler");
@@ -7972,11 +7998,11 @@ class Ms extends ct {
       const n = this.layoutManager.getLeafColumns()[s.columnIndex], r = this.rows[s.rowIndex];
       if (n && r) {
         const a = lt(n, r, s.rowIndex), l = ["checkbox", "radio", "button", "switch"];
-        return a.type && l.includes(a.type) ? a.type === "switch" && a.switch ? (st(n.disabled, r, n) || (r.data[N(n)] = !a.switch.checked, this.eventEmitter.emit(
+        return a.type && l.includes(a.type) ? a.type === "switch" && a.switch ? (et(n.disabled, r, n) || (r.data[_(n)] = !a.switch.checked, this.eventEmitter.emit(
           M.SWITCH_CHANGE,
           this.getCellInfo(s),
           !a.switch.checked
-        )), null) : (this.toggleRowExpand(s.rowIndex), null) : n.editable === !1 || st(n.disabled, r, n) || (i = a.input) != null && i.readonly ? null : this.getEditingStartConfig(s, n, r, a);
+        )), null) : (this.toggleRowExpand(s.rowIndex), null) : n.editable === !1 || et(n.disabled, r, n) || (i = a.input) != null && i.readonly ? null : this.getEditingStartConfig(s, n, r, a);
       }
     } else
       this.toggleRowExpand(s.rowIndex);
@@ -7986,7 +8012,7 @@ class Ms extends ct {
    * Get editing start configuration for a cell
    */
   getEditingStartConfig(e, s, i, o) {
-    const n = i.data[N(s)];
+    const n = i.data[_(s)];
     if (s.editRender)
       try {
         const r = s.editRender(n, i, e.rowIndex);
@@ -8056,14 +8082,14 @@ const ut = class ut extends ct {
     const i = this.layoutManager.getLeafColumns()[e.columnIndex];
     if (!i || i.editable === !1) return null;
     const o = this.rows[e.rowIndex];
-    return !o || st(i.disabled, o, i) ? null : { column: i, row: o };
+    return !o || et(i.disabled, o, i) ? null : { column: i, row: o };
   }
   /**
    * Get edit configuration for a cell
    * Priority: editRender > render result > null (default logic)
    */
   getEditConfig(e, s, i) {
-    const o = s.data[N(e)];
+    const o = s.data[_(e)];
     if (e.editRender)
       try {
         const n = e.editRender(o, s, i);
@@ -8312,7 +8338,7 @@ const tt = class tt extends ct {
               const S = [...r.selectedValues ?? []], E = R.value ?? R.text, T = S.indexOf(E);
               T >= 0 ? S.splice(T, 1) : S.push(E);
               const D = this.state.dropdown.cell, k = this.layoutManager.getLeafColumns()[D.columnIndex], O = this.rows[D.rowIndex];
-              k && O && (O.data[N(k)] = S), this.eventEmitter.emit(
+              k && O && (O.data[_(k)] = S), this.eventEmitter.emit(
                 M.TAGS_CHANGE,
                 this.getCellInfo(this.state.dropdown.cell),
                 S,
@@ -8323,7 +8349,7 @@ const tt = class tt extends ct {
               }, this.eventEmitter.emit(M.DROPDOWN_HOVER);
             } else {
               const S = R.value ?? R.text, E = this.state.dropdown.cell, D = this.layoutManager.getLeafColumns()[E.columnIndex], H = this.rows[E.rowIndex];
-              D && H && (H.data[N(D)] = S), this.eventEmitter.emit(
+              D && H && (H.data[_(D)] = S), this.eventEmitter.emit(
                 M.TAGS_CHANGE,
                 this.getCellInfo(this.state.dropdown.cell),
                 [S],
@@ -8345,7 +8371,7 @@ const tt = class tt extends ct {
             const v = Array.isArray(a.value) ? [...a.value] : [], R = y.value, I = v.indexOf(R);
             I >= 0 ? v.splice(I, 1) : v.push(R);
             const S = this.state.dropdown.cell, T = this.layoutManager.getLeafColumns()[S.columnIndex], D = this.rows[S.rowIndex];
-            T && D && (D.data[N(T)] = v), this.eventEmitter.emit(
+            T && D && (D.data[_(T)] = v), this.eventEmitter.emit(
               M.SELECT_CHANGE,
               this.getCellInfo(this.state.dropdown.cell),
               v
@@ -8355,7 +8381,7 @@ const tt = class tt extends ct {
             }, this.eventEmitter.emit(M.DROPDOWN_HOVER);
           } else {
             const v = this.state.dropdown.cell, I = this.layoutManager.getLeafColumns()[v.columnIndex], S = this.rows[v.rowIndex];
-            I && S && (S.data[N(I)] = y.value), this.eventEmitter.emit(
+            I && S && (S.data[_(I)] = y.value), this.eventEmitter.emit(
               M.SELECT_CHANGE,
               this.getCellInfo(this.state.dropdown.cell),
               y.value
@@ -8438,7 +8464,7 @@ const tt = class tt extends ct {
   }
   isButtonsDropdownSourceDisabled(t) {
     const e = this.layoutManager.getLeafColumns()[t.columnIndex], s = this.rows[t.rowIndex];
-    return e && s ? st(e.disabled, s, e) : !0;
+    return e && s ? et(e.disabled, s, e) : !0;
   }
   /**
    * Handle filter dropdown click
@@ -8655,18 +8681,18 @@ const tt = class tt extends ct {
     if (t < E || t > E + w || e < T || e > T + p)
       return !1;
     if (e >= T && e <= T + d) {
-      const B = E + 20, W = E + w - 20;
-      if (t >= B - 6 - 5 && t <= B + 6 + 5)
-        return c === 0 ? (this.state.filterDropdown.currentYear = h - 1, this.state.filterDropdown.currentMonth = 11) : this.state.filterDropdown.currentMonth = c - 1, this.state.filterDropdown.hoveredDate = null, this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN), !0;
+      const W = E + 20, B = E + w - 20;
       if (t >= W - 6 - 5 && t <= W + 6 + 5)
+        return c === 0 ? (this.state.filterDropdown.currentYear = h - 1, this.state.filterDropdown.currentMonth = 11) : this.state.filterDropdown.currentMonth = c - 1, this.state.filterDropdown.hoveredDate = null, this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN), !0;
+      if (t >= B - 6 - 5 && t <= B + 6 + 5)
         return c === 11 ? (this.state.filterDropdown.currentYear = h + 1, this.state.filterDropdown.currentMonth = 0) : this.state.filterDropdown.currentMonth = c + 1, this.state.filterDropdown.hoveredDate = null, this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN), !0;
     }
-    const D = (w - g * 2) / 7, k = new Date(h, c, 1).getDay(), O = new Date(h, c + 1, 0).getDate(), L = T + d + u;
-    for (let P = 1; P <= O; P++) {
-      const B = k + P - 1, W = Math.floor(B / 7), A = B % 7, V = E + g + A * D, Y = L + W * f;
-      if (t >= V && t <= V + D && e >= Y && e <= Y + f) {
-        const _ = new Date(h, c, P);
-        return l === "startDate" ? this.state.filterDropdown.startDate = _ : this.state.filterDropdown.endDate = _, this.state.filterDropdown.activeDateField = void 0, this.state.filterDropdown.currentYear = void 0, this.state.filterDropdown.currentMonth = void 0, this.state.filterDropdown.hoveredDate = null, this.eventEmitter.emit(M.FILTER_DROPDOWN_CHANGE), !0;
+    const D = (w - g * 2) / 7, k = new Date(h, c, 1).getDay(), O = new Date(h, c + 1, 0).getDate(), P = T + d + u;
+    for (let L = 1; L <= O; L++) {
+      const W = k + L - 1, B = Math.floor(W / 7), A = W % 7, N = E + g + A * D, Y = P + B * f;
+      if (t >= N && t <= N + D && e >= Y && e <= Y + f) {
+        const z = new Date(h, c, L);
+        return l === "startDate" ? this.state.filterDropdown.startDate = z : this.state.filterDropdown.endDate = z, this.state.filterDropdown.activeDateField = void 0, this.state.filterDropdown.currentYear = void 0, this.state.filterDropdown.currentMonth = void 0, this.state.filterDropdown.hoveredDate = null, this.eventEmitter.emit(M.FILTER_DROPDOWN_CHANGE), !0;
       }
     }
     return !0;
@@ -8695,17 +8721,17 @@ const tt = class tt extends ct {
       this.state.filterDropdown.hoveredDate !== null && (this.state.filterDropdown.hoveredDate = null, this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN));
       return;
     }
-    const O = (v - w * 2) / 7, P = new Date(n, r, 1).getDay(), B = new Date(n, r + 1, 0).getDate(), W = k + g + m;
+    const O = (v - w * 2) / 7, L = new Date(n, r, 1).getDay(), W = new Date(n, r + 1, 0).getDate(), B = k + g + m;
     let A = null;
-    for (let _ = 1; _ <= B; _++) {
-      const F = P + _ - 1, $ = Math.floor(F / 7), G = F % 7, U = H + w + G * O, j = W + $ * p;
-      if (h >= U && h <= U + O && c >= j && c <= j + p) {
-        A = new Date(n, r, _);
+    for (let z = 1; z <= W; z++) {
+      const V = L + z - 1, $ = Math.floor(V / 7), G = V % 7, U = H + w + G * O, J = B + $ * p;
+      if (h >= U && h <= U + O && c >= J && c <= J + p) {
+        A = new Date(n, r, z);
         break;
       }
     }
-    const V = a ? a.getTime() : null, Y = A ? A.getTime() : null;
-    V !== Y && (this.state.filterDropdown.hoveredDate = A, this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN));
+    const N = a ? a.getTime() : null, Y = A ? A.getTime() : null;
+    N !== Y && (this.state.filterDropdown.hoveredDate = A, this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN));
   }
   /**
    * Handle filter dropdown hover
@@ -8871,8 +8897,8 @@ const tt = class tt extends ct {
       for (let I = 1; I <= R; I++) {
         const S = v + I - 1, E = Math.floor(S / 7), T = S % 7, D = o + u + T * x, H = n + h + c + E * d;
         if (s >= D && s <= D + x && i >= H && i <= H + d) {
-          const k = new Date(a, l, I), O = this.formatDate(k), L = this.state.dateDropdown.cell, B = this.layoutManager.getLeafColumns()[L.columnIndex], W = this.rows[L.rowIndex];
-          return B && W && (W.data[N(B)] = O), this.state.dateDropdown = null, this.eventEmitter.emit(M.DATE_DROPDOWN_CLOSE), this.eventEmitter.emit(M.DATE_SELECT, this.getCellInfo(L), O), !0;
+          const k = new Date(a, l, I), O = this.formatDate(k), P = this.state.dateDropdown.cell, W = this.layoutManager.getLeafColumns()[P.columnIndex], B = this.rows[P.rowIndex];
+          return W && B && (B.data[_(W)] = O), this.state.dateDropdown = null, this.eventEmitter.emit(M.DATE_DROPDOWN_CLOSE), this.eventEmitter.emit(M.DATE_SELECT, this.getCellInfo(P), O), !0;
         }
       }
       return !0;
@@ -8918,7 +8944,7 @@ const tt = class tt extends ct {
         const x = w * c + p;
         if (x >= 0 && x < h.length) {
           const y = h[x], R = this.layoutManager.getLeafColumns()[o.columnIndex], I = this.rows[o.rowIndex];
-          return R && I && (I.data[N(R)] = y), this.state.colorDropdown = null, this.eventEmitter.emit(M.COLOR_DROPDOWN_CLOSE), this.eventEmitter.emit(M.COLOR_CHANGE, this.getCellInfo(o), y), !0;
+          return R && I && (I.data[_(R)] = y), this.state.colorDropdown = null, this.eventEmitter.emit(M.COLOR_DROPDOWN_CLOSE), this.eventEmitter.emit(M.COLOR_CHANGE, this.getCellInfo(o), y), !0;
         }
       }
     }
@@ -8940,7 +8966,7 @@ const tt = class tt extends ct {
 };
 b(tt, "DROPDOWN_ITEM_HEIGHT", 32), b(tt, "DROPDOWN_MAX_VISIBLE", 8);
 let Ht = tt;
-const z = class z extends ct {
+const F = class F extends ct {
   constructor(t, e) {
     super(t, e);
   }
@@ -8949,7 +8975,7 @@ const z = class z extends ct {
    */
   handleImageTooltipHover(t) {
     if (!this.state.imageTooltip) return !1;
-    const { x: e, y: s, images: i, scrollTop: o, maxRows: n } = this.state.imageTooltip, r = this.getViewportCoords(t), a = r.x, l = r.y, h = z.IMAGE_SIZE, c = z.IMAGE_PADDING, d = z.IMAGE_GAP, u = z.IMAGES_PER_ROW, m = u * h + (u - 1) * d + c * 2 + 4 + 4, p = h + d, w = n * p + c * 2 - d, x = this.state.imageTooltip.hoveredIndex;
+    const { x: e, y: s, images: i, scrollTop: o, maxRows: n } = this.state.imageTooltip, r = this.getViewportCoords(t), a = r.x, l = r.y, h = F.IMAGE_SIZE, c = F.IMAGE_PADDING, d = F.IMAGE_GAP, u = F.IMAGES_PER_ROW, m = u * h + (u - 1) * d + c * 2 + 4 + 4, p = h + d, w = n * p + c * 2 - d, x = this.state.imageTooltip.hoveredIndex;
     if (a >= e && a <= e + m && l >= s && l <= s + w) {
       const y = Math.ceil(i.length / u), v = Math.floor(o / p), R = Math.min(y, v + n + 1);
       for (let I = v; I < R; I++)
@@ -8969,7 +8995,7 @@ const z = class z extends ct {
    */
   handleImageTooltipClick(t) {
     if (!this.state.imageTooltip) return !1;
-    const { x: e, y: s, images: i, cell: o, scrollTop: n, maxRows: r } = this.state.imageTooltip, a = this.getViewportCoords(t), l = a.x, h = a.y, c = z.IMAGE_SIZE, d = z.IMAGE_PADDING, u = z.IMAGE_GAP, f = z.IMAGES_PER_ROW, p = f * c + (f - 1) * u + d * 2 + 4 + 4, w = c + u, x = r * w + d * 2 - u;
+    const { x: e, y: s, images: i, cell: o, scrollTop: n, maxRows: r } = this.state.imageTooltip, a = this.getViewportCoords(t), l = a.x, h = a.y, c = F.IMAGE_SIZE, d = F.IMAGE_PADDING, u = F.IMAGE_GAP, f = F.IMAGES_PER_ROW, p = f * c + (f - 1) * u + d * 2 + 4 + 4, w = c + u, x = r * w + d * 2 - u;
     if (l < e || l > e + p || h < s || h > s + x)
       return !1;
     const y = l - e - d, v = h - s - d + n, R = Math.floor(y / (c + u)), I = Math.floor(v / w);
@@ -8987,7 +9013,7 @@ const z = class z extends ct {
    */
   handleImageEditorHover(t) {
     if (!this.state.imageEditor) return !1;
-    const { x: e, y: s, images: i, pendingImages: o, scrollTop: n, maxRows: r } = this.state.imageEditor, a = this.getViewportCoords(t), l = a.x, h = a.y, c = z.IMAGE_SIZE, d = z.IMAGE_PADDING, u = z.IMAGE_GAP, f = z.IMAGES_PER_ROW, g = z.IMAGE_UPLOAD_AREA_HEIGHT, m = c + u, p = f * c + (f - 1) * u + d * 2 + 4 + 4, w = r * m + d * 2 - u, x = g + w, y = this.state.imageEditor.hoveredIndex;
+    const { x: e, y: s, images: i, pendingImages: o, scrollTop: n, maxRows: r } = this.state.imageEditor, a = this.getViewportCoords(t), l = a.x, h = a.y, c = F.IMAGE_SIZE, d = F.IMAGE_PADDING, u = F.IMAGE_GAP, f = F.IMAGES_PER_ROW, g = F.IMAGE_UPLOAD_AREA_HEIGHT, m = c + u, p = f * c + (f - 1) * u + d * 2 + 4 + 4, w = r * m + d * 2 - u, x = g + w, y = this.state.imageEditor.hoveredIndex;
     if (l < e || l > e + p || h < s || h > s + x)
       return this.state.imageEditor.hoveredIndex = -1, y !== -1 && this.eventEmitter.emit(M.IMAGE_EDITOR_HOVER), !1;
     if (h >= s && h <= s + g)
@@ -9009,7 +9035,7 @@ const z = class z extends ct {
   handleImageEditorClick(t) {
     var R;
     if (!this.state.imageEditor) return "outside";
-    const { x: e, y: s, images: i, cell: o, scrollTop: n, maxRows: r } = this.state.imageEditor, a = this.getViewportCoords(t), l = a.x, h = a.y, c = z.IMAGE_SIZE, d = z.IMAGE_PADDING, u = z.IMAGE_GAP, f = z.IMAGES_PER_ROW, g = z.IMAGE_UPLOAD_AREA_HEIGHT, m = c + u, p = f * c + (f - 1) * u + d * 2 + 4 + 4, w = r * m + d * 2 - u, x = g + w;
+    const { x: e, y: s, images: i, cell: o, scrollTop: n, maxRows: r } = this.state.imageEditor, a = this.getViewportCoords(t), l = a.x, h = a.y, c = F.IMAGE_SIZE, d = F.IMAGE_PADDING, u = F.IMAGE_GAP, f = F.IMAGES_PER_ROW, g = F.IMAGE_UPLOAD_AREA_HEIGHT, m = c + u, p = f * c + (f - 1) * u + d * 2 + 4 + 4, w = r * m + d * 2 - u, x = g + w;
     if (l < e || l > e + p || h < s || h > s + x)
       return "outside";
     if (h >= s && h <= s + g)
@@ -9045,11 +9071,11 @@ const z = class z extends ct {
     const i = this.rows[this.state.imageEditor.cell.rowIndex];
     if (!i) return;
     const n = (s.render ? s.render(
-      i.data[N(s)],
+      i.data[_(s)],
       i,
       s,
       this.state.imageEditor.cell.rowIndex
-    ) : { image: i.data[N(s)] }).image ?? {}, r = n.onUpload, a = n.maxCount, l = this.state.imageEditor.isSingleImage;
+    ) : { image: i.data[_(s)] }).image ?? {}, r = n.onUpload, a = n.maxCount, l = this.state.imageEditor.isSingleImage;
     let h;
     if (l)
       h = 1, this.state.imageEditor.images = [];
@@ -9106,7 +9132,7 @@ const z = class z extends ct {
     if (!this.state.imageEditor) return;
     const { cell: t, images: e, isSingleImage: s } = this.state.imageEditor, o = this.layoutManager.getLeafColumns()[t.columnIndex], n = this.rows[t.rowIndex];
     if (o && n) {
-      const r = n.data[N(o)];
+      const r = n.data[_(o)];
       let a;
       if (s) {
         const l = e[0] ?? null;
@@ -9142,7 +9168,7 @@ const z = class z extends ct {
       this.state.imageTooltip = null;
       return;
     }
-    const n = z.IMAGE_SIZE, r = z.IMAGE_PADDING, a = z.IMAGE_GAP, l = z.IMAGES_PER_ROW, h = l * n + (l - 1) * a + r * 2, c = n + a, d = s * c + r * 2 - a, u = this.updateDropdownY(t, e, d, { column: o }), f = this.updateDropdownX(t, h, { column: o });
+    const n = F.IMAGE_SIZE, r = F.IMAGE_PADDING, a = F.IMAGE_GAP, l = F.IMAGES_PER_ROW, h = l * n + (l - 1) * a + r * 2, c = n + a, d = s * c + r * 2 - a, u = this.updateDropdownY(t, e, d, { column: o }), f = this.updateDropdownX(t, h, { column: o });
     this.state.imageTooltip.x = f, this.state.imageTooltip.y = u.y, this.state.imageTooltip.showAbove = u.showAbove;
   }
   /**
@@ -9155,7 +9181,7 @@ const z = class z extends ct {
       this.commitImageEditorChanges();
       return;
     }
-    const n = z.IMAGE_SIZE, r = z.IMAGE_PADDING, a = z.IMAGE_GAP, l = z.IMAGES_PER_ROW, h = z.IMAGE_UPLOAD_AREA_HEIGHT, c = n + a, d = l * n + (l - 1) * a + r * 2 + 4 + 4, u = s * c + r * 2 - a, f = h + u, g = this.updateDropdownY(t, e, f, { column: o }), m = this.updateDropdownX(t, d, { column: o });
+    const n = F.IMAGE_SIZE, r = F.IMAGE_PADDING, a = F.IMAGE_GAP, l = F.IMAGES_PER_ROW, h = F.IMAGE_UPLOAD_AREA_HEIGHT, c = n + a, d = l * n + (l - 1) * a + r * 2 + 4 + 4, u = s * c + r * 2 - a, f = h + u, g = this.updateDropdownY(t, e, f, { column: o }), m = this.updateDropdownX(t, d, { column: o });
     this.state.imageEditor.x = m, this.state.imageEditor.y = g.y, this.state.imageEditor.showAbove = g.showAbove;
   }
   /**
@@ -9164,7 +9190,7 @@ const z = class z extends ct {
   handleDragOver(t) {
     if (!this.state.imageEditor) return !1;
     t.preventDefault();
-    const e = this.getViewportCoords(t), s = e.x, i = e.y, { x: o, y: n, maxRows: r } = this.state.imageEditor, a = z.IMAGE_SIZE, l = z.IMAGE_PADDING, h = z.IMAGE_GAP, c = z.IMAGES_PER_ROW, d = z.IMAGE_UPLOAD_AREA_HEIGHT, u = a + h, f = c * a + (c - 1) * h + l * 2 + 4 + 4, g = r * u + l * 2 - h, m = d + g;
+    const e = this.getViewportCoords(t), s = e.x, i = e.y, { x: o, y: n, maxRows: r } = this.state.imageEditor, a = F.IMAGE_SIZE, l = F.IMAGE_PADDING, h = F.IMAGE_GAP, c = F.IMAGES_PER_ROW, d = F.IMAGE_UPLOAD_AREA_HEIGHT, u = a + h, f = c * a + (c - 1) * h + l * 2 + 4 + 4, g = r * u + l * 2 - h, m = d + g;
     return s >= o && s <= o + f && i >= n && i <= n + m ? (this.state.imageEditor.isDragging = !0, this.eventEmitter.emit(M.IMAGE_EDITOR_SCROLL), !0) : !1;
   }
   /**
@@ -9172,7 +9198,7 @@ const z = class z extends ct {
    */
   handleDragLeave(t) {
     if (!this.state.imageEditor) return;
-    const e = this.getViewportCoords(t), s = e.x, i = e.y, { x: o, y: n, maxRows: r } = this.state.imageEditor, a = z.IMAGE_SIZE, l = z.IMAGE_PADDING, h = z.IMAGE_GAP, c = z.IMAGES_PER_ROW, d = z.IMAGE_UPLOAD_AREA_HEIGHT, u = a + h, f = c * a + (c - 1) * h + l * 2 + 4 + 4, g = r * u + l * 2 - h, m = d + g;
+    const e = this.getViewportCoords(t), s = e.x, i = e.y, { x: o, y: n, maxRows: r } = this.state.imageEditor, a = F.IMAGE_SIZE, l = F.IMAGE_PADDING, h = F.IMAGE_GAP, c = F.IMAGES_PER_ROW, d = F.IMAGE_UPLOAD_AREA_HEIGHT, u = a + h, f = c * a + (c - 1) * h + l * 2 + 4 + 4, g = r * u + l * 2 - h, m = d + g;
     (s < o || s > o + f || i < n || i > n + m) && (this.state.imageEditor.isDragging = !1, this.eventEmitter.emit(M.IMAGE_EDITOR_SCROLL));
   }
   /**
@@ -9188,8 +9214,8 @@ const z = class z extends ct {
     return e.length > 0 && await this.handleFileUpload(e), this.eventEmitter.emit(M.IMAGE_EDITOR_SCROLL), !0;
   }
 };
-b(z, "IMAGE_SIZE", 64), b(z, "IMAGE_PADDING", 8), b(z, "IMAGE_GAP", 8), b(z, "IMAGES_PER_ROW", 4), b(z, "IMAGE_UPLOAD_AREA_HEIGHT", 60);
-let kt = z;
+b(F, "IMAGE_SIZE", 64), b(F, "IMAGE_PADDING", 8), b(F, "IMAGE_GAP", 8), b(F, "IMAGES_PER_ROW", 4), b(F, "IMAGE_UPLOAD_AREA_HEIGHT", 60);
+let kt = F;
 const pt = class pt extends ct {
   constructor(t, e) {
     super(t, e);
@@ -9257,7 +9283,7 @@ const pt = class pt extends ct {
 };
 b(pt, "DROPDOWN_ITEM_HEIGHT", 32);
 let Ot = pt;
-class Ss extends ct {
+class Ds extends ct {
   constructor(e, s, i, o) {
     super(e, s);
     b(this, "sortConfig");
@@ -9273,8 +9299,8 @@ class Ss extends ct {
     if (o.fixed === "left")
       r = e.x;
     else if (o.fixed === "right") {
-      const P = this.layoutManager.getRightFixedWidth(), W = this.layoutManager.getViewportWidth() - P - (this.layoutManager.getLayoutInfo().totalWidth - P);
-      r = e.x + W;
+      const L = this.layoutManager.getRightFixedWidth(), B = this.layoutManager.getViewportWidth() - L - (this.layoutManager.getLayoutInfo().totalWidth - L);
+      r = e.x + B;
     } else
       r = e.x - this.scrollState.scrollLeft;
     const a = e.y, l = e.width, h = e.height, c = 8, d = 10, u = 10, f = r + c, g = a + (h - u) / 2, p = o.reorderable !== !1 && s >= f && s <= f + d && i >= g && i <= g + u;
@@ -9282,8 +9308,8 @@ class Ss extends ct {
     const w = (o == null ? void 0 : o.filterable) && e.isLeaf;
     let x, y;
     w ? (x = r + l - c - 10, y = x - 16) : y = r + l - c - 10;
-    const v = a + h / 2, R = 8, I = 5, S = 2, E = 4, T = v - S - I - E, D = v + S + I + E, H = y - R / 2 - E, k = y + R / 2 + E, O = e.isLeaf && w && x !== void 0 && Math.abs(s - x) < 12, L = e.isLeaf && o && o.sortable !== !1 && s >= H && s <= k && i >= T && i <= D;
-    p ? this.canvas.style.cursor = "grab" : O || L ? this.canvas.style.cursor = "pointer" : this.canvas.style.cursor = "default", this.state.hoveredCell = null, this.state.tooltip = null, n !== this.state.hoveredHeaderColumnKey && this.eventEmitter.emit(M.HEADER_HOVER, this.state.hoveredHeaderColumnKey);
+    const v = a + h / 2, R = 8, I = 5, S = 2, E = 4, T = v - S - I - E, D = v + S + I + E, H = y - R / 2 - E, k = y + R / 2 + E, O = e.isLeaf && w && x !== void 0 && Math.abs(s - x) < 12, P = e.isLeaf && o && o.sortable !== !1 && s >= H && s <= k && i >= T && i <= D;
+    p ? this.canvas.style.cursor = "grab" : O || P ? this.canvas.style.cursor = "pointer" : this.canvas.style.cursor = "default", this.state.hoveredCell = null, this.state.tooltip = null, n !== this.state.hoveredHeaderColumnKey && this.eventEmitter.emit(M.HEADER_HOVER, this.state.hoveredHeaderColumnKey);
   }
   /**
    * Handle header mouse down
@@ -9378,7 +9404,7 @@ class Ss extends ct {
    * Open filter dropdown
    */
   openFilterDropdown(e, s) {
-    const i = this.layoutManager.getCellPosition(-1, s), o = this.layoutManager.getLayoutInfo().headerHeight, n = Ae(e);
+    const i = this.layoutManager.getCellPosition(-1, s), o = this.layoutManager.getLayoutInfo().headerHeight, n = Ne(e);
     if (!n) return;
     let r;
     e.fixed === "left" || e.fixed === "right" ? r = i.x : r = i.x - this.scrollState.scrollLeft;
@@ -9399,7 +9425,7 @@ class Ss extends ct {
         break;
       }
       case "select": {
-        const h = ne(e, a, 0), c = l ? l.value : [], d = h.length === 0 && a.length > 0;
+        const h = le(e, a, 0), c = l ? l.value : [], d = h.length === 0 && a.length > 0;
         this.state.filterDropdown = {
           columnKey: e.key,
           mode: "select",
@@ -9547,7 +9573,7 @@ class Ss extends ct {
     this.filterConfig = e;
   }
 }
-class Es extends ct {
+class Hs extends ct {
   constructor(e, s) {
     super(e, s);
     /**
@@ -9562,13 +9588,13 @@ class Es extends ct {
    * Handle progress bar click
    */
   handleProgressClick(e, s, i, o, n) {
-    if (!i.interactive || n && o && st(o.disabled, n, o)) return !1;
+    if (!i.interactive || n && o && et(o.disabled, n, o)) return !1;
     const r = this.canvas.getBoundingClientRect(), a = s.clientX - r.left, l = this.layoutManager.getCellPosition(e.rowIndex, e.columnIndex), h = this.getCellViewportX(l, o), c = i.shape ?? "line";
     if (c === "line") {
       const u = i.size ?? "medium", f = i.height ?? (u === "small" ? 6 : u === "large" ? 16 : 10), g = i.textPosition ?? "right", p = (i.showText ?? !0) && g === "right" ? 40 : 0, w = i.width ?? l.width - 8 * 2 - p, x = h + 8, y = this.getCellViewportY(e.rowIndex) + (l.height - f) / 2, v = s.clientY - r.top, R = a - x, I = v - y;
       if (R >= 0 && R <= w && I >= 0 && I <= f) {
         const S = i.precision ?? 0, E = Math.max(0, Math.min(100, R / w * 100)), T = S === 0 ? Math.round(E) : Number(E.toFixed(S));
-        return o && n && (n.data[N(o)] = T), this.eventEmitter.emit(M.PROGRESS_CHANGE, this.getCellInfo(e), T), !0;
+        return o && n && (n.data[_(o)] = T), this.eventEmitter.emit(M.PROGRESS_CHANGE, this.getCellInfo(e), T), !0;
       }
     } else if (c === "circle" || c === "dashboard") {
       const d = s.clientY - r.top, u = this.getCellViewportY(e.rowIndex), f = i.size ?? "medium";
@@ -9582,13 +9608,13 @@ class Es extends ct {
         else {
           const k = Math.PI * 0.75, O = Math.PI * 1.5;
           T < 0 && (T += Math.PI * 2);
-          let L = T - k;
-          if (L < 0 && (L += Math.PI * 2), L > O) return !1;
-          D = L / O * 100;
+          let P = T - k;
+          if (P < 0 && (P += Math.PI * 2), P > O) return !1;
+          D = P / O * 100;
         }
         D = Math.max(0, Math.min(100, D));
         const H = i.precision ?? 0;
-        return D = H === 0 ? Math.round(D) : Number(D.toFixed(H)), o && n && (n.data[N(o)] = D), this.eventEmitter.emit(M.PROGRESS_CHANGE, this.getCellInfo(e), D), !0;
+        return D = H === 0 ? Math.round(D) : Number(D.toFixed(H)), o && n && (n.data[_(o)] = D), this.eventEmitter.emit(M.PROGRESS_CHANGE, this.getCellInfo(e), D), !0;
       }
     }
     return !1;
@@ -9597,13 +9623,13 @@ class Es extends ct {
    * Handle rating click
    */
   handleRatingClick(e, s, i, o, n) {
-    if (n && o && st(o.disabled, n, o)) return !1;
+    if (n && o && et(o.disabled, n, o)) return !1;
     const r = this.canvas.getBoundingClientRect(), a = s.clientX - r.left, l = this.layoutManager.getCellPosition(e.rowIndex, e.columnIndex), h = this.getCellViewportX(l, o), c = a - h, d = i.max ?? 5, u = i.starSize ?? 16, f = i.allowHalf ?? !1, g = i.value ?? 0, m = d * u, p = (l.width - m) / 2;
     for (let w = 0; w < d; w++) {
       const x = p + w * u;
       if (c >= x && c <= x + u) {
         let y;
-        return f ? (c - x < u / 2 ? y = w + 0.5 : y = w + 1, y === g && (y = 0)) : (y = w + 1, y === g && (y = 0)), y = Math.min(y, d), o && n && (n.data[N(o)] = y), this.eventEmitter.emit(M.RATING_CHANGE, this.getCellInfo(e), y), !0;
+        return f ? (c - x < u / 2 ? y = w + 0.5 : y = w + 1, y === g && (y = 0)) : (y = w + 1, y === g && (y = 0)), y = Math.min(y, d), o && n && (n.data[_(o)] = y), this.eventEmitter.emit(M.RATING_CHANGE, this.getCellInfo(e), y), !0;
       }
     }
     return !1;
@@ -9627,7 +9653,7 @@ class Es extends ct {
     return null;
   }
 }
-class Ts extends ct {
+class ks extends ct {
   constructor(e, s) {
     super(e, s);
     b(this, "buttonHoverAnimationRunning", !1);
@@ -9707,7 +9733,7 @@ class Ts extends ct {
   }
 }
 const qt = 64;
-class Ds extends ct {
+class Os extends ct {
   constructor(t, e) {
     super(t, e);
   }
@@ -9732,7 +9758,7 @@ class Ds extends ct {
     }
     const o = lt(s, i, t.rowIndex), n = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), r = this.getCellViewportX(n, s), a = this.getCellViewportY(t.rowIndex);
     if (o.type === "tag" && o.tags) {
-      this.handleTagsTooltip(t, o.tags.tags, n, r);
+      this.handleTagsTooltip(t, o.tags, n, r);
       return;
     }
     if (o.type === "select" && o.select) {
@@ -9753,18 +9779,8 @@ class Ds extends ct {
    * Handle tags tooltip
    */
   handleTagsTooltip(t, e, s, i) {
-    const a = s.width - 16;
-    let l = 0, h = 0, c = !1;
-    for (let d = 0; d < e.length; d++) {
-      const u = e[d], f = this.ctx.measureText(u.text).width + 4 * 2, g = e.length - l, p = g > 1 ? this.ctx.measureText(`+${g - 1}`).width + 4 * 2 + 4 : 0, w = a - h - p;
-      if (f <= w)
-        l++, h += f + 4;
-      else {
-        c = !0;
-        break;
-      }
-    }
-    if (l < e.length && (c = !0), !c) {
+    const o = this.getFontSize(), { isTruncated: n } = re(this.ctx, e, s.width, s.height, o);
+    if (!n) {
       this.state.tooltip = null;
       return;
     }
@@ -9773,7 +9789,7 @@ class Ds extends ct {
       x: i,
       y: this.getCellViewportY(t.rowIndex),
       width: s.width,
-      content: { type: "tags", tags: e }
+      content: { type: "tags", tags: e.tags }
     };
   }
   /**
@@ -9835,8 +9851,8 @@ class Ds extends ct {
    * Handle text tooltip
    */
   handleTextTooltip(t, e, s, i) {
-    const n = s.width - 16;
-    if (this.ctx.measureText(e).width > n) {
+    const n = s.width - 16, a = this.getFontSize() * 1.5, l = oe(s.height, a, 8);
+    if (l > 1 ? ne(this.ctx, e, n, l).isTruncated : this.ctx.measureText(e).width > n) {
       this.state.tooltip = {
         cell: { rowIndex: t.rowIndex, columnIndex: t.columnIndex },
         x: i,
@@ -9847,6 +9863,10 @@ class Ds extends ct {
       return;
     }
     this.state.tooltip = null;
+  }
+  getFontSize() {
+    const t = this.ctx.font.match(/(\d+(?:\.\d+)?)px/);
+    return t ? Number(t[1]) : 13;
   }
   /**
    * Update tooltip position on scroll
@@ -9880,7 +9900,7 @@ class Ds extends ct {
     return this.state.imageTooltip;
   }
 }
-const q = class q {
+const Q = class Q {
   constructor(t, e, s, i, o, n, r = ot) {
     b(this, "state");
     b(this, "scrollState");
@@ -10055,7 +10075,7 @@ const q = class q {
         this.scrollState.scrollTop
       );
       if (!r) return;
-      const a = r.row, l = this.getRowContextMenuItems(a), h = this.canvas.getBoundingClientRect(), c = 140, d = q.DROPDOWN_ITEM_HEIGHT, u = l.length * d;
+      const a = r.row, l = this.getRowContextMenuItems(a), h = this.canvas.getBoundingClientRect(), c = 140, d = Q.DROPDOWN_ITEM_HEIGHT, u = l.length * d;
       let f = s, g = i;
       f + c > h.width && (f = h.width - c - 8), f < 0 && (f = 8), g + u > h.height && (g = h.height - u - 8), g < 0 && (g = 8), this.state.contextMenu = {
         x: f,
@@ -10069,7 +10089,7 @@ const q = class q {
       var e;
       if (this.state.isDragging && this.state.dragType === "row-resize" && this.state.rowResizeState) {
         const { min: s, max: i } = this.layoutManager.getRowHeightBounds(), o = t.clientY - this.state.rowResizeState.startY;
-        this.state.rowResizeState.displayHeight = J(
+        this.state.rowResizeState.displayHeight = Z(
           this.state.rowResizeState.startHeight + o,
           s,
           i
@@ -10079,13 +10099,13 @@ const q = class q {
       if ((e = this.state.filterDropdown) != null && e.isScrollbarDragging) {
         const { options: s, scrollbarDragStartY: i, scrollbarDragStartScrollTop: o } = this.state.filterDropdown;
         if (!s) return;
-        const n = q.DROPDOWN_ITEM_HEIGHT, r = q.DROPDOWN_MAX_VISIBLE, l = Math.min(s.length, r) * n, h = s.length * n, c = Math.max(20, l / h * l), d = l - c, f = (t.clientY - (i ?? 0)) / d, g = h - l, m = (o ?? 0) + f * g;
-        this.state.filterDropdown.scrollTop = J(m, 0, g), this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN);
+        const n = Q.DROPDOWN_ITEM_HEIGHT, r = Q.DROPDOWN_MAX_VISIBLE, l = Math.min(s.length, r) * n, h = s.length * n, c = Math.max(20, l / h * l), d = l - c, f = (t.clientY - (i ?? 0)) / d, g = h - l, m = (o ?? 0) + f * g;
+        this.state.filterDropdown.scrollTop = Z(m, 0, g), this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN);
         return;
       }
       if (this.scrollbarState.verticalDragging) {
         const s = this.layoutManager.getLayoutInfo(), i = s.headerHeight, o = this.canvas.height / (window.devicePixelRatio || 1), n = o - i, r = Math.max(30, o / s.totalHeight * n), a = n - r, h = (t.clientY - this.scrollbarState.dragStartY) / a, c = this.scrollbarState.dragStartScrollTop + h * this.scrollState.maxScrollTop;
-        this.scrollState.scrollTop = J(c, 0, this.scrollState.maxScrollTop), this.eventEmitter.emit(
+        this.scrollState.scrollTop = Z(c, 0, this.scrollState.maxScrollTop), this.eventEmitter.emit(
           M.SCROLL,
           this.scrollState.scrollLeft,
           this.scrollState.scrollTop
@@ -10094,7 +10114,7 @@ const q = class q {
       }
       if (this.scrollbarState.horizontalDragging) {
         const s = this.layoutManager.getLayoutInfo(), i = this.canvas.width / (window.devicePixelRatio || 1), o = Math.max(30, i / s.totalWidth * i), n = i - o, a = (t.clientX - this.scrollbarState.dragStartX) / n, l = this.scrollbarState.dragStartScrollLeft + a * this.scrollState.maxScrollLeft;
-        this.scrollState.scrollLeft = J(l, 0, this.scrollState.maxScrollLeft), this.eventEmitter.emit(
+        this.scrollState.scrollLeft = Z(l, 0, this.scrollState.maxScrollLeft), this.eventEmitter.emit(
           M.SCROLL,
           this.scrollState.scrollLeft,
           this.scrollState.scrollTop
@@ -10261,7 +10281,7 @@ const q = class q {
         const a = o.cell;
         this.updateButtonHoverState(a, s, i);
         const l = this.layoutManager.getLeafColumns(), h = a.columnIndex >= 0 ? l[a.columnIndex] : void 0, c = a.rowIndex >= 0 ? this.rows[a.rowIndex] : void 0;
-        if ((h && c ? st(h.disabled, c, h) : !1) ? this.canvas.style.cursor = "not-allowed" : this.isClickableElement(a, s, i) ? this.canvas.style.cursor = "pointer" : h && h.key.startsWith("__hidden_placeholder__") ? this.canvas.style.cursor = "pointer" : this.canvas.style.cursor = "default", ((n = this.state.hoveredCell) == null ? void 0 : n.rowIndex) !== a.rowIndex || ((r = this.state.hoveredCell) == null ? void 0 : r.columnIndex) !== a.columnIndex) {
+        if ((h && c ? et(h.disabled, c, h) : !1) ? this.canvas.style.cursor = "not-allowed" : this.isClickableElement(a, s, i) ? this.canvas.style.cursor = "pointer" : h && h.key.startsWith("__hidden_placeholder__") ? this.canvas.style.cursor = "pointer" : this.canvas.style.cursor = "default", ((n = this.state.hoveredCell) == null ? void 0 : n.rowIndex) !== a.rowIndex || ((r = this.state.hoveredCell) == null ? void 0 : r.columnIndex) !== a.columnIndex) {
           this.state.hoveredCell = a.rowIndex >= 0 ? a : null;
           const u = this.state.hoveredCell ? this.getCellInfo(this.state.hoveredCell) : null;
           this.eventEmitter.emit(M.CELL_HOVER, u, t);
@@ -10284,7 +10304,7 @@ const q = class q {
       }
       if (this.state.isDragging && this.state.dragType === "progress-drag" && this.state.progressDragState) {
         const { cell: e, column: s, row: i, displayValue: o } = this.state.progressDragState;
-        s && i && (i.data[N(s)] = o), this.eventEmitter.emit(M.PROGRESS_CHANGE, this.getCellInfo(e), o), this.state.isDragging = !1, this.state.dragType = null, this.state.progressDragState = void 0, this.canvas.style.cursor = "default", this.unbindDocumentEvents();
+        s && i && (i.data[_(s)] = o), this.eventEmitter.emit(M.PROGRESS_CHANGE, this.getCellInfo(e), o), this.state.isDragging = !1, this.state.dragType = null, this.state.progressDragState = void 0, this.canvas.style.cursor = "default", this.unbindDocumentEvents();
         return;
       }
       if (this.state.isDragging && this.state.dragType === "column-reorder" && this.state.columnReorderState) {
@@ -10316,7 +10336,7 @@ const q = class q {
         this.state.dateDropdown = null, this.eventEmitter.emit(M.DATE_DROPDOWN_CLOSE);
       }
       if (this.state.dropdown) {
-        const { x: c, y: d, width: u, type: f, tagsConfig: g, config: m } = this.state.dropdown, p = q.DROPDOWN_ITEM_HEIGHT, w = q.DROPDOWN_MAX_VISIBLE;
+        const { x: c, y: d, width: u, type: f, tagsConfig: g, config: m } = this.state.dropdown, p = Q.DROPDOWN_ITEM_HEIGHT, w = Q.DROPDOWN_MAX_VISIBLE;
         let x;
         f === "tags" && g ? x = ((h = g.options) == null ? void 0 : h.length) ?? 0 : x = m.options.length;
         const v = Math.min(x, w) * p;
@@ -10325,7 +10345,7 @@ const q = class q {
         this.state.dropdown = null, this.eventEmitter.emit(M.DROPDOWN_CLOSE);
       }
       if (this.state.filterDropdown) {
-        const { x: c, y: d, width: u, mode: f, options: g } = this.state.filterDropdown, m = 8, p = 36, w = q.DROPDOWN_ITEM_HEIGHT, x = q.DROPDOWN_MAX_VISIBLE;
+        const { x: c, y: d, width: u, mode: f, options: g } = this.state.filterDropdown, m = 8, p = 36, w = Q.DROPDOWN_ITEM_HEIGHT, x = Q.DROPDOWN_MAX_VISIBLE;
         let y;
         switch (f) {
           case "search": {
@@ -10367,7 +10387,7 @@ const q = class q {
         if (c.type && l.includes(c.type))
           return;
         if (c.type === "progress" && c.progress) {
-          if (c.progress.interactive !== !0 || r.editable === !1 || st(r.disabled, a, r)) return;
+          if (c.progress.interactive !== !0 || r.editable === !1 || et(r.disabled, a, r)) return;
           this.eventEmitter.emit(M.CELL_DBL_CLICK, this.getCellInfo(o), t), this.eventEmitter.emit(M.ROW_DBL_CLICK, a, o.rowIndex, t), this.editingConfig.enabled !== !1 && this.startEditing(o, {
             value: String(c.progress.value),
             type: "number",
@@ -10379,7 +10399,7 @@ const q = class q {
           const d = this.layoutManager.getCellPosition(o.rowIndex, o.columnIndex), u = this.getCellViewportX(d, r), f = this.getCellViewportY(o.rowIndex), m = Math.min(d.height - 8 * 2, 24), p = u + (d.width - m) / 2, w = f + (d.height - m) / 2;
           if (!(s >= p && s <= p + m && i >= w && i <= w + m)) return;
         }
-        if (r.editable === !1 || st(r.disabled, a, r)) return;
+        if (r.editable === !1 || et(r.disabled, a, r)) return;
         if (this.eventEmitter.emit(M.CELL_DBL_CLICK, this.getCellInfo(o), t), this.eventEmitter.emit(M.ROW_DBL_CLICK, a, o.rowIndex, t), this.editingConfig.enabled !== !1) {
           const d = this.getEditConfig(r, a, o.rowIndex);
           d ? d.type === "select" && d.select ? this.startSelectEditing(o, d.select) : d.type === "tag" && d.tags ? this.startTagsEditing(o, d.tags) : d.type === "date" && d.date ? this.startDateEditing(o, d.date) : d.type === "color" && d.color ? this.startColorEditing(o, d.color) : d.type === "input" || !d.type ? this.startEditing(o, d.input) : this.startEditing(o, d.input) : c.type === "select" && c.select ? this.startSelectEditing(o, c.select) : c.type === "tag" && c.tags && c.tags.editable ? this.startTagsEditing(o, c.tags) : c.type === "date" && c.date ? this.startDateEditing(o, c.date) : c.type === "color" && c.color ? this.startColorEditing(o, c.color) : c.type === "image" && c.image ? this.startImageEditing(o, c.image) : this.startEditing(o, c.input);
@@ -10397,12 +10417,12 @@ const q = class q {
       }
       if (this.expandColumnKey === i.key && o.children && o.children.length > 0 && this.handleExpandIconClick(t, e, o))
         return !0;
-      const n = lt(i, o, t.rowIndex), r = st(i.disabled, o, i);
+      const n = lt(i, o, t.rowIndex), r = et(i.disabled, o, i);
       if (n.type === "checkbox" && n.checkbox) {
         const h = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), c = this.canvas.getBoundingClientRect(), d = e.clientX - c.left, u = e.clientY - c.top, f = this.getCellViewportX(h, i), g = this.getCellViewportY(t.rowIndex), m = 16, p = f + (h.width - m) / 2, w = g + (h.height - m) / 2;
         if (d >= p && d <= p + m && u >= w && u <= w + m && !r) {
           const y = !n.checkbox.checked;
-          return o.data[N(i)] = y, this.eventEmitter.emit(M.CHECKBOX_CHANGE, this.getCellInfo(t), y), !0;
+          return o.data[_(i)] = y, this.eventEmitter.emit(M.CHECKBOX_CHANGE, this.getCellInfo(t), y), !0;
         }
         return !1;
       }
@@ -10410,13 +10430,13 @@ const q = class q {
         if (r) return !1;
         if (n.radio.options && n.radio.options.length > 0) {
           const h = this.getClickedRadioOption(t, e, n.radio.options);
-          return h && !h.disabled ? (o.data[N(i)] = h.value, this.eventEmitter.emit(
+          return h && !h.disabled ? (o.data[_(i)] = h.value, this.eventEmitter.emit(
             M.RADIO_CHANGE,
             this.getCellInfo(t),
             h.value
           ), !0) : !1;
         } else
-          return o.data[N(i)] = n.radio.value, this.eventEmitter.emit(
+          return o.data[_(i)] = n.radio.value, this.eventEmitter.emit(
             M.RADIO_CHANGE,
             this.getCellInfo(t),
             n.radio.value
@@ -10443,22 +10463,22 @@ const q = class q {
         for (let D = 0; D < S.length; D++) {
           const H = S[D], k = H.text ?? this.locale.cell.buttonText;
           this.ctx.font = "13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-          const O = this.ctx.measureText(k).width, L = Math.max(O + 16, 40);
-          if (p >= R && p <= R + v && m >= T && m <= T + L)
+          const O = this.ctx.measureText(k).width, P = Math.max(O + 16, 40);
+          if (p >= R && p <= R + v && m >= T && m <= T + P)
             return this.eventEmitter.emit(M.BUTTON_CLICK, this.getCellInfo(t), H.actionKey), !0;
-          T += L + x;
+          T += P + x;
         }
         if (E.length > 0) {
           const D = n.buttons.moreButtonText ?? "···";
           this.ctx.font = "13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
           const H = this.ctx.measureText(D).width, k = Math.max(H + 16, 32);
           if (p >= R && p <= R + v && m >= T && m <= T + k) {
-            const O = f + T, L = q.DROPDOWN_ITEM_HEIGHT, P = E.length * L, B = this.canvas.getBoundingClientRect();
-            let W = g + R + v + 4, A = !1;
-            return W + P > B.height && (W = g + R - P - 4, A = !0), this.state.buttonsDropdown = {
+            const O = f + T, P = Q.DROPDOWN_ITEM_HEIGHT, L = E.length * P, W = this.canvas.getBoundingClientRect();
+            let B = g + R + v + 4, A = !1;
+            return B + L > W.height && (B = g + R - L - 4, A = !0), this.state.buttonsDropdown = {
               cell: t,
               x: O,
-              y: W,
+              y: B,
               buttons: E,
               hoveredIndex: -1,
               buttonRelativeX: T,
@@ -10475,7 +10495,7 @@ const q = class q {
         const h = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), c = this.canvas.getBoundingClientRect(), d = e.clientX - c.left, u = e.clientY - c.top, f = this.getCellViewportX(h, i), g = this.getCellViewportY(t.rowIndex), m = d - f, p = u - g, w = 44, x = 22, y = (h.width - w) / 2, v = (h.height - x) / 2;
         if (!(m >= y && m <= y + w && p >= v && p <= v + x)) return !1;
         const I = `${t.rowIndex}-${t.columnIndex}`, S = this.state.switchAnimations.get(I), E = n.switch.checked ?? !1, T = S ? S.progress : E ? 1 : 0, D = T < 0.5 ? 1 : 0, H = D === 1;
-        return E !== H && (o.data[N(i)] = H, this.eventEmitter.emit(M.SWITCH_CHANGE, this.getCellInfo(t), H)), this.state.switchAnimations.set(I, {
+        return E !== H && (o.data[_(i)] = H, this.eventEmitter.emit(M.SWITCH_CHANGE, this.getCellInfo(t), H)), this.state.switchAnimations.set(I, {
           cell: t,
           progress: T,
           targetProgress: D,
@@ -10493,10 +10513,10 @@ const q = class q {
         const I = h.width - v * 2;
         let S = this.ctx.measureText(y).width, E = y;
         if (S > I) {
-          const P = "...";
-          for (; E.length > 0 && this.ctx.measureText(E + P).width > I; )
+          const L = "...";
+          for (; E.length > 0 && this.ctx.measureText(E + L).width > I; )
             E = E.slice(0, -1);
-          E += P, S = this.ctx.measureText(E).width;
+          E += L, S = this.ctx.measureText(E).width;
         }
         const T = i.align ?? "left";
         let D;
@@ -10512,8 +10532,8 @@ const q = class q {
         }
         const H = (h.height - R) / 2;
         if (!(m >= D && m <= D + S && p >= H && p <= H + R)) return !1;
-        const O = Date.now(), L = ((a = this._lastClickCell) == null ? void 0 : a.rowIndex) === t.rowIndex && ((l = this._lastClickCell) == null ? void 0 : l.columnIndex) === t.columnIndex && O - this._lastClickTime < 350;
-        return this._lastClickTime = O, this._lastClickCell = { rowIndex: t.rowIndex, columnIndex: t.columnIndex }, L ? !1 : (window.open(x, "_blank", "noopener,noreferrer"), !0);
+        const O = Date.now(), P = ((a = this._lastClickCell) == null ? void 0 : a.rowIndex) === t.rowIndex && ((l = this._lastClickCell) == null ? void 0 : l.columnIndex) === t.columnIndex && O - this._lastClickTime < 350;
+        return this._lastClickTime = O, this._lastClickCell = { rowIndex: t.rowIndex, columnIndex: t.columnIndex }, P ? !1 : (window.open(x, "_blank", "noopener,noreferrer"), !0);
       }
       if (n.type === "progress" && n.progress) {
         const h = this.handleProgressClick(t, e, n.progress, i, o);
@@ -10542,16 +10562,16 @@ const q = class q {
         if (n.image.clickable === !1) return !1;
         const h = n.image, c = h.images, d = this.canvas.getBoundingClientRect(), u = e.clientX - d.left, f = e.clientY - d.top, g = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), m = this.getCellViewportX(g, i), p = this.getCellViewportY(t.rowIndex), w = u - m, x = f - p, y = 4, v = Math.min(g.width, g.height) - y * 2, R = h.width ?? 32, I = h.height ?? 32, S = Math.min(R, v), E = Math.min(I, v), T = h.gap ?? 4;
         if (c && c.length > 1) {
-          const L = h.maxVisible ?? 3, P = h.showMoreCount !== !1, B = g.width - y * 2, W = Math.floor((B + T) / (S + T)), V = Math.max(1, W - (P ? 1 : 0)), Y = Math.min(L, V), _ = c.length > Y ? Y : c.length, F = c.length > Y;
+          const P = h.maxVisible ?? 3, L = h.showMoreCount !== !1, W = g.width - y * 2, B = Math.floor((W + T) / (S + T)), N = Math.max(1, B - (L ? 1 : 0)), Y = Math.min(P, N), z = c.length > Y ? Y : c.length, V = c.length > Y;
           let $;
-          F && P ? $ = _ * S + _ * T + S : $ = _ * S + Math.max(0, _ - 1) * T;
+          V && L ? $ = z * S + z * T + S : $ = z * S + Math.max(0, z - 1) * T;
           let G = (g.width - $) / 2;
           G = Math.max(y, G);
-          const U = (g.height - E) / 2, j = w - G, et = x - U;
-          if (j < 0 || j > $ || et < 0 || et > E)
+          const U = (g.height - E) / 2, J = w - G, st = x - U;
+          if (J < 0 || J > $ || st < 0 || st > E)
             return !1;
-          const X = Math.floor(j / (S + T));
-          if (F && P && X === _)
+          const X = Math.floor(J / (S + T));
+          if (V && L && X === z)
             return !1;
           if (X >= 0 && X < c.length) {
             const K = c[X];
@@ -10606,13 +10626,13 @@ const q = class q {
           return;
       }
       if (this.state.imageTooltip) {
-        const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, images: u, maxRows: f, scrollTop: g } = this.state.imageTooltip, m = q.IMAGE_SIZE, p = 8, w = 8, x = 4, R = x * m + (x - 1) * w + p * 2 + 4 + 4, I = m + w, S = f * I + p * 2 - w;
+        const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, images: u, maxRows: f, scrollTop: g } = this.state.imageTooltip, m = Q.IMAGE_SIZE, p = 8, w = 8, x = 4, R = x * m + (x - 1) * w + p * 2 + 4 + 4, I = m + w, S = f * I + p * 2 - w;
         if (l >= c && l <= c + R && h >= d && h <= d + S) {
           const T = Math.ceil(u.length / x), D = Math.max(0, (T - f) * I), H = Math.abs(t.deltaY) >= Math.abs(t.deltaX);
           if (D > 0 && H) {
-            const O = g <= 0.5 && t.deltaY < 0, L = g >= D - 0.5 && t.deltaY > 0;
-            if (!O && !L) {
-              this.state.imageTooltip.scrollTop = J(g + t.deltaY, 0, D), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.IMAGE_TOOLTIP_SCROLL);
+            const O = g <= 0.5 && t.deltaY < 0, P = g >= D - 0.5 && t.deltaY > 0;
+            if (!O && !P) {
+              this.state.imageTooltip.scrollTop = Z(g + t.deltaY, 0, D), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.IMAGE_TOOLTIP_SCROLL);
               return;
             }
           }
@@ -10620,13 +10640,13 @@ const q = class q {
         this.imageHandler.updateImageTooltipPosition();
       }
       if (this.state.imageEditor) {
-        const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, images: u, maxRows: f, scrollTop: g, pendingImages: m } = this.state.imageEditor, p = q.IMAGE_SIZE, w = 8, x = 8, y = 4, v = 60, R = p + x, I = y * p + (y - 1) * x + w * 2 + 4 + 4, S = f * R + w * 2 - x, E = v + S;
+        const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, images: u, maxRows: f, scrollTop: g, pendingImages: m } = this.state.imageEditor, p = Q.IMAGE_SIZE, w = 8, x = 8, y = 4, v = 60, R = p + x, I = y * p + (y - 1) * x + w * 2 + 4 + 4, S = f * R + w * 2 - x, E = v + S;
         if (l >= c && l <= c + I && h >= d && h <= d + E) {
           const D = u.length + m.length, H = Math.ceil(D / y), k = Math.max(0, (H - f) * R), O = Math.abs(t.deltaY) >= Math.abs(t.deltaX);
           if (k > 0 && O) {
-            const P = g <= 0.5 && t.deltaY < 0, B = g >= k - 0.5 && t.deltaY > 0;
-            if (!P && !B) {
-              this.state.imageEditor.scrollTop = J(g + t.deltaY, 0, k), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.IMAGE_EDITOR_SCROLL);
+            const L = g <= 0.5 && t.deltaY < 0, W = g >= k - 0.5 && t.deltaY > 0;
+            if (!L && !W) {
+              this.state.imageEditor.scrollTop = Z(g + t.deltaY, 0, k), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.IMAGE_EDITOR_SCROLL);
               return;
             }
           }
@@ -10636,13 +10656,13 @@ const q = class q {
       if (this.state.filterDropdown) {
         const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, width: u, mode: f, options: g, scrollTop: m } = this.state.filterDropdown;
         if (f === "select" && g) {
-          const w = q.DROPDOWN_ITEM_HEIGHT, x = q.DROPDOWN_MAX_VISIBLE, y = Math.min(g.length, x), v = 32, R = 4, I = y * w, S = 8 + v + R + I + R + 36;
+          const w = Q.DROPDOWN_ITEM_HEIGHT, x = Q.DROPDOWN_MAX_VISIBLE, y = Math.min(g.length, x), v = 32, R = 4, I = y * w, S = 8 + v + R + I + R + 36;
           if (l >= c && l <= c + u && h >= d && h <= d + S) {
             const T = Math.abs(t.deltaY) >= Math.abs(t.deltaX), D = Math.max(0, g.length * w - I);
             if (D > 0 && T) {
               const k = m <= 0.5 && t.deltaY < 0, O = m >= D - 0.5 && t.deltaY > 0;
               if (!k && !O) {
-                this.state.filterDropdown.scrollTop = J(m + t.deltaY, 0, D), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN);
+                this.state.filterDropdown.scrollTop = Z(m + t.deltaY, 0, D), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.FILTER_DROPDOWN_OPEN);
                 return;
               }
             }
@@ -10651,7 +10671,7 @@ const q = class q {
         this.dropdownHandler.updateFilterDropdownPosition();
       }
       if (this.state.dropdown) {
-        const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, width: u, type: f, tagsConfig: g, config: m, scrollTop: p } = this.state.dropdown, w = q.DROPDOWN_ITEM_HEIGHT, x = q.DROPDOWN_MAX_VISIBLE;
+        const a = this.canvas.getBoundingClientRect(), l = t.clientX - a.left, h = t.clientY - a.top, { x: c, y: d, width: u, type: f, tagsConfig: g, config: m, scrollTop: p } = this.state.dropdown, w = Q.DROPDOWN_ITEM_HEIGHT, x = Q.DROPDOWN_MAX_VISIBLE;
         let y;
         f === "tags" && g ? y = ((r = g.options) == null ? void 0 : r.length) ?? 0 : y = m.options.length;
         const R = Math.min(y, x) * w;
@@ -10660,7 +10680,7 @@ const q = class q {
           if (E > 0 && S) {
             const D = p ?? 0, H = D <= 0.5 && t.deltaY < 0, k = D >= E - 0.5 && t.deltaY > 0;
             if (!H && !k) {
-              this.state.dropdown.scrollTop = J(D + t.deltaY, 0, E), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.DROPDOWN_HOVER);
+              this.state.dropdown.scrollTop = Z(D + t.deltaY, 0, E), t.preventDefault(), t.stopPropagation(), this.eventEmitter.emit(M.DROPDOWN_HOVER);
               return;
             }
           }
@@ -10668,11 +10688,11 @@ const q = class q {
         this.dropdownHandler.updateDropdownPosition();
       }
       this.updateAllDropdownPositions(), t.preventDefault();
-      const s = t.deltaX, i = t.deltaY, o = J(
+      const s = t.deltaX, i = t.deltaY, o = Z(
         this.scrollState.scrollLeft + s,
         0,
         this.scrollState.maxScrollLeft
-      ), n = J(
+      ), n = Z(
         this.scrollState.scrollTop + i,
         0,
         this.scrollState.maxScrollTop
@@ -10798,17 +10818,17 @@ const q = class q {
       expandColumnKey: this.expandColumnKey,
       locale: this.locale
     };
-    this.handlerContext = t, this.editingHandler = new Dt(t, this.eventEmitter, this.editingConfig), this.dropdownHandler = new Ht(t, this.eventEmitter), this.selectionHandler = new Is(t, this.eventEmitter), this.navigationHandler = new Ms(
+    this.handlerContext = t, this.editingHandler = new Dt(t, this.eventEmitter, this.editingConfig), this.dropdownHandler = new Ht(t, this.eventEmitter), this.selectionHandler = new Es(t, this.eventEmitter), this.navigationHandler = new Ts(
       t,
       this.eventEmitter,
       this.selectionHandler,
       this.editingConfig
-    ), this.contextMenuHandler = new Ot(t, this.eventEmitter), this.imageHandler = new kt(t, this.eventEmitter), this.headerHandler = new Ss(
+    ), this.contextMenuHandler = new Ot(t, this.eventEmitter), this.imageHandler = new kt(t, this.eventEmitter), this.headerHandler = new Ds(
       t,
       this.eventEmitter,
       this.sortConfig,
       this.filterConfig
-    ), this.controlClickHandler = new Es(t, this.eventEmitter), this.buttonAnimationHandler = new Ts(t, this.eventEmitter), this.tooltipHandler = new Ds(t, this.eventEmitter);
+    ), this.controlClickHandler = new Hs(t, this.eventEmitter), this.buttonAnimationHandler = new ks(t, this.eventEmitter), this.tooltipHandler = new Os(t, this.eventEmitter);
   }
   /**
    * 将 CellPosition 转换为 CellInfo，包含 row 和 column 数据
@@ -10867,11 +10887,11 @@ const q = class q {
     const s = this.rows[this.state.imageEditor.cell.rowIndex];
     if (!s) return;
     const o = (e.render ? e.render(
-      s.data[N(e)],
+      s.data[_(e)],
       s,
       e,
       this.state.imageEditor.cell.rowIndex
-    ) : { image: s.data[N(e)] }).image ?? {}, n = document.createElement("input");
+    ) : { image: s.data[_(e)] }).image ?? {}, n = document.createElement("input");
     n.type = "file", n.accept = o.accept ?? "image/*", n.multiple = !this.state.imageEditor.isSingleImage && o.multiple !== !1, n.onchange = async (r) => {
       const a = r.target.files;
       !a || a.length === 0 || await this.imageHandler.handleFileUpload(Array.from(a));
@@ -10902,7 +10922,7 @@ const q = class q {
       return;
     }
     const a = lt(n, r, t.rowIndex);
-    if (a.type !== "button" || !a.button || st(n.disabled, r, n)) {
+    if (a.type !== "button" || !a.button || et(n.disabled, r, n)) {
       this.startButtonHoverAnimationLoop();
       return;
     }
@@ -10969,8 +10989,8 @@ const q = class q {
     }
     const a = r.image, l = a.images, h = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), c = this.getCellViewportX(h, o), d = this.getCellViewportY(t.rowIndex), u = e - c, f = s - d, g = 4, m = Math.min(h.width, h.height) - g * 2, p = a.width ?? 32, w = a.height ?? 32, x = Math.min(p, m), y = Math.min(w, m), v = a.gap ?? 4;
     if (!l || l.length <= 1) {
-      const W = (h.width - x) / 2, A = (h.height - y) / 2, V = u >= W && u <= W + x && f >= A && f <= A + y;
-      this.state.hoveredImageIndex = V && a.hoverable !== !1 ? 0 : -1;
+      const B = (h.width - x) / 2, A = (h.height - y) / 2, N = u >= B && u <= B + x && f >= A && f <= A + y;
+      this.state.hoveredImageIndex = N && a.hoverable !== !1 ? 0 : -1;
       return;
     }
     const R = h.width - g * 2, I = a.showMoreCount !== !1, S = a.maxVisible;
@@ -10978,29 +10998,29 @@ const q = class q {
     if (l.length === 1)
       E = 1;
     else {
-      const W = Math.floor((R + v) / (x + v));
-      E = Math.max(1, W - (I ? 1 : 0));
+      const B = Math.floor((R + v) / (x + v));
+      E = Math.max(1, B - (I ? 1 : 0));
     }
     const T = S !== void 0 ? Math.min(S, E) : E, D = l.length > T, H = D ? T : l.length;
     let k;
     D && I ? k = H * x + H * v + x : k = H * x + Math.max(0, H - 1) * v;
     let O = c + (h.width - k) / 2;
     O = Math.max(c + g, O);
-    const L = d + (h.height - y) / 2, P = e - O, B = s - L;
-    if (B < 0 || B > y) {
+    const P = d + (h.height - y) / 2, L = e - O, W = s - P;
+    if (W < 0 || W > y) {
       this.state.hoveredImageIndex = -1;
       return;
     }
-    for (let W = 0; W < H; W++) {
-      const A = W * (x + v), V = A + x;
-      if (P >= A && P < V) {
-        this.state.hoveredImageIndex = a.hoverable !== !1 ? W : -1;
+    for (let B = 0; B < H; B++) {
+      const A = B * (x + v), N = A + x;
+      if (L >= A && L < N) {
+        this.state.hoveredImageIndex = a.hoverable !== !1 ? B : -1;
         return;
       }
     }
     if (D && I) {
-      const W = H * (x + v), A = W + x;
-      if (P >= W && P < A) {
+      const B = H * (x + v), A = B + x;
+      if (L >= B && L < A) {
         this.state.hoveredImageIndex = a.hoverable !== !1 ? H : -1;
         return;
       }
@@ -11022,7 +11042,7 @@ const q = class q {
       this.state.hoveredButtonIndex = -1;
       return;
     }
-    if (st(o.disabled, n, o)) {
+    if (et(o.disabled, n, o)) {
       this.state.hoveredButtonIndex = -1;
       return;
     }
@@ -11057,7 +11077,7 @@ const q = class q {
       return !0;
     const o = this.layoutManager.getLeafColumns()[t.columnIndex], n = this.rows[t.rowIndex];
     if (!o || !n) return !1;
-    const r = lt(o, n, t.rowIndex), a = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), l = st(o.disabled, n, o), h = this.getCellViewportX(a, o), c = this.getCellViewportY(t.rowIndex), d = e - h, u = s - c;
+    const r = lt(o, n, t.rowIndex), a = this.layoutManager.getCellPosition(t.rowIndex, t.columnIndex), l = et(o.disabled, n, o), h = this.getCellViewportX(a, o), c = this.getCellViewportY(t.rowIndex), d = e - h, u = s - c;
     if (r.type === "checkbox" && r.checkbox) {
       if (l) return !1;
       const f = 16, g = (a.width - f) / 2, m = (a.height - f) / 2;
@@ -11209,11 +11229,11 @@ const q = class q {
   }
   handleExternalWheel(t, e) {
     this.state.dropdown && this.dropdownHandler.updateDropdownPosition(), this.state.tooltip && this.updateTooltipPosition();
-    const s = J(
+    const s = Z(
       this.scrollState.scrollLeft + t,
       0,
       this.scrollState.maxScrollLeft
-    ), i = J(
+    ), i = Z(
       this.scrollState.scrollTop + e,
       0,
       this.scrollState.maxScrollTop
@@ -11257,7 +11277,7 @@ const q = class q {
         ];
         if (r.type && a.includes(r.type)) {
           if (r.type === "switch" && r.switch) {
-            st(o.disabled, n, o) || (n.data[N(o)] = !r.switch.checked, this.eventEmitter.emit(
+            et(o.disabled, n, o) || (n.data[_(o)] = !r.switch.checked, this.eventEmitter.emit(
               M.SWITCH_CHANGE,
               this.getCellInfo(e),
               !r.switch.checked
@@ -11267,7 +11287,7 @@ const q = class q {
           this.toggleRowExpand(e.rowIndex);
           return;
         }
-        if (o.editable === !1 || st(o.disabled, n, o) || (s = r.input) != null && s.readonly) return;
+        if (o.editable === !1 || et(o.disabled, n, o) || (s = r.input) != null && s.readonly) return;
         const l = this.getEditConfig(o, n, e.rowIndex);
         if (l) {
           if (l.type === "select" && l.select) {
@@ -11319,7 +11339,7 @@ const q = class q {
    * 优先级：editRender > render 返回的编辑配置 > null（走默认逻辑）
    */
   getEditConfig(t, e, s) {
-    const i = e.data[N(t)];
+    const i = e.data[_(t)];
     if (t.editRender)
       try {
         const o = t.editRender(i, e, s);
@@ -11440,7 +11460,7 @@ const q = class q {
             l.push("");
             continue;
           }
-          const u = oe(c, d, a);
+          const u = ae(c, d, a);
           l.push(u);
         }
         t.push(l.join("	"));
@@ -11450,7 +11470,7 @@ const q = class q {
 `);
   }
   setScrollPosition(t, e) {
-    this.scrollState.scrollLeft = J(t, 0, this.scrollState.maxScrollLeft), this.scrollState.scrollTop = J(e, 0, this.scrollState.maxScrollTop), this.eventEmitter.emit(
+    this.scrollState.scrollLeft = Z(t, 0, this.scrollState.maxScrollLeft), this.scrollState.scrollTop = Z(e, 0, this.scrollState.maxScrollTop), this.eventEmitter.emit(
       M.SCROLL,
       this.scrollState.scrollLeft,
       this.scrollState.scrollTop
@@ -11593,14 +11613,14 @@ const q = class q {
       if (!o) return;
       const n = this.allRows.length > 0 ? this.allRows : this.rows;
       if (t.trim()) {
-        const r = ze(o, n, t);
+        const r = Xe(o, n, t);
         this.state.filterDropdown.options = r.map((a) => ({
           label: a.label,
           value: a.value,
           checked: !1
         })), this.state.filterDropdown.isLoading = !1;
       } else {
-        const r = ne(o, n, 0);
+        const r = le(o, n, 0);
         r.length === 0 && n.length > 0 ? (this.state.filterDropdown.isLoading = !0, this.state.filterDropdown.options = void 0) : (this.state.filterDropdown.options = r.map((a) => ({
           label: a.label,
           value: a.value,
@@ -11701,10 +11721,10 @@ const q = class q {
   }
 };
 // 下拉菜单常量
-b(q, "DROPDOWN_ITEM_HEIGHT", 32), b(q, "DROPDOWN_MAX_VISIBLE", 8), // 图片编辑器常量 (用于 ImageHandler 和其他图片相关操作)
-b(q, "IMAGE_SIZE", 64), b(q, "IMAGE_PADDING", 8), b(q, "IMAGE_GAP", 8), b(q, "IMAGES_PER_ROW", 4), b(q, "IMAGE_UPLOAD_AREA_HEIGHT", 60), b(q, "IMAGE_MAX_ROWS", 3);
-let Pt = q;
-class Hs {
+b(Q, "DROPDOWN_ITEM_HEIGHT", 32), b(Q, "DROPDOWN_MAX_VISIBLE", 8), // 图片编辑器常量 (用于 ImageHandler 和其他图片相关操作)
+b(Q, "IMAGE_SIZE", 64), b(Q, "IMAGE_PADDING", 8), b(Q, "IMAGE_GAP", 8), b(Q, "IMAGES_PER_ROW", 4), b(Q, "IMAGE_UPLOAD_AREA_HEIGHT", 60), b(Q, "IMAGE_MAX_ROWS", 3);
+let Pt = Q;
+class Ps {
   constructor(t, e, s, i, o, n) {
     b(this, "wrapper");
     b(this, "layoutManager");
@@ -11769,8 +11789,8 @@ class Hs {
     if ((e == null ? void 0 : e.multiline) ?? !1) {
       const w = Math.max(1, Math.floor((a.height - m * 2) / g)), x = Math.min((e == null ? void 0 : e.maxRows) ?? w, w), y = g * x + m * 2, v = Math.min(a.height + 2, y + 2);
       this.inputElement = document.createElement("textarea");
-      const R = String(n.data[N(i)] ?? "");
-      this.inputElement.value = (e == null ? void 0 : e.value) !== void 0 ? e.value : R, this.inputElement.placeholder = (e == null ? void 0 : e.placeholder) ?? "", this.inputElement.disabled = st(i.disabled, n, i), this.inputElement.readOnly = (e == null ? void 0 : e.readonly) ?? !1, this.inputElement.style.cssText = `
+      const R = String(n.data[_(i)] ?? "");
+      this.inputElement.value = (e == null ? void 0 : e.value) !== void 0 ? e.value : R, this.inputElement.placeholder = (e == null ? void 0 : e.placeholder) ?? "", this.inputElement.disabled = et(i.disabled, n, i), this.inputElement.readOnly = (e == null ? void 0 : e.readonly) ?? !1, this.inputElement.style.cssText = `
         position: absolute;
         left: ${d}px;
         top: ${u}px;
@@ -11826,15 +11846,15 @@ class Hs {
         E();
       }), this.wheelHandler = (T) => {
         if (this.inputElement && T.target === this.inputElement) {
-          const D = this.inputElement, H = D.scrollTop === 0, k = D.scrollTop + D.clientHeight >= D.scrollHeight - 1, O = T.deltaY < 0, L = T.deltaY > 0;
-          (H && O || k && L) && T.preventDefault(), T.stopPropagation();
+          const D = this.inputElement, H = D.scrollTop === 0, k = D.scrollTop + D.clientHeight >= D.scrollHeight - 1, O = T.deltaY < 0, P = T.deltaY > 0;
+          (H && O || k && P) && T.preventDefault(), T.stopPropagation();
         }
       }, document.addEventListener("wheel", this.wheelHandler, { capture: !0, passive: !1 }), E();
     } else {
       const w = a.height + 2;
       this.inputElement = document.createElement("input"), this.inputElement.type = (e == null ? void 0 : e.type) ?? "text";
-      const x = String(n.data[N(i)] ?? "");
-      this.inputElement.value = (e == null ? void 0 : e.value) !== void 0 ? e.value : x, this.inputElement.placeholder = (e == null ? void 0 : e.placeholder) ?? "", this.inputElement.disabled = st(i.disabled, n, i), this.inputElement.readOnly = (e == null ? void 0 : e.readonly) ?? !1, this.inputElement.style.cssText = `
+      const x = String(n.data[_(i)] ?? "");
+      this.inputElement.value = (e == null ? void 0 : e.value) !== void 0 ? e.value : x, this.inputElement.placeholder = (e == null ? void 0 : e.placeholder) ?? "", this.inputElement.disabled = et(i.disabled, n, i), this.inputElement.readOnly = (e == null ? void 0 : e.readonly) ?? !1, this.inputElement.style.cssText = `
         position: absolute;
         left: ${d}px;
         top: ${u}px;
@@ -11896,7 +11916,7 @@ class Hs {
     this.destroyInputElement(), this.editingCell = null;
   }
 }
-class ks {
+class Ls {
   constructor(t, e, s, i = ot) {
     b(this, "wrapper");
     b(this, "eventEmitter");
@@ -12158,7 +12178,7 @@ class ks {
     this.removeInputs();
   }
 }
-class Os {
+class Ws {
   constructor() {
     b(this, "listeners", /* @__PURE__ */ new Map());
   }
@@ -12194,7 +12214,7 @@ class Os {
     return ((e = this.listeners.get(t)) == null ? void 0 : e.size) ?? 0;
   }
 }
-const Q = {
+const j = {
   name: "light",
   colors: {
     background: "#ffffff",
@@ -12493,91 +12513,91 @@ const Q = {
     color: "#434343"
   }
 };
-function Ks(C) {
+function qs(C) {
   var t, e, s, i, o, n, r, a, l, h, c, d, u, f, g, m;
   return C ? {
-    ...Q,
+    ...j,
     ...C,
     colors: {
-      ...Q.colors,
+      ...j.colors,
       ...C.colors,
       tagColors: {
-        ...Q.colors.tagColors,
+        ...j.colors.tagColors,
         ...(t = C.colors) == null ? void 0 : t.tagColors
       },
       date: {
-        ...Q.colors.date,
+        ...j.colors.date,
         ...(e = C.colors) == null ? void 0 : e.date
       },
       input: {
-        ...Q.colors.input,
+        ...j.colors.input,
         ...(s = C.colors) == null ? void 0 : s.input
       },
       checkbox: {
-        ...Q.colors.checkbox,
+        ...j.colors.checkbox,
         ...(i = C.colors) == null ? void 0 : i.checkbox
       },
       radio: {
-        ...Q.colors.radio,
+        ...j.colors.radio,
         ...(o = C.colors) == null ? void 0 : o.radio
       },
       button: {
-        ...Q.colors.button,
+        ...j.colors.button,
         ...(n = C.colors) == null ? void 0 : n.button
       },
       dropdown: {
-        ...Q.colors.dropdown,
+        ...j.colors.dropdown,
         ...(r = C.colors) == null ? void 0 : r.dropdown
       },
       scrollbar: {
-        ...Q.colors.scrollbar,
+        ...j.colors.scrollbar,
         ...(a = C.colors) == null ? void 0 : a.scrollbar
       },
       indicator: {
-        ...Q.colors.indicator,
+        ...j.colors.indicator,
         ...(l = C.colors) == null ? void 0 : l.indicator
       },
       tooltip: {
-        ...Q.colors.tooltip,
+        ...j.colors.tooltip,
         ...(h = C.colors) == null ? void 0 : h.tooltip
       },
       image: {
-        ...Q.colors.image,
+        ...j.colors.image,
         ...(c = C.colors) == null ? void 0 : c.image
       },
       hiddenPlaceholder: {
-        ...Q.colors.hiddenPlaceholder,
+        ...j.colors.hiddenPlaceholder,
         ...(d = C.colors) == null ? void 0 : d.hiddenPlaceholder
       },
       moreCount: {
-        ...Q.colors.moreCount,
+        ...j.colors.moreCount,
         ...(u = C.colors) == null ? void 0 : u.moreCount
       },
       shadow: {
-        ...Q.colors.shadow,
+        ...j.colors.shadow,
         ...(f = C.colors) == null ? void 0 : f.shadow
       },
       watermark: {
-        ...Q.colors.watermark,
+        ...j.colors.watermark,
         ...(g = C.colors) == null ? void 0 : g.watermark
       },
-      loading: (m = C.colors) != null && m.loading ? { ...Q.colors.loading, ...C.colors.loading } : Q.colors.loading
+      loading: (m = C.colors) != null && m.loading ? { ...j.colors.loading, ...C.colors.loading } : j.colors.loading
     },
     font: {
-      ...Q.font,
+      ...j.font,
       ...C.font
     },
     row: {
-      ...Q.row,
+      ...j.row,
       ...C.row
     },
     border: {
-      ...Q.border,
+      ...j.border,
       ...C.border
     }
-  } : { ...Q };
+  } : { ...j };
 }
-class Ps {
+class Bs {
   constructor(t, e, s = {}) {
     b(this, "element");
     b(this, "spinnerElement");
@@ -12662,7 +12682,7 @@ class Ps {
     this.element.parentNode && this.element.parentNode.removeChild(this.element);
   }
 }
-class Ls {
+class As {
   constructor() {
     b(this, "topPinnedRows", /* @__PURE__ */ new Set());
     b(this, "bottomPinnedRows", /* @__PURE__ */ new Set());
@@ -12695,7 +12715,7 @@ class Ls {
     return [...this.bottomPinnedRows];
   }
 }
-class js {
+class Zs {
   // 用户手动设置的 loading 状态
   constructor(t, e) {
     b(this, "container");
@@ -12722,7 +12742,7 @@ class js {
     b(this, "columnIdManager");
     b(this, "scheduledRender", null);
     b(this, "manualLoading", !1);
-    b(this, "handleResize", Oe(() => {
+    b(this, "handleResize", We(() => {
       this.resize();
     }, 100));
     b(this, "handleThemeChange", () => {
@@ -12745,9 +12765,9 @@ class js {
       display: block;
       position: relative;
       z-index: 1;
-    `, this.wrapper.appendChild(this.canvas), this.loadingOverlay = new Ps(this.wrapper, this.theme, {
+    `, this.wrapper.appendChild(this.canvas), this.loadingOverlay = new Bs(this.wrapper, this.theme, {
       text: this.props.loadingText ?? this.locale.loadingText
-    }), this.eventEmitter = new Os(), this.setupEventHandlers();
+    }), this.eventEmitter = new Ws(), this.setupEventHandlers();
     const s = {
       enabled: ((n = e.virtualScroll) == null ? void 0 : n.enabled) ?? !0,
       rowBufferSize: ((r = e.virtualScroll) == null ? void 0 : r.rowBufferSize) ?? e.bufferSize ?? 5,
@@ -12761,7 +12781,7 @@ class js {
       enabled: !0,
       mode: "dblclick"
     };
-    this.dataManager = new Ge(e.rowKey), this.layoutManager = new St(s, this.theme), this.rowPinManager = new Ls(), this.layoutManager.setRowPinManager(this.rowPinManager), this.layoutManager.setShowRowNumbers(e.showRowNumbers === !0), this.layoutManager.setRowHeightFn(e.rowHeight), this.renderer = new Rs(this.canvas, this.theme, this.layoutManager, this.locale), this.renderer.setMultipleSelectSeparator(e.multipleSelectSeparator ?? ", "), this.rowIdManager = this.renderer.getRowIdManager(), this.columnIdManager = this.renderer.getColumnIdManager(), this.renderCache = new $e(
+    this.dataManager = new je(e.rowKey), this.layoutManager = new St(s, this.theme), this.rowPinManager = new As(), this.layoutManager.setRowPinManager(this.rowPinManager), this.layoutManager.setShowRowNumbers(e.showRowNumbers === !0), this.layoutManager.setRowHeightFn(e.rowHeight), this.renderer = new Ss(this.canvas, this.theme, this.layoutManager, this.locale), this.renderer.setMultipleSelectSeparator(e.multipleSelectSeparator ?? ", "), this.rowIdManager = this.renderer.getRowIdManager(), this.columnIdManager = this.renderer.getColumnIdManager(), this.renderCache = new Ke(
       this.rowIdManager,
       this.columnIdManager,
       this.dataManager.getRowVersionManager()
@@ -12781,7 +12801,7 @@ class js {
         d.maxScrollLeft,
         d.maxScrollTop
       );
-    }), this.editorManager = new Hs(
+    }), this.editorManager = new Ps(
       this.wrapper,
       this.canvas,
       this.layoutManager,
@@ -12790,7 +12810,7 @@ class js {
       () => this.dataManager.getRows()
     ), this.editorManager.setOnScrollCallback((d, u) => {
       this.interactionManager.handleExternalWheel(d, u);
-    }), this.filterInputManager = new ks(
+    }), this.filterInputManager = new Ls(
       this.wrapper,
       this.eventEmitter,
       this.theme,
@@ -12914,7 +12934,7 @@ class js {
       this.editorManager.startEditing(s, i), this.render();
     }), this.eventEmitter.on(M.SELECT_CHANGE, (t, e) => {
       const s = t, i = e, n = this.layoutManager.getLeafColumns()[s.columnIndex];
-      n && this.dataManager.updateCell(s.rowIndex, n.key, i, N(n)), this.props.onSelectChange && this.props.onSelectChange(s, i), this.render();
+      n && this.dataManager.updateCell(s.rowIndex, n.key, i, _(n)), this.props.onSelectChange && this.props.onSelectChange(s, i), this.render();
     }), this.eventEmitter.on(
       M.TAGS_CHANGE,
       (t, e, s) => {
@@ -12925,7 +12945,7 @@ class js {
             i.rowIndex,
             a.key,
             l,
-            N(a)
+            _(a)
           );
         }
         this.props.onTagsChange && this.props.onTagsChange(i, o), this.render();
@@ -12949,7 +12969,7 @@ class js {
       this.render();
     }), this.eventEmitter.on(M.DATE_SELECT, (t, e) => {
       const s = t, i = e, n = this.layoutManager.getLeafColumns()[s.columnIndex];
-      n && this.dataManager.updateCell(s.rowIndex, n.key, i, N(n)), this.interactionManager.clearEditingState(), this.render();
+      n && this.dataManager.updateCell(s.rowIndex, n.key, i, _(n)), this.interactionManager.clearEditingState(), this.render();
     }), this.eventEmitter.on(M.CONTEXT_MENU_OPEN, () => {
       this.render();
     }), this.eventEmitter.on(M.CONTEXT_MENU_CLOSE, () => {
@@ -13015,7 +13035,7 @@ class js {
       }
     ), this.eventEmitter.on(M.EDIT_END, (t, e) => {
       const s = t, i = e, n = this.layoutManager.getLeafColumns()[s.columnIndex];
-      n && this.dataManager.updateCell(s.rowIndex, n.key, i, N(n)), this.interactionManager.clearEditingState(), this.render();
+      n && this.dataManager.updateCell(s.rowIndex, n.key, i, _(n)), this.interactionManager.clearEditingState(), this.render();
     }), this.eventEmitter.on(M.LOAD_MORE, (t) => {
       const e = t;
       this.props.onLoadMore && this.props.onLoadMore(e);
@@ -13277,53 +13297,62 @@ class js {
     var e;
     switch (t.format) {
       case "csv":
-        return new Blob([
-          Nt(
-            this.dataManager.exportData({
-              includeHeaders: t.includeHeaders ?? !0,
-              includeHidden: t.includeHidden ?? !1,
-              selectedOnly: t.selectedOnly ?? !1,
-              showRowNumbers: this.props.showRowNumbers === !0
-            })
-          )
-        ], { type: "text/csv" });
+        return new Blob(
+          [
+            Nt(
+              this.dataManager.exportData({
+                includeHeaders: t.includeHeaders ?? !0,
+                includeHidden: t.includeHidden ?? !1,
+                selectedOnly: t.selectedOnly ?? !1,
+                showRowNumbers: this.props.showRowNumbers === !0
+              })
+            )
+          ],
+          { type: "text/csv" }
+        );
       case "json":
-        return new Blob([
-          JSON.stringify(
-            this.dataManager.exportData({
-              includeHeaders: t.includeHeaders ?? !0,
-              includeHidden: t.includeHidden ?? !1,
-              selectedOnly: t.selectedOnly ?? !1,
-              showRowNumbers: this.props.showRowNumbers === !0
-            }),
-            null,
-            2
-          )
-        ], { type: "application/json" });
+        return new Blob(
+          [
+            JSON.stringify(
+              this.dataManager.exportData({
+                includeHeaders: t.includeHeaders ?? !0,
+                includeHidden: t.includeHidden ?? !1,
+                selectedOnly: t.selectedOnly ?? !1,
+                showRowNumbers: this.props.showRowNumbers === !0
+              }),
+              null,
+              2
+            )
+          ],
+          { type: "application/json" }
+        );
       case "excel": {
         const s = this.dataManager.getExportContext({
           includeHeaders: t.includeHeaders ?? !0,
           includeHidden: t.includeHidden ?? !1,
           selectedOnly: t.selectedOnly ?? !1,
           showRowNumbers: this.props.showRowNumbers === !0
-        }), i = De(
+        }), i = Oe(
           s,
           t.excel,
           ((e = t.filename) == null ? void 0 : e.replace(/\.[^.]+$/, "")) ?? "Sheet1"
         );
-        return He(i);
+        return Pe(i);
       }
       default:
-        return new Blob([
-          Nt(
-            this.dataManager.exportData({
-              includeHeaders: t.includeHeaders ?? !0,
-              includeHidden: t.includeHidden ?? !1,
-              selectedOnly: t.selectedOnly ?? !1,
-              showRowNumbers: this.props.showRowNumbers === !0
-            })
-          )
-        ], { type: "text/csv" });
+        return new Blob(
+          [
+            Nt(
+              this.dataManager.exportData({
+                includeHeaders: t.includeHeaders ?? !0,
+                includeHidden: t.includeHidden ?? !1,
+                selectedOnly: t.selectedOnly ?? !1,
+                showRowNumbers: this.props.showRowNumbers === !0
+              })
+            )
+          ],
+          { type: "text/csv" }
+        );
     }
   }
   // === 历史记录方法 ===
@@ -13485,7 +13514,7 @@ class js {
   createDefaultRowData(t) {
     const e = {};
     for (const s of t) {
-      const i = N(s);
+      const i = _(s);
       switch (s.type) {
         case "number":
           e[i] = 0;
@@ -13544,7 +13573,7 @@ class js {
   resolveTheme(t) {
     var i, o, n, r, a, l, h, c, d, u, f, g, m, p, w;
     let e;
-    this.themeMode === "auto" ? e = window.matchMedia("(prefers-color-scheme: dark)").matches ? Zt : Q : this.themeMode === "dark" ? e = Zt : e = Q;
+    this.themeMode === "auto" ? e = window.matchMedia("(prefers-color-scheme: dark)").matches ? Zt : j : this.themeMode === "dark" ? e = Zt : e = j;
     const s = t ?? this.props.theme;
     return s ? {
       ...e,
@@ -13714,55 +13743,58 @@ class js {
   }
 }
 export {
-  js as CanvasTable,
-  Ye as ColumnIdManager,
+  Zs as CanvasTable,
+  Ge as ColumnIdManager,
   Zt as DARK_THEME,
-  Q as DEFAULT_THEME,
-  Ge as DataManager,
-  Os as EventEmitter,
-  _e as FILTER_SAMPLE_ROWS,
-  Fe as FILTER_SEARCH_LIMIT,
+  j as DEFAULT_THEME,
+  je as DataManager,
+  Ws as EventEmitter,
+  ze as FILTER_SAMPLE_ROWS,
+  Ve as FILTER_SEARCH_LIMIT,
   Pt as InteractionManager,
-  Us as LRUCache,
+  Qs as LRUCache,
   St as LayoutManager,
-  $e as RenderCache,
-  Rs as Renderer,
-  Ve as RowIdManager,
-  Xe as RowVersionManager,
+  Ke as RenderCache,
+  Ss as Renderer,
+  $e as RowIdManager,
+  Ue as RowVersionManager,
   Nt as arrayToCsv,
   Ft as binarySearch,
-  De as buildExcelExportModel,
-  J as clamp,
-  Xs as createCanvas,
-  Bs as createXlsxBlob,
-  He as createXlsxBlobFromModel,
-  Oe as debounce,
+  Oe as buildExcelExportModel,
+  oe as calculateMaxTextRows,
+  Z as clamp,
+  Us as createCanvas,
+  Fs as createXlsxBlob,
+  Pe as createXlsxBlobFromModel,
+  We as debounce,
   _t as deepClone,
-  js as default,
-  Gs as downloadBlob,
-  Ke as enUS,
-  Fs as formatBoolean,
-  _s as formatDate,
-  ke as formatNumber,
-  As as formatPercent,
+  Zs as default,
+  js as downloadBlob,
+  qe as enUS,
+  Vs as formatBoolean,
+  zs as formatDate,
+  Le as formatNumber,
+  Ns as formatPercent,
   At as generateId,
-  oe as getCellDisplayText,
-  N as getColumnField,
-  ne as getColumnFilterOptions,
+  ae as getCellDisplayText,
+  _ as getColumnField,
+  le as getColumnFilterOptions,
   yt as getDevicePixelRatio,
-  Ae as getFilterModeByColumnType,
-  zs as getNestedValue,
+  Ne as getFilterModeByColumnType,
+  Xs as getNestedValue,
   lt as getRenderResult,
-  Pe as isEqual,
-  Le as isPromise,
-  Ys as measureText,
-  Ks as mergeTheme,
-  $s as requestAnimationFrameThrottle,
-  st as resolveDisabled,
+  Be as isEqual,
+  Ae as isPromise,
+  re as layoutTags,
+  ne as layoutWrappedText,
+  Gs as measureText,
+  qs as mergeTheme,
+  Ks as requestAnimationFrameThrottle,
+  et as resolveDisabled,
   Ut as resolveLocale,
-  ze as searchFilterOptions,
-  Vs as setNestedValue,
-  Ns as throttle,
+  Xe as searchFilterOptions,
+  $s as setNestedValue,
+  Ys as throttle,
   ft as truncateText,
   ot as zhCN
 };
