@@ -11,6 +11,8 @@ pnpm-debug.log*
 .claude
 coverage/
 docs/**/plans/
+docs/**/specs/
+.worktrees/
 
 # Playwright runtime artifacts
 test-results/
