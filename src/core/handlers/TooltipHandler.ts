@@ -12,6 +12,8 @@ import {
   SelectConfig,
   ImageConfig,
   TagsConfig,
+  RowHitResult,
+  ComputedSummaryRow,
 } from "../../types";
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
@@ -81,6 +83,91 @@ export class TooltipHandler extends BaseHandler {
     }
 
     this.state.tooltip = null;
+  }
+
+  checkSummaryTooltip(hit: RowHitResult | null): void {
+    if (!hit || (hit.band !== "summary-top" && hit.band !== "summary-bottom")) {
+      this.state.tooltip = null;
+      return;
+    }
+
+    const row = hit.row as ComputedSummaryRow;
+    const summaryCell = row.cells.find(
+      (cell) => hit.columnIndex >= cell.startColumnIndex && hit.columnIndex <= cell.endColumnIndex,
+    );
+    if (!summaryCell) {
+      this.state.tooltip = null;
+      return;
+    }
+
+    const text = summaryCell.renderResult.text;
+    if (!text) {
+      this.state.tooltip = null;
+      return;
+    }
+
+    const rect = this.getSummaryCellRect(
+      row,
+      hit.band,
+      summaryCell.startColumnIndex,
+      summaryCell.endColumnIndex,
+    );
+    if (!rect) {
+      this.state.tooltip = null;
+      return;
+    }
+
+    const padding = 8;
+    const maxTextWidth = rect.width - padding * 2;
+    const fontSize = this.getFontSize();
+    const lineHeight = fontSize * 1.5;
+    const maxRows = calculateMaxTextRows(rect.height, lineHeight, padding);
+    const isTruncated =
+      maxRows > 1
+        ? layoutWrappedText(this.ctx, text, maxTextWidth, maxRows).isTruncated
+        : this.ctx.measureText(text).width > maxTextWidth;
+
+    if (!isTruncated) {
+      this.state.tooltip = null;
+      return;
+    }
+
+    this.state.tooltip = {
+      cell: { rowIndex: -1, columnIndex: summaryCell.startColumnIndex },
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      content: { type: "text", text },
+    };
+  }
+
+  private getSummaryCellRect(
+    row: ComputedSummaryRow,
+    band: "summary-top" | "summary-bottom",
+    startColumnIndex: number,
+    endColumnIndex: number,
+  ): { x: number; y: number; width: number; height: number } | null {
+    const rowBands = this.layoutManager.getRowBandsForRender();
+    const rowBand = band === "summary-top" ? rowBands.summaryTop : rowBands.summaryBottom;
+    const rowIndex = rowBand.rows.indexOf(row);
+    if (rowIndex < 0) return null;
+
+    const startOffset = this.layoutManager.getColumnOffset(startColumnIndex);
+    const endOffset =
+      this.layoutManager.getColumnOffset(endColumnIndex) +
+      this.layoutManager.getColumnWidthByIndex(endColumnIndex);
+    const column = this.layoutManager.getLeafColumn(startColumnIndex);
+    const x = column?.fixed ? startOffset : startOffset - this.scrollState.scrollLeft;
+    const y =
+      rowBand.y +
+      rowBand.rows.slice(0, rowIndex).reduce((total, summaryRow) => total + summaryRow.height, 0);
+
+    return {
+      x,
+      y,
+      width: endOffset - startOffset,
+      height: row.height,
+    };
   }
 
   /**

@@ -1,6 +1,16 @@
 import { LayoutManager } from '@/core/LayoutManager';
 import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
+import type { ComputedSummaryRow } from '@/types';
+
+function createSummaryRow(key: string, height: number): ComputedSummaryRow {
+  return {
+    key,
+    height,
+    cells: [],
+    source: { key, cells: [] },
+  };
+}
 
 describe('LayoutManager', () => {
   let layoutManager: LayoutManager;
@@ -33,6 +43,52 @@ describe('LayoutManager', () => {
   });
 
   describe('fixed columns', () => {
+    it('includes the row number column when building summary leaf columns', () => {
+      const columns = [
+        { key: 'id', title: 'ID', width: 80, fixed: 'left' as const },
+        { key: 'name', title: 'Name', width: 120 },
+      ];
+
+      layoutManager.setShowRowNumbers(true);
+
+      const visibleLeafColumns = layoutManager.getVisibleLeafColumnsForLayout(columns);
+
+      expect(visibleLeafColumns).toHaveLength(3);
+      expect(visibleLeafColumns[0]).toMatchObject({
+        title: '#',
+        width: 50,
+        fixed: 'left',
+        _isRowNumber: true,
+      });
+      expect(visibleLeafColumns[1]!.key).toBe('id');
+      expect(visibleLeafColumns[2]!.key).toBe('name');
+    });
+
+    it('includes hidden placeholders when building summary leaf columns', () => {
+      const columns = [
+        { key: 'name', title: 'Name', width: 120, fixed: 'left' as const },
+        { key: 'secret', title: 'Secret', width: 100, hidden: true },
+        { key: 'avatar', title: 'Avatar', width: 80, fixed: 'left' as const },
+        { key: 'website', title: 'Website', width: 150 },
+        { key: 'salary', title: 'Salary', width: 100 },
+      ];
+
+      const visibleLeafColumns = layoutManager.getVisibleLeafColumnsForLayout(columns);
+
+      expect(visibleLeafColumns.map((column) => column.key)).toEqual([
+        'name',
+        '__hidden_placeholder__secret',
+        'avatar',
+        'website',
+        'salary',
+      ]);
+      expect(visibleLeafColumns[1]).toMatchObject({
+        width: 5,
+        fixed: 'left',
+        _hiddenColumnKey: 'secret',
+      });
+    });
+
     it('should detect left fixed columns', () => {
       const columns = [
         { key: 'id', title: 'ID', width: 80, fixed: 'left' as const },
@@ -459,6 +515,62 @@ describe('LayoutManager', () => {
 
       expect(result.region).toBe('cell');
       expect(elapsed).toBeLessThan(20);
+    });
+
+    it('places top summary rows above pinned top rows', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      const summary = createSummaryRow('total', 40);
+
+      layoutManager.setViewportSize(800, 240);
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.setSummaryRows([summary], []);
+      rowPinManager.pin(rows[0]!, 'top');
+      layoutManager.calculateLayout(columns, rows);
+
+      const bands = layoutManager.getRowBands();
+      expect(bands.summaryTop.rows).toEqual([summary]);
+      expect(bands.summaryTop.y).toBe(theme.row.headerHeight);
+      expect(bands.pinnedTop.y).toBe(theme.row.headerHeight + summary.height);
+      expect(bands.body.y).toBe(theme.row.headerHeight + summary.height + theme.row.height);
+    });
+
+    it('places bottom summary rows below pinned bottom rows and subtracts both from body viewport', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const rowPinManager = new RowPinManager();
+      const summary = createSummaryRow('total', 44);
+
+      layoutManager.setViewportSize(800, 260);
+      layoutManager.setRowPinManager(rowPinManager);
+      layoutManager.setSummaryRows([], [summary]);
+      rowPinManager.pin(rows[4]!, 'bottom');
+      layoutManager.calculateLayout(columns, rows);
+
+      const bands = layoutManager.getRowBands();
+      expect(bands.summaryBottom.rows).toEqual([summary]);
+      expect(bands.summaryBottom.y).toBe(260 - summary.height);
+      expect(bands.pinnedBottom.y).toBe(260 - summary.height - theme.row.height);
+      expect(layoutManager.getBodyViewportHeight()).toBe(
+        260 - theme.row.headerHeight - summary.height - theme.row.height,
+      );
+    });
+
+    it('hit tests summary bands separately from body rows', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(5);
+      const summary = createSummaryRow('total', 40);
+
+      layoutManager.setViewportSize(800, 240);
+      layoutManager.setSummaryRows([summary], []);
+      layoutManager.calculateLayout(columns, rows);
+
+      const result = layoutManager.hitTest(40, theme.row.headerHeight + 10);
+
+      expect(result.region).toBe('cell');
+      expect(result.rowHit?.band).toBe('summary-top');
+      expect(result.rowHit?.row).toBe(summary);
     });
   });
 });

@@ -1515,6 +1515,44 @@ const table = new CanvasTable(container, {
   themeMode: "auto",
   enableRowHeightResize: true,
   enableRowPinning: true,
+  summary: {
+    position: "bottom",
+    scope: "view",
+    rows: [
+      {
+        key: "total",
+        build: ({ scopeRows }) => {
+          let salaryTotal = 0;
+          let bonusTotal = 0;
+          for (const row of scopeRows) {
+            salaryTotal += Number(row.data.salary ?? 0);
+            bonusTotal += Number(row.data.bonus ?? 0);
+          }
+
+          return [
+            {
+              startColumnKey: "name",
+              endColumnKey: "department",
+              text: `合计 ${scopeRows.length} 行`,
+              style: { fontWeight: "bold" },
+            },
+            {
+              columnKey: "salary",
+              value: salaryTotal,
+              type: "number",
+              style: { fontWeight: "bold", horizontalAlign: "right" },
+            },
+            {
+              columnKey: "bonus",
+              value: bonusTotal,
+              type: "number",
+              style: { fontWeight: "bold", horizontalAlign: "right" },
+            },
+          ];
+        },
+      },
+    ],
+  },
   // 动态行高示例：每10行有100px高度，每5行有64px高度，其他为默认32px
   rowHeight: (_row, rowIndex) => {
     if (rowIndex % 10 === 0) return 100;

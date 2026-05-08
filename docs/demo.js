@@ -529,6 +529,57 @@ function initDemo() {
     console.log(label + ' - 创建: ' + createTime.toFixed(2) + 'ms, 渲染: ' + renderTime.toFixed(2) + 'ms');
   }
 
+  function createSummaryConfig() {
+    return {
+      position: 'bottom',
+      scope: 'view',
+      rows: [
+        {
+          key: 'total',
+          build: function(context) {
+            var salaryTotal = 0;
+            var bonusTotal = 0;
+            for (var i = 0; i < context.scopeRows.length; i++) {
+              var row = context.scopeRows[i];
+              salaryTotal += Number(row.data.salary || 0);
+              bonusTotal += Number(row.data.bonus || 0);
+            }
+
+            return [
+              {
+                startColumnKey: 'name',
+                endColumnKey: 'department',
+                text: '合计 ' + context.scopeRows.length + ' 行',
+                style: { fontWeight: 'bold' }
+              },
+              {
+                columnKey: 'salary',
+                value: salaryTotal,
+                type: 'number',
+                style: { fontWeight: 'bold', horizontalAlign: 'right' }
+              },
+              {
+                columnKey: 'bonus',
+                value: bonusTotal,
+                type: 'number',
+                style: { fontWeight: 'bold', horizontalAlign: 'right' }
+              }
+            ];
+          }
+        }
+      ]
+    };
+  }
+
+  function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // Initialize table
   var container = document.getElementById('table-container');
   var table = new CanvasTable(container, {
@@ -542,6 +593,7 @@ function initDemo() {
     themeMode: 'auto',
     enableRowHeightResize: true,
     enableRowPinning: true,
+    summary: createSummaryConfig(),
     rowHeight: function(row, rowIndex) {
       if (rowIndex % 10 === 0) return 100;
       if (rowIndex % 5 === 0) return 64;
@@ -579,12 +631,28 @@ function initDemo() {
   document.getElementById('clearFilter').addEventListener('click', function() { table.clearFilters(); });
   document.getElementById('exportCsv').addEventListener('click', function() {
     table.export({ format: 'csv', filename: 'data.csv' }).then(function(blob) {
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement('a');
-      a.href = url;
-      a.download = 'data.csv';
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, 'data.csv');
+    });
+  });
+  document.getElementById('exportExcel').addEventListener('click', function() {
+    table.export({
+      format: 'excel',
+      filename: 'canvas-table-demo.xlsx',
+      excel: {
+        hierarchicalHeaders: true,
+        columnWidths: 'view',
+        freeze: {
+          header: true,
+          leftFixedColumns: true
+        },
+        formats: [
+          { key: 'salary', type: 'number', formatCode: '#,##0' },
+          { key: 'bonus', type: 'number', formatCode: '#,##0' },
+          { key: 'joinDate', type: 'date', formatCode: 'yyyy-mm-dd' }
+        ]
+      }
+    }).then(function(blob) {
+      downloadBlob(blob, 'canvas-table-demo.xlsx');
     });
   });
 
@@ -700,6 +768,7 @@ function initDemo() {
       themeMode: currentThemeMode,
       locale: currentLocale,
       lazyLoad: { enabled: true, threshold: 10 },
+      summary: createSummaryConfig(),
       onLoadMore: function(params) {
         console.log('Load more triggered:', params);
         var currentCount = lazyTable.getRows().length;

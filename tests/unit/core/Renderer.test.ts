@@ -2,7 +2,7 @@ import { Renderer } from '@/core/Renderer';
 import { LayoutManager } from '@/core/LayoutManager';
 import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
-import type { VisibleRange, SortConfig, InteractionState, Column } from '@/types';
+import type { ComputedSummaryRow, VisibleRange, SortConfig, InteractionState, Column } from '@/types';
 
 describe('Renderer', () => {
   let renderer: Renderer;
@@ -52,6 +52,34 @@ describe('Renderer', () => {
     }
 
     return -1;
+  }
+
+  function createSummaryRow(): ComputedSummaryRow {
+    return {
+      key: 'total',
+      height: 40,
+      source: { key: 'total', cells: [] },
+      cells: [
+        {
+          key: 'total:label',
+          startColumnIndex: 1,
+          endColumnIndex: 2,
+          startColumnKey: 'name',
+          endColumnKey: 'active',
+          config: { startColumnKey: 'name', endColumnKey: 'active', text: 'Total' },
+          renderResult: { text: 'Total', type: 'text', style: { fontWeight: 'bold' } },
+        },
+        {
+          key: 'total:progress',
+          startColumnIndex: 3,
+          endColumnIndex: 3,
+          startColumnKey: 'progress',
+          endColumnKey: 'progress',
+          config: { columnKey: 'progress', value: 60 },
+          renderResult: { text: '60', type: 'number' },
+        },
+      ],
+    };
   }
 
   beforeEach(() => {
@@ -351,6 +379,81 @@ describe('Renderer', () => {
         (call) => call[1] === mockTheme.row.headerHeight,
       );
       expect(selectionCall).toBeDefined();
+    });
+
+    it('renders bottom summary rows outside the body band', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(6);
+      const summary = createSummaryRow();
+      layoutManager.setViewportSize(800, 240);
+      layoutManager.setSummaryRows([], [summary]);
+      layoutManager.calculateLayout(columns, rows);
+
+      const ctx = canvas.getContext('2d')!;
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+
+      const totalCall = fillTextSpy.mock.calls.find((call) => call[0] === 'Total');
+      const amountCall = fillTextSpy.mock.calls.find((call) => call[0] === '60');
+      expect(totalCall?.[2]).toBeGreaterThanOrEqual(240 - summary.height);
+      expect(amountCall?.[2]).toBeGreaterThanOrEqual(240 - summary.height);
+    });
+
+    it('renders cross-column summary cells using the combined column width', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(6);
+      const summary = createSummaryRow();
+      layoutManager.setViewportSize(800, 240);
+      layoutManager.setSummaryRows([summary], []);
+      layoutManager.calculateLayout(columns, rows);
+
+      const ctx = canvas.getContext('2d')!;
+      const strokeRectSpy = jest.spyOn(ctx, 'strokeRect');
+
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+
+      expect(strokeRectSpy).toHaveBeenCalledWith(
+        80,
+        mockTheme.row.headerHeight,
+        180,
+        summary.height,
+      );
+    });
+
+    it('clips cross-column summary cells to the fixed column render pass', () => {
+      const columns: Column[] = [
+        { key: 'id', title: 'ID', width: 80, fixed: 'left' },
+        { key: 'name', title: 'Name', width: 120 },
+      ];
+      const rows = createTestRows(3);
+      const summary: ComputedSummaryRow = {
+        key: 'total',
+        height: 40,
+        source: { key: 'total', cells: [] },
+        cells: [
+          {
+            key: 'total:label',
+            startColumnIndex: 0,
+            endColumnIndex: 1,
+            startColumnKey: 'id',
+            endColumnKey: 'name',
+            config: { startColumnKey: 'id', endColumnKey: 'name', text: 'Total' },
+            renderResult: { text: 'Total', type: 'text' },
+          },
+        ],
+      };
+      layoutManager.setViewportSize(300, 180);
+      layoutManager.setSummaryRows([], [summary]);
+      layoutManager.calculateLayout(columns, rows);
+
+      const ctx = canvas.getContext('2d')!;
+      const strokeRectSpy = jest.spyOn(ctx, 'strokeRect');
+
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+
+      expect(strokeRectSpy).not.toHaveBeenCalledWith(0, 140, 200, summary.height);
+      expect(strokeRectSpy).toHaveBeenCalledWith(0, 140, 80, summary.height);
     });
 
     it('should render with selected cells', () => {

@@ -6,7 +6,7 @@ export interface ExcelSheetModel {
         width?: number;
     }>;
     rows: Array<{
-        kind: "header" | "body";
+        kind: "header" | "body" | "summary";
         cells: Array<{
             value: string | number | boolean | Date | null;
             type: "string" | "number" | "boolean" | "date" | "blank";

@@ -12,6 +12,7 @@ import {
   RowBands,
   RowHitResult,
   RowPinPosition,
+  ComputedSummaryRow,
 } from "../types";
 import { binarySearch, clamp } from "../utils";
 import { RowPinManager } from "./RowPinManager";
@@ -42,6 +43,8 @@ export class LayoutManager {
   private bodyRowOffsets: number[] = [];
   private pinnedTopHeight: number = 0;
   private pinnedBottomHeight: number = 0;
+  private summaryTopHeight: number = 0;
+  private summaryBottomHeight: number = 0;
   private bodyViewportHeight: number = 0;
   private columnOffsets: number[] = [];
   private columns: Column[] = [];
@@ -85,9 +88,11 @@ export class LayoutManager {
 
   private createEmptyRowBands(): RowBands {
     return {
+      summaryTop: { type: "summary-top", rows: [], height: 0, y: this.theme.row.headerHeight },
       pinnedTop: { type: "pinned-top", rows: [], height: 0, y: this.theme.row.headerHeight },
       body: { type: "body", rows: [], height: 0, y: this.theme.row.headerHeight },
       pinnedBottom: { type: "pinned-bottom", rows: [], height: 0, y: this.viewportHeight },
+      summaryBottom: { type: "summary-bottom", rows: [], height: 0, y: this.viewportHeight },
     };
   }
 
@@ -165,13 +170,32 @@ export class LayoutManager {
     this.rowHeightsDirty = true;
   }
 
+  setSummaryRows(
+    summaryTopRows: ComputedSummaryRow[],
+    summaryBottomRows: ComputedSummaryRow[],
+  ): void {
+    this.rowBands.summaryTop.rows = [...summaryTopRows];
+    this.rowBands.summaryBottom.rows = [...summaryBottomRows];
+    this.summaryTopHeight = this.calculateSummaryRowsHeight(summaryTopRows);
+    this.summaryBottomHeight = this.calculateSummaryRowsHeight(summaryBottomRows);
+    this.rowBands.summaryTop.height = this.summaryTopHeight;
+    this.rowBands.summaryBottom.height = this.summaryBottomHeight;
+    this.updateRowBandGeometry();
+    this.updateVisibleRange();
+  }
+
   getRowBands(): RowBands {
     return {
+      summaryTop: { ...this.rowBands.summaryTop, rows: [...this.rowBands.summaryTop.rows] },
       pinnedTop: { ...this.rowBands.pinnedTop, rows: [...this.rowBands.pinnedTop.rows] },
       body: { ...this.rowBands.body, rows: [...this.rowBands.body.rows] },
       pinnedBottom: {
         ...this.rowBands.pinnedBottom,
         rows: [...this.rowBands.pinnedBottom.rows],
+      },
+      summaryBottom: {
+        ...this.rowBands.summaryBottom,
+        rows: [...this.rowBands.summaryBottom.rows],
       },
     };
   }
@@ -319,24 +343,104 @@ export class LayoutManager {
     } as Column & { _isRowNumber: boolean };
   }
 
+  private hasLeftFixedColumnsIn(columns: Column[]): boolean {
+    for (const column of columns) {
+      if (column.fixed === "left") return true;
+      if (column.children && this.hasLeftFixedColumnsIn(column.children)) return true;
+    }
+    return false;
+  }
+
+  private buildLayoutColumns(columns: Column[]): Column[] {
+    if (!this.showRowNumbers) {
+      return columns;
+    }
+
+    return [this.createRowNumberColumn(this.hasLeftFixedColumnsIn(columns)), ...columns];
+  }
+
+  getVisibleLeafColumnsForLayout(columns: Column[]): Column[] {
+    const leafColumns: Column[] = [];
+
+    const createHiddenPlaceholder = (column: Column, fixed: "left" | "right" | undefined): Column =>
+      ({
+        key: LayoutManager.HIDDEN_PLACEHOLDER_PREFIX + column.key,
+        title: "",
+        width: LayoutManager.HIDDEN_PLACEHOLDER_WIDTH,
+        type: "text",
+        fixed,
+        _hiddenColumnKey: column.key,
+      }) as Column & { _hiddenColumnKey: string };
+
+    const findAdjacentFixed = (
+      items: Column[],
+      fromIndex: number,
+      direction: -1 | 1,
+    ): "left" | "right" | undefined => {
+      for (let index = fromIndex; index >= 0 && index < items.length; index += direction) {
+        const adjacent = items[index];
+        if (adjacent && !adjacent.hidden) {
+          return adjacent.fixed === "left" || adjacent.fixed === "right"
+            ? adjacent.fixed
+            : undefined;
+        }
+      }
+
+      return undefined;
+    };
+
+    const collectLeaves = (items: Column[], includeEdgePlaceholders: boolean): void => {
+      let accumulatedWidth = 0;
+      let previousWasHidden = false;
+
+      for (let index = 0; index < items.length; index++) {
+        const column = items[index];
+        if (!column) continue;
+
+        if (column.hidden) {
+          const hasPreviousVisible = items.slice(0, index).some((item) => item && !item.hidden);
+          const hasNextVisible = items.slice(index + 1).some((item) => item && !item.hidden);
+          const shouldAddPlaceholder = includeEdgePlaceholders
+            ? hasPreviousVisible && hasNextVisible
+            : (previousWasHidden === false || accumulatedWidth > 0) &&
+              (hasNextVisible || accumulatedWidth > 0);
+
+          if (shouldAddPlaceholder) {
+            const previousFixed = findAdjacentFixed(items, index - 1, -1);
+            const nextFixed = findAdjacentFixed(items, index + 1, 1);
+            const placeholderFixed = previousFixed === nextFixed ? previousFixed : undefined;
+            const placeholder = createHiddenPlaceholder(column, placeholderFixed);
+            leafColumns.push(placeholder);
+            accumulatedWidth += LayoutManager.HIDDEN_PLACEHOLDER_WIDTH;
+          }
+
+          previousWasHidden = true;
+          continue;
+        }
+
+        previousWasHidden = false;
+        if (column.children && column.children.length > 0) {
+          const beforeCount = leafColumns.length;
+          collectLeaves(column.children, false);
+          if (leafColumns.length > beforeCount) {
+            accumulatedWidth += leafColumns
+              .slice(beforeCount)
+              .reduce((total, leaf) => total + this.getColumnWidth(leaf), 0);
+          }
+        } else {
+          leafColumns.push(column);
+          accumulatedWidth += this.getColumnWidth(column);
+        }
+      }
+    };
+
+    collectLeaves(this.buildLayoutColumns(columns), true);
+    return leafColumns;
+  }
+
   calculateLayout(columns: Column[], rows: Row[]): LayoutInfo {
     // 判断是否有左侧固定列
-    const checkLeftFixed = (cols: Column[]): boolean => {
-      for (const col of cols) {
-        if (col.fixed === "left") return true;
-        if (col.children && checkLeftFixed(col.children)) return true;
-      }
-      return false;
-    };
-    const hasLeftFixed = checkLeftFixed(columns);
-
-    // 如果启用行号列，创建并插入到第一列
-    if (this.showRowNumbers) {
-      const rowNumberColumn = this.createRowNumberColumn(hasLeftFixed);
-      this.columns = [rowNumberColumn, ...columns];
-    } else {
-      this.columns = columns;
-    }
+    this.columns = this.buildLayoutColumns(columns);
 
     // 保留已手动调整的列宽，不要清除
     this.calculateHeaderLayout(this.columns);
@@ -356,23 +460,7 @@ export class LayoutManager {
    * 避免遍历所有行，提升大数据量时的性能
    */
   calculateColumnLayoutOnly(columns: Column[]): LayoutInfo {
-    // 判断是否有左侧固定列
-    const checkLeftFixed = (cols: Column[]): boolean => {
-      for (const col of cols) {
-        if (col.fixed === "left") return true;
-        if (col.children && checkLeftFixed(col.children)) return true;
-      }
-      return false;
-    };
-    const hasLeftFixed = checkLeftFixed(columns);
-
-    // 如果启用行号列，创建并插入到第一列
-    if (this.showRowNumbers) {
-      const rowNumberColumn = this.createRowNumberColumn(hasLeftFixed);
-      this.columns = [rowNumberColumn, ...columns];
-    } else {
-      this.columns = columns;
-    }
+    this.columns = this.buildLayoutColumns(columns);
 
     // 只计算列相关布局，不重新计算行布局
     this.calculateHeaderLayout(this.columns);
@@ -761,18 +849,31 @@ export class LayoutManager {
       0,
       this.viewportHeight -
         this.layoutInfo.headerHeight -
+        this.summaryTopHeight -
         this.pinnedTopHeight -
-        this.pinnedBottomHeight,
+        this.pinnedBottomHeight -
+        this.summaryBottomHeight,
     );
 
-    const pinnedTopY = this.layoutInfo.headerHeight;
+    const summaryTopY = this.layoutInfo.headerHeight;
+    const pinnedTopY = summaryTopY + this.summaryTopHeight;
     const bodyY = pinnedTopY + this.pinnedTopHeight;
+    const summaryBottomY =
+      this.viewportHeight > 0
+        ? Math.max(bodyY, this.viewportHeight - this.summaryBottomHeight)
+        : bodyY + this.calculateRowsHeight(bodyRows) + this.pinnedBottomHeight;
     const pinnedBottomY =
       this.viewportHeight > 0
-        ? Math.max(bodyY, this.viewportHeight - this.pinnedBottomHeight)
+        ? Math.max(bodyY, summaryBottomY - this.pinnedBottomHeight)
         : bodyY + this.calculateRowsHeight(bodyRows);
 
     this.rowBands = {
+      summaryTop: {
+        type: "summary-top",
+        rows: this.rowBands.summaryTop.rows,
+        height: this.summaryTopHeight,
+        y: summaryTopY,
+      },
       pinnedTop: {
         type: "pinned-top",
         rows: pinnedTopRows,
@@ -790,6 +891,12 @@ export class LayoutManager {
         rows: pinnedBottomRows,
         height: this.pinnedBottomHeight,
         y: pinnedBottomY,
+      },
+      summaryBottom: {
+        type: "summary-bottom",
+        rows: this.rowBands.summaryBottom.rows,
+        height: this.summaryBottomHeight,
+        y: summaryBottomY,
       },
     };
 
@@ -970,21 +1077,36 @@ export class LayoutManager {
       0,
       this.viewportHeight -
         this.layoutInfo.headerHeight -
+        this.summaryTopHeight -
         this.pinnedTopHeight -
-        this.pinnedBottomHeight,
+        this.pinnedBottomHeight -
+        this.summaryBottomHeight,
     );
 
-    const bodyY = this.layoutInfo.headerHeight + this.pinnedTopHeight;
-    this.rowBands.pinnedTop.y = this.layoutInfo.headerHeight;
+    const summaryTopY = this.layoutInfo.headerHeight;
+    const pinnedTopY = summaryTopY + this.summaryTopHeight;
+    const bodyY = pinnedTopY + this.pinnedTopHeight;
+    const summaryBottomY =
+      this.viewportHeight > 0
+        ? Math.max(bodyY, this.viewportHeight - this.summaryBottomHeight)
+        : bodyY + this.rowBands.body.height + this.pinnedBottomHeight;
+
+    this.rowBands.summaryTop.y = summaryTopY;
+    this.rowBands.pinnedTop.y = pinnedTopY;
     this.rowBands.body.y = bodyY;
     this.rowBands.pinnedBottom.y =
       this.viewportHeight > 0
-        ? Math.max(bodyY, this.viewportHeight - this.pinnedBottomHeight)
+        ? Math.max(bodyY, summaryBottomY - this.pinnedBottomHeight)
         : bodyY + this.rowBands.body.height;
+    this.rowBands.summaryBottom.y = summaryBottomY;
   }
 
   private calculateRowsHeight(rows: Row[]): number {
     return rows.reduce((total, row) => total + this.getResolvedRowHeight(row), 0);
+  }
+
+  private calculateSummaryRowsHeight(rows: ComputedSummaryRow[]): number {
+    return rows.reduce((total, row) => total + row.height, 0);
   }
 
   private getResolvedRowHeight(row: Row): number {
@@ -1222,6 +1344,25 @@ export class LayoutManager {
         return row;
       }
       currentOffset += height;
+    }
+
+    return null;
+  }
+
+  private findSummaryRowInBandAtOffset(
+    rows: ComputedSummaryRow[],
+    offset: number,
+  ): ComputedSummaryRow | null {
+    if (offset < 0) {
+      return null;
+    }
+
+    let currentOffset = 0;
+    for (const row of rows) {
+      if (offset >= currentOffset && offset < currentOffset + row.height) {
+        return row;
+      }
+      currentOffset += row.height;
     }
 
     return null;
@@ -1598,7 +1739,18 @@ export class LayoutManager {
       return null;
     }
 
-    if (viewportY < this.layoutInfo.headerHeight + this.pinnedTopHeight) {
+    if (
+      this.summaryTopHeight > 0 &&
+      viewportY < this.rowBands.summaryTop.y + this.summaryTopHeight
+    ) {
+      const row = this.findSummaryRowInBandAtOffset(
+        this.rowBands.summaryTop.rows,
+        viewportY - this.rowBands.summaryTop.y,
+      );
+      return row ? { row, band: "summary-top", columnIndex } : null;
+    }
+
+    if (viewportY < this.rowBands.pinnedTop.y + this.pinnedTopHeight) {
       const row = this.findRowInBandAtOffset(
         this.rowBands.pinnedTop.rows,
         viewportY - this.rowBands.pinnedTop.y,
@@ -1606,7 +1758,23 @@ export class LayoutManager {
       return row ? { row, band: "pinned-top", columnIndex } : null;
     }
 
-    if (this.pinnedBottomHeight > 0 && viewportY >= this.viewportHeight - this.pinnedBottomHeight) {
+    if (
+      this.summaryBottomHeight > 0 &&
+      viewportY >= this.rowBands.summaryBottom.y &&
+      viewportY < this.rowBands.summaryBottom.y + this.summaryBottomHeight
+    ) {
+      const row = this.findSummaryRowInBandAtOffset(
+        this.rowBands.summaryBottom.rows,
+        viewportY - this.rowBands.summaryBottom.y,
+      );
+      return row ? { row, band: "summary-bottom", columnIndex } : null;
+    }
+
+    if (
+      this.pinnedBottomHeight > 0 &&
+      viewportY >= this.rowBands.pinnedBottom.y &&
+      viewportY < this.rowBands.pinnedBottom.y + this.pinnedBottomHeight
+    ) {
       const row = this.findRowInBandAtOffset(
         this.rowBands.pinnedBottom.rows,
         viewportY - this.rowBands.pinnedBottom.y,
@@ -1635,8 +1803,11 @@ export class LayoutManager {
     if (!hit) {
       return null;
     }
+    if (hit.band === "summary-top" || hit.band === "summary-bottom") {
+      return null;
+    }
 
-    const rowIndex = this.getRowIndexByRef(hit.row);
+    const rowIndex = this.getRowIndexByRef(hit.row as Row);
     if (rowIndex < 0) {
       return null;
     }
@@ -2337,6 +2508,16 @@ export class LayoutManager {
       return { region: "outside", regionDetail, viewport: { x: viewportX, y: viewportY } };
     }
 
+    const rowHit = this.getRowHitAtViewportPosition(viewportX, viewportY, this.scrollTop);
+    if (rowHit?.band === "summary-top" || rowHit?.band === "summary-bottom") {
+      return {
+        region: "cell",
+        regionDetail,
+        rowHit,
+        viewport: { x: viewportX, y: viewportY },
+      };
+    }
+
     const cell = this.getCellAtViewportPosition(viewportX, viewportY, this.scrollTop);
     if (!cell && rowResizeIndex < 0) {
       return { region: "outside", regionDetail, viewport: { x: viewportX, y: viewportY } };
@@ -2354,6 +2535,7 @@ export class LayoutManager {
         region: "cell",
         regionDetail,
         cell: { rowIndex: merge.rowIndex, columnIndex: merge.columnIndex },
+        rowHit: rowHit ?? undefined,
         isRowResizeHandle: rowResizeIndex >= 0,
         resizeRowIndex: rowResizeIndex >= 0 ? rowResizeIndex : undefined,
         viewport: { x: viewportX, y: viewportY },
@@ -2364,6 +2546,7 @@ export class LayoutManager {
       region: "cell",
       regionDetail,
       cell: { rowIndex: resolvedRowIndex, columnIndex },
+      rowHit: rowHit ?? undefined,
       isRowResizeHandle: rowResizeIndex >= 0,
       resizeRowIndex: rowResizeIndex >= 0 ? rowResizeIndex : undefined,
       viewport: { x: viewportX, y: viewportY },

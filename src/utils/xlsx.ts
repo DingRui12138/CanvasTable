@@ -1,4 +1,10 @@
-import type { Column, ExcelExportOptions, ExportContext, ExportMerge } from "../types";
+import type {
+  Column,
+  ComputedSummaryRow,
+  ExcelExportOptions,
+  ExportContext,
+  ExportMerge,
+} from "../types";
 
 const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -18,7 +24,7 @@ export interface ExcelSheetModel {
   sheetName: string;
   columns: Array<{ key: string; width?: number }>;
   rows: Array<{
-    kind: "header" | "body";
+    kind: "header" | "body" | "summary";
     cells: Array<{
       value: string | number | boolean | Date | null;
       type: "string" | "number" | "boolean" | "date" | "blank";
@@ -124,6 +130,54 @@ function buildBodyRows(
       return { value: cell.displayValue, type: "string" as const };
     }),
   }));
+}
+
+function buildSummaryRows(
+  summaryRows: ComputedSummaryRow[] | undefined,
+  columnCount: number,
+): {
+  rows: ExcelSheetModel["rows"];
+  merges: ExportMerge[];
+} {
+  const rows: ExcelSheetModel["rows"] = [];
+  const merges: ExportMerge[] = [];
+
+  for (const summaryRow of summaryRows ?? []) {
+    const cells: ExcelCellModel[] = Array.from({ length: columnCount }, () => ({
+      value: "",
+      type: "blank" as const,
+    }));
+
+    for (const summaryCell of summaryRow.cells) {
+      if (summaryCell.startColumnIndex < 0 || summaryCell.startColumnIndex >= columnCount) {
+        continue;
+      }
+      if (summaryCell.endColumnIndex < summaryCell.startColumnIndex) {
+        continue;
+      }
+
+      const value = summaryCell.config.value ?? summaryCell.renderResult.text ?? "";
+      const type =
+        typeof value === "number" ? "number" : typeof value === "boolean" ? "boolean" : "string";
+      cells[summaryCell.startColumnIndex] = {
+        value: value as string | number | boolean,
+        type,
+      };
+
+      if (summaryCell.endColumnIndex > summaryCell.startColumnIndex) {
+        merges.push({
+          startRow: rows.length,
+          startCol: summaryCell.startColumnIndex,
+          endRow: rows.length,
+          endCol: Math.min(summaryCell.endColumnIndex, columnCount - 1),
+        });
+      }
+    }
+
+    rows.push({ kind: "summary", cells });
+  }
+
+  return { rows, merges };
 }
 
 function resolveColumnWidth(
@@ -547,9 +601,23 @@ export function buildExcelExportModel(
         merges: [],
       };
   const styleRegistry = createStyleRegistry();
+  const topSummarySection = buildSummaryRows(context.summaryTopRows, context.leafColumns.length);
   const bodyRows = buildBodyRows(context, options, styleRegistry);
-  const bodyMerges = offsetMerges(options?.merges ?? context.bodyMerges, headerSection.rows.length);
-  const merges = [...headerSection.merges, ...bodyMerges];
+  const bottomSummarySection = buildSummaryRows(
+    context.summaryBottomRows,
+    context.leafColumns.length,
+  );
+  const bodyRowOffset = headerSection.rows.length + topSummarySection.rows.length;
+  const bottomSummaryRowOffset = bodyRowOffset + bodyRows.length;
+  const bodyMerges = offsetMerges(options?.merges ?? context.bodyMerges, bodyRowOffset);
+  const topSummaryMerges = offsetMerges(topSummarySection.merges, headerSection.rows.length);
+  const bottomSummaryMerges = offsetMerges(bottomSummarySection.merges, bottomSummaryRowOffset);
+  const merges = [
+    ...headerSection.merges,
+    ...topSummaryMerges,
+    ...bodyMerges,
+    ...bottomSummaryMerges,
+  ];
   validateMerges(merges);
   const freeze = resolveFreeze(context, options, headerSection.rows.length);
 
@@ -559,7 +627,12 @@ export function buildExcelExportModel(
       key: column.key,
       width: resolveColumnWidth(column, options?.columnWidths),
     })),
-    rows: [...headerSection.rows, ...bodyRows],
+    rows: [
+      ...headerSection.rows,
+      ...topSummarySection.rows,
+      ...bodyRows,
+      ...bottomSummarySection.rows,
+    ],
     merges,
     freeze,
     styles: styleRegistry.styles,

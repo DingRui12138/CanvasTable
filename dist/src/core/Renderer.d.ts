@@ -117,6 +117,9 @@ export declare class Renderer {
     private shouldRenderRowBands;
     private renderRowBandCells;
     private renderRowBands;
+    private renderSummaryBandCells;
+    private getSummaryColumnX;
+    private getSummaryCellSegments;
     private renderCenterHeader;
     private renderHeaderCellMultiLevel;
     private renderCenterRows;

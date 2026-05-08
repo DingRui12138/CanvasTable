@@ -84,6 +84,8 @@ export declare class CanvasTable implements CanvasTableAPI {
     private handleResize;
     private initialize;
     private updateLayout;
+    private updateSummaryRows;
+    private refreshSummaryRowsAfterDataChange;
     private render;
     private performRender;
     resize(): void;

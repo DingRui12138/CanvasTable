@@ -681,8 +681,9 @@ export class InteractionManager {
     );
 
     if (!hit) return;
+    if (hit.band === "summary-top" || hit.band === "summary-bottom") return;
 
-    const row = hit.row;
+    const row = hit.row as Row;
     const items = this.getRowContextMenuItems(row);
 
     const canvasRect = this.canvas.getBoundingClientRect();
@@ -1118,6 +1119,17 @@ export class InteractionManager {
       if (hitResult.headerCell) {
         this.headerHandler.handleHeaderHover(hitResult.headerCell, viewportX, viewportY);
       }
+      return;
+    }
+
+    if (
+      hitResult.region === "cell" &&
+      hitResult.rowHit &&
+      (hitResult.rowHit.band === "summary-top" || hitResult.rowHit.band === "summary-bottom")
+    ) {
+      this.canvas.style.cursor = "default";
+      this.state.hoveredCell = null;
+      this.tooltipHandler.checkSummaryTooltip(hitResult.rowHit);
       return;
     }
 

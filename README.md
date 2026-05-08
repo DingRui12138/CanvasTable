@@ -11,6 +11,7 @@
 - **多级表头** - 支持无限层级嵌套的列分组
 - **固定列** - 支持左侧、右侧固定列
 - **固定行** - 支持右键将行固定到顶部/底部
+- **合计行** - 支持顶部/底部合计、当前视图/全量数据范围、跨列合计单元格
 - **合并单元格** - 支持行合并、列合并
 - **层级数据** - 支持树形结构展示，可展开/折叠
 
@@ -43,7 +44,7 @@
 - **主题** - 支持亮色、暗色、自动三种主题模式，可自定义主题颜色
 - **多语言** - 内置中文/英文文案，支持运行时切换和自定义文案覆盖
 - **水印** - 支持自定义水印内容、样式
-- **导出** - 支持 CSV 格式导出
+- **导出** - 支持 CSV、JSON、Excel 格式导出
 - **自适应** - 响应式布局，自适应容器大小
 
 ## 安装
@@ -112,6 +113,7 @@ const table = new CanvasTable(container, {
 | `rowResizable` | `boolean \| ((row: Row, rowIndex: number) => boolean)` | `true` | 是否允许调整行高，可按行控制 |
 | `enableRowPinning` | `boolean` | `false` | 是否启用右键固定行到顶部/底部 |
 | `rowPinnable` | `boolean \| ((row: Row) => boolean)` | `true` | 是否允许固定行，可按行控制 |
+| `summary` | `SummaryConfig` | - | 合计行配置，支持顶部/底部和当前视图/全量数据范围 |
 | `createRowData` | `(columns: Column[]) => Record<string, unknown>` | - | 新增行时的数据初始化函数 |
 
 ### Column 配置
@@ -991,6 +993,113 @@ const table = new CanvasTable(container, {
   }
 });
 ```
+
+## 合计行
+
+`summary` 用来配置顶部或底部的合计行。合计行是根据当前数据派生出来的独立行，不属于 `rows`，不会参与编辑、选择、排序、筛选、右键菜单或行固定操作；它会跟随固定列、隐藏列占位、多级表头和横向滚动一起正确对齐。
+
+最常见的写法是在 `rows[].build` 中根据 `scopeRows` 计算合计值：
+
+```typescript
+const table = new CanvasTable(container, {
+  rows,
+  columns,
+  summary: {
+    position: 'bottom',
+    scope: 'view',
+    rows: [
+      {
+        key: 'total',
+        build: ({ scopeRows }) => [
+          { startColumnKey: 'name', endColumnKey: 'department', text: `合计 ${scopeRows.length} 行` },
+          {
+            columnKey: 'amount',
+            value: scopeRows.reduce((total, row) => total + Number(row.data.amount ?? 0), 0),
+            type: 'number',
+            style: { fontWeight: 'bold', horizontalAlign: 'right' }
+          }
+        ]
+      }
+    ]
+  }
+});
+```
+
+### 配置字段
+
+```typescript
+interface SummaryConfig {
+  enabled?: boolean;              // 默认根据 rows 是否存在自动启用
+  position?: 'top' | 'bottom';    // 默认 bottom
+  scope?: 'view' | 'all';         // 默认 view
+  rows: SummaryRowConfig[];
+}
+```
+
+- `position: 'top'` 会把合计行放在表头下方、顶部固定行上方。
+- `position: 'bottom'` 会把合计行放在底部固定行下方、表格底部。
+- `scope: 'view'` 使用当前排序/筛选后的行计算，适合“当前结果合计”。
+- `scope: 'all'` 使用原始全量行计算，适合“不受筛选影响的总计”。
+
+### 合计单元格
+
+每个合计行可以通过 `cells` 写静态单元格，也可以通过 `build(context)` 动态返回单元格。`build` 返回的结果优先级高于静态 `cells`。
+
+```typescript
+summary: {
+  rows: [
+    {
+      key: 'static-total',
+      height: 40,
+      cells: [
+        { columnKey: 'name', text: '合计' },
+        { columnKey: 'amount', value: 1000, type: 'number' }
+      ]
+    }
+  ]
+}
+```
+
+合计单元格有两种定位方式：
+
+- `columnKey`：渲染到单个列，例如 `{ columnKey: 'salary', value: salaryTotal }`。
+- `startColumnKey/endColumnKey`：跨列渲染，例如 `{ startColumnKey: 'name', endColumnKey: 'department', text: '合计 100 行' }`。
+
+可用字段：
+
+```typescript
+interface SummaryCellConfig {
+  columnKey?: string;
+  startColumnKey?: string;
+  endColumnKey?: string;
+  text?: string;
+  value?: unknown;
+  type?: CellType;
+  style?: CellStyle;
+  render?: (context: SummaryCellRenderContext) => RenderResult;
+}
+```
+
+如果需要完全自定义内容，可以使用 `render`：
+
+```typescript
+{
+  columnKey: 'amount',
+  value: amountTotal,
+  render: ({ cell }) => ({
+    type: 'text',
+    text: `¥${Number(cell.value ?? 0).toLocaleString()}`,
+    style: { fontWeight: 'bold', horizontalAlign: 'right' }
+  })
+}
+```
+
+### 注意事项
+
+- 合计单元格按列 `key` 定位，不要按列下标定位；这样在开启序号列、固定列、隐藏列占位和列显隐时仍能对齐。
+- 同一合计行内的单元格不能互相重叠；跨列单元格覆盖的列范围内不能再配置其它合计单元格。
+- 跨固定列边界的合计单元格会按固定区/滚动区分段绘制，避免固定列区域被错误拉宽。
+- Excel 导出默认包含合计行，并会把跨列合计单元格导出为 Excel merge。
 
 ## 性能优化
 

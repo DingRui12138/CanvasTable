@@ -1,5 +1,5 @@
 import { buildExcelExportModel, createXlsxBlob, createXlsxBlobFromModel } from '@/utils/xlsx';
-import type { ExportContext } from '@/types';
+import type { ComputedSummaryRow, ExportContext } from '@/types';
 
 function readBlob(blob: Blob): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
@@ -118,6 +118,83 @@ describe('createXlsxBlob', () => {
       { value: 42.5, type: 'number' },
       { value: true, type: 'boolean' },
     ]);
+  });
+
+  it('includes summary rows and converts cross-column summary cells to merge ranges', () => {
+    const topSummary: ComputedSummaryRow = {
+      key: 'top',
+      height: 32,
+      source: { key: 'top', cells: [] },
+      cells: [
+        {
+          key: 'top:label',
+          startColumnIndex: 0,
+          endColumnIndex: 1,
+          startColumnKey: 'name',
+          endColumnKey: 'amount',
+          config: { startColumnKey: 'name', endColumnKey: 'amount', text: 'Report Total' },
+          renderResult: { text: 'Report Total', type: 'text' },
+        },
+      ],
+    };
+    const bottomSummary: ComputedSummaryRow = {
+      key: 'bottom',
+      height: 32,
+      source: { key: 'bottom', cells: [] },
+      cells: [
+        {
+          key: 'bottom:label',
+          startColumnIndex: 0,
+          endColumnIndex: 0,
+          startColumnKey: 'name',
+          endColumnKey: 'name',
+          config: { columnKey: 'name', text: 'Total' },
+          renderResult: { text: 'Total', type: 'text' },
+        },
+        {
+          key: 'bottom:amount',
+          startColumnIndex: 1,
+          endColumnIndex: 1,
+          startColumnKey: 'amount',
+          endColumnKey: 'amount',
+          config: { columnKey: 'amount', value: 42, type: 'number' },
+          renderResult: { text: '42', type: 'number' },
+        },
+      ],
+    };
+
+    const model = buildExcelExportModel(
+      createContext({
+        leafColumns: [
+          { key: 'name', title: 'Name' },
+          { key: 'amount', title: 'Amount', type: 'number' },
+        ],
+        headerDepth: 1,
+        rows: [
+          {
+            row: { id: 'row-1', data: {} },
+            rowIndex: 0,
+            cells: [
+              { column: { key: 'name', title: 'Name' }, rawValue: 'Alice', displayValue: 'Alice' },
+              { column: { key: 'amount', title: 'Amount', type: 'number' }, rawValue: 42, displayValue: '42' },
+            ],
+          },
+        ],
+        summaryTopRows: [topSummary],
+        summaryBottomRows: [bottomSummary],
+      }),
+      { hierarchicalHeaders: false },
+      'Sheet1',
+    );
+
+    expect(model.rows.map((row) => row.cells.map((cell) => cell.value))).toEqual([
+      ['Name', 'Amount'],
+      ['Report Total', ''],
+      ['Alice', 42],
+      ['Total', 42],
+    ]);
+    expect(model.rows.map((row) => row.kind)).toEqual(['header', 'summary', 'body', 'summary']);
+    expect(model.merges).toContainEqual({ startRow: 1, startCol: 0, endRow: 1, endCol: 1 });
   });
 
   it('uses explicit export merges instead of current-view body merges', () => {

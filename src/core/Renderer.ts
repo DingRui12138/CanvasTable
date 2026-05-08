@@ -31,6 +31,7 @@ import {
   ImageLoadConfig,
   RowBand,
   CanvasTableLocale,
+  ComputedSummaryRow,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
@@ -539,7 +540,12 @@ export class Renderer {
   }
 
   private shouldRenderRowBands(): boolean {
-    return this.layoutManager.hasPinnedRows();
+    const rowBands = this.layoutManager.getRowBandsForRender();
+    return (
+      this.layoutManager.hasPinnedRows() ||
+      rowBands.summaryTop.rows.length > 0 ||
+      rowBands.summaryBottom.rows.length > 0
+    );
   }
 
   private renderRowBandCells(
@@ -650,6 +656,7 @@ export class Renderer {
   ): void {
     const rowBands = this.layoutManager.getRowBandsForRender();
     const pinnedBands = [rowBands.pinnedTop, rowBands.pinnedBottom];
+    const summaryBands = [rowBands.summaryTop, rowBands.summaryBottom];
 
     this.ctx.save();
     this.ctx.beginPath();
@@ -681,6 +688,9 @@ export class Renderer {
         visibleRange,
         options,
       );
+    }
+    for (const band of summaryBands) {
+      this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft);
     }
 
     if (leftFixedIndices.length > 0) {
@@ -716,6 +726,9 @@ export class Renderer {
           options,
           0,
         );
+      }
+      for (const band of summaryBands) {
+        this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0);
       }
     }
 
@@ -754,7 +767,134 @@ export class Renderer {
           viewportWidth - fixedInfo.rightFixed.width,
         );
       }
+      for (const band of summaryBands) {
+        this.renderSummaryBandCells(
+          band,
+          rightFixedIndices,
+          scrollLeft,
+          viewportWidth - fixedInfo.rightFixed.width,
+        );
+      }
     }
+  }
+
+  private renderSummaryBandCells(
+    band: RowBand<ComputedSummaryRow>,
+    columnIndices: number[],
+    scrollLeft: number,
+    startX?: number,
+  ): void {
+    if (band.rows.length === 0 || columnIndices.length === 0) return;
+
+    let y = band.y;
+    const visibleColumns = new Set(columnIndices);
+
+    for (const row of band.rows) {
+      const rowHeight = row.height;
+      for (const columnIndex of columnIndices) {
+        const x = this.getSummaryColumnX(columnIndex, columnIndices, scrollLeft, startX);
+        const width = this.layoutManager.getColumnWidthByIndex(columnIndex);
+
+        this.ctx.fillStyle = this.theme.colors.headerBackground;
+        this.ctx.fillRect(x, y, width, rowHeight);
+        this.ctx.strokeStyle = this.theme.colors.cellBorder;
+        this.ctx.lineWidth = this.theme.border.width;
+        this.ctx.strokeRect(x, y, width, rowHeight);
+      }
+
+      for (const cell of row.cells) {
+        const segments = this.getSummaryCellSegments(cell, visibleColumns);
+        if (segments.length === 0) {
+          continue;
+        }
+
+        const column = this.layoutManager.getLeafColumn(cell.startColumnIndex);
+        if (!column) continue;
+
+        for (const segment of segments) {
+          const x = this.getSummaryColumnX(segment.start, columnIndices, scrollLeft, startX);
+          const endOffset =
+            this.layoutManager.getColumnOffset(segment.end) +
+            this.layoutManager.getColumnWidthByIndex(segment.end);
+          const width = endOffset - this.layoutManager.getColumnOffset(segment.start);
+
+          this.ctx.fillStyle =
+            cell.renderResult.style?.backgroundColor ?? this.theme.colors.headerBackground;
+          this.ctx.fillRect(x, y, width, rowHeight);
+
+          if (segment.start <= cell.startColumnIndex && cell.startColumnIndex <= segment.end) {
+            this.renderCellContent(
+              cell.renderResult,
+              x,
+              y,
+              width,
+              rowHeight,
+              8,
+              column.align,
+              -1,
+              cell.startColumnIndex,
+              false,
+            );
+          }
+
+          this.ctx.strokeStyle =
+            cell.renderResult.style?.borderColor ?? this.theme.colors.cellBorder;
+          this.ctx.lineWidth = cell.renderResult.style?.borderWidth ?? this.theme.border.width;
+          this.ctx.strokeRect(x, y, width, rowHeight);
+        }
+      }
+      y += rowHeight;
+    }
+  }
+
+  private getSummaryColumnX(
+    columnIndex: number,
+    columnIndices: number[],
+    scrollLeft: number,
+    startX?: number,
+  ): number {
+    const columnOffset = this.layoutManager.getColumnOffset(columnIndex);
+
+    if (startX !== undefined) {
+      return startX + columnOffset - this.layoutManager.getColumnOffset(columnIndices[0]!);
+    }
+
+    return columnOffset - scrollLeft;
+  }
+
+  private getSummaryCellSegments(
+    cell: ComputedSummaryRow["cells"][number],
+    visibleColumns: Set<number>,
+  ): Array<{ start: number; end: number }> {
+    const segments: Array<{ start: number; end: number }> = [];
+    let segmentStart: number | null = null;
+    let previousIndex: number | null = null;
+
+    for (let index = cell.startColumnIndex; index <= cell.endColumnIndex; index++) {
+      if (!visibleColumns.has(index)) {
+        if (segmentStart !== null && previousIndex !== null) {
+          segments.push({ start: segmentStart, end: previousIndex });
+          segmentStart = null;
+          previousIndex = null;
+        }
+        continue;
+      }
+
+      if (segmentStart === null) {
+        segmentStart = index;
+      } else if (previousIndex !== null && index !== previousIndex + 1) {
+        segments.push({ start: segmentStart, end: previousIndex });
+        segmentStart = index;
+      }
+
+      previousIndex = index;
+    }
+
+    if (segmentStart !== null && previousIndex !== null) {
+      segments.push({ start: segmentStart, end: previousIndex });
+    }
+
+    return segments;
   }
 
   private renderCenterHeader(

@@ -42,6 +42,7 @@ import {
 import { TableEvents as Events } from "./constants/events";
 import { LoadingOverlay } from "./core/LoadingOverlay";
 import { RowPinManager } from "./core/RowPinManager";
+import { SummaryManager } from "./core/SummaryManager";
 import { resolveLocale } from "./locale";
 
 interface TableEvents {
@@ -350,6 +351,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.dataManager.reorderColumns(fromIndex, toIndex);
 
       const columns = this.dataManager.getColumns();
+      this.updateSummaryRows();
       this.layoutManager.calculateColumnLayoutOnly(columns);
 
       if (this.props.onColumnReorder) {
@@ -371,6 +373,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.dataManager.swapColumnsByKey(fromKey, toKey);
 
       const columns = this.dataManager.getColumns();
+      this.updateSummaryRows();
       this.layoutManager.calculateColumnLayoutOnly(columns);
 
       this.render();
@@ -454,10 +457,12 @@ export class CanvasTable implements CanvasTableAPI {
     });
 
     this.eventEmitter.on(Events.CHECKBOX_CHANGE, () => {
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
     this.eventEmitter.on(Events.RADIO_CHANGE, () => {
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -467,6 +472,7 @@ export class CanvasTable implements CanvasTableAPI {
       if (this.props.onSwitchChange) {
         this.props.onSwitchChange(cell, checked);
       }
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -476,6 +482,7 @@ export class CanvasTable implements CanvasTableAPI {
       if (this.props.onProgressChange) {
         this.props.onProgressChange(cell, value);
       }
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -489,6 +496,7 @@ export class CanvasTable implements CanvasTableAPI {
       if (this.props.onRatingChange) {
         this.props.onRatingChange(cell, value);
       }
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -498,6 +506,7 @@ export class CanvasTable implements CanvasTableAPI {
       if (this.props.onColorChange) {
         this.props.onColorChange(cell, color);
       }
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -543,6 +552,7 @@ export class CanvasTable implements CanvasTableAPI {
       }
 
       // 只修改数据，不需要重新计算布局
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -570,6 +580,7 @@ export class CanvasTable implements CanvasTableAPI {
         }
 
         // 只修改数据，不需要重新计算布局
+        this.refreshSummaryRowsAfterDataChange();
         this.render();
       },
     );
@@ -626,6 +637,7 @@ export class CanvasTable implements CanvasTableAPI {
 
       this.interactionManager.clearEditingState();
       // 只修改数据，不需要重新计算布局
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -790,6 +802,7 @@ export class CanvasTable implements CanvasTableAPI {
 
       this.interactionManager.clearEditingState();
       // 编辑单元格只修改数据，不需要重新计算布局
+      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -886,12 +899,44 @@ export class CanvasTable implements CanvasTableAPI {
     const columns = this.dataManager.getColumns();
     const rows = this.dataManager.getRows();
 
+    this.updateSummaryRows();
     this.layoutManager.calculateLayout(columns, rows);
 
     this.interactionManager.updateMaxScroll(
       this.layoutManager.getMaxScrollLeft(),
       this.layoutManager.getMaxScrollTop(),
     );
+  }
+
+  private updateSummaryRows(): void {
+    const columns = this.dataManager.getColumns();
+    const viewRows = this.dataManager.getRows();
+    const allRows = this.dataManager.getAllRows();
+    const summary = SummaryManager.buildRows(
+      this.props.summary,
+      {
+        columns,
+        visibleLeafColumns: this.layoutManager.getVisibleLeafColumnsForLayout(columns),
+        viewRows,
+        allRows,
+        scopeRows: viewRows,
+      },
+      this.theme.row.height,
+    );
+
+    this.layoutManager.setSummaryRows(
+      summary.position === "top" ? summary.rows : [],
+      summary.position === "bottom" ? summary.rows : [],
+    );
+  }
+
+  private refreshSummaryRowsAfterDataChange(): void {
+    this.updateSummaryRows();
+    this.interactionManager.updateMaxScroll(
+      this.layoutManager.getMaxScrollLeft(),
+      this.layoutManager.getMaxScrollTop(),
+    );
+    this.editorManager.updatePosition();
   }
 
   private render(): void {
@@ -1145,12 +1190,14 @@ export class CanvasTable implements CanvasTableAPI {
   updateCell(rowIndex: number, column: string, value: unknown): void {
     const change = this.dataManager.updateCell(rowIndex, column, value);
     this.eventEmitter.emit(Events.CHANGE, [change]);
+    this.refreshSummaryRowsAfterDataChange();
     this.render();
   }
 
   updateRow(rowIndex: number, data: Record<string, unknown>): void {
     const changes = this.dataManager.updateRow(rowIndex, data);
     this.eventEmitter.emit(Events.CHANGE, changes);
+    this.refreshSummaryRowsAfterDataChange();
     this.render();
   }
 
@@ -1219,6 +1266,7 @@ export class CanvasTable implements CanvasTableAPI {
     this.dataManager.sort(configs);
     this.interactionManager.setSortConfig(configs);
     this.eventEmitter.emit(Events.SORT, configs);
+    this.updateLayout();
     this.render();
   }
 
@@ -1271,6 +1319,8 @@ export class CanvasTable implements CanvasTableAPI {
           { type: "application/json" },
         );
       case "excel": {
+        this.updateSummaryRows();
+        const rowBands = this.layoutManager.getRowBandsForRender();
         const context = this.dataManager.getExportContext({
           includeHeaders: options.includeHeaders ?? true,
           includeHidden: options.includeHidden ?? false,
@@ -1278,7 +1328,11 @@ export class CanvasTable implements CanvasTableAPI {
           showRowNumbers: this.props.showRowNumbers === true,
         });
         const model = buildExcelExportModel(
-          context,
+          {
+            ...context,
+            summaryTopRows: rowBands.summaryTop.rows,
+            summaryBottomRows: rowBands.summaryBottom.rows,
+          },
           options.excel,
           options.filename?.replace(/\.[^.]+$/, "") ?? "Sheet1",
         );
@@ -1468,6 +1522,7 @@ export class CanvasTable implements CanvasTableAPI {
     if (setColumnVisible(columns)) {
       // 只更新列布局，不需要重新计算行布局
       this.layoutManager.calculateColumnLayoutOnly(this.dataManager.getColumns());
+      this.updateSummaryRows();
       this.interactionManager.updateMaxScroll(
         this.layoutManager.getMaxScrollLeft(),
         this.layoutManager.getMaxScrollTop(),
@@ -1507,6 +1562,7 @@ export class CanvasTable implements CanvasTableAPI {
 
     if (findAndHideColumn(columns)) {
       // 只更新列布局，不需要重新计算行布局
+      this.updateSummaryRows();
       this.layoutManager.calculateColumnLayoutOnly(this.dataManager.getColumns());
       this.interactionManager.updateMaxScroll(
         this.layoutManager.getMaxScrollLeft(),

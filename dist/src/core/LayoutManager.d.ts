@@ -1,4 +1,4 @@
-import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion, RowBands, RowHitResult, RowPinPosition } from "../types";
+import { Column, Row, LayoutInfo, VisibleRange, VirtualScrollConfig, TableTheme, HeaderCell, CellMerge, HitTestResult, MouseRegion, RowBands, RowHitResult, RowPinPosition, ComputedSummaryRow } from "../types";
 import { RowPinManager } from "./RowPinManager";
 export declare class LayoutManager {
     private layoutInfo;
@@ -19,6 +19,8 @@ export declare class LayoutManager {
     private bodyRowOffsets;
     private pinnedTopHeight;
     private pinnedBottomHeight;
+    private summaryTopHeight;
+    private summaryBottomHeight;
     private bodyViewportHeight;
     private columnOffsets;
     private columns;
@@ -55,6 +57,7 @@ export declare class LayoutManager {
     setTheme(theme: TableTheme): void;
     setRowHeightFn(fn?: (row: Row, rowIndex: number) => number): void;
     setRowPinManager(rowPinManager?: RowPinManager): void;
+    setSummaryRows(summaryTopRows: ComputedSummaryRow[], summaryBottomRows: ComputedSummaryRow[]): void;
     getRowBands(): RowBands;
     getRowBandsForRender(): RowBands;
     hasPinnedRows(): boolean;
@@ -68,6 +71,9 @@ export declare class LayoutManager {
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     getScrollLeft(): number;
     private createRowNumberColumn;
+    private hasLeftFixedColumnsIn;
+    private buildLayoutColumns;
+    getVisibleLeafColumnsForLayout(columns: Column[]): Column[];
     calculateLayout(columns: Column[], rows: Row[]): LayoutInfo;
     /**
      * 只更新列相关的布局（用于列重排、列交换等操作）
@@ -90,6 +96,7 @@ export declare class LayoutManager {
     private updatePinnedBandOffsets;
     private updateRowBandGeometry;
     private calculateRowsHeight;
+    private calculateSummaryRowsHeight;
     private getResolvedRowHeight;
     getRowIndexByRef(row: Row): number;
     getBodyRowIndexByRef(row: Row): number;
@@ -109,6 +116,7 @@ export declare class LayoutManager {
     private findRowIndexAtOffset;
     private findBodyRowIndexAtOffset;
     private findRowInBandAtOffset;
+    private findSummaryRowInBandAtOffset;
     getRowViewportY(rowIndex: number, scrollTop?: number): number | null;
     getCellViewportY(rowIndex: number, scrollTop?: number): number;
     private findColumnIndexAtOffset;

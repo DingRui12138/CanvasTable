@@ -5,7 +5,7 @@
  * image preview dropdowns, and cell text. Shows tooltip when content
  * is truncated or images need preview.
  */
-import { TooltipState, ImageTooltipState } from "../../types";
+import { TooltipState, ImageTooltipState, RowHitResult } from "../../types";
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
 export declare class TooltipHandler extends BaseHandler {
@@ -21,6 +21,8 @@ export declare class TooltipHandler extends BaseHandler {
         rowIndex: number;
         columnIndex: number;
     } | null): void;
+    checkSummaryTooltip(hit: RowHitResult | null): void;
+    private getSummaryCellRect;
     /**
      * Handle tags tooltip
      */

@@ -511,6 +511,85 @@ export interface Row {
   expandable?: boolean;
 }
 
+export interface SummaryConfig {
+  enabled?: boolean;
+  position?: "top" | "bottom";
+  scope?: "view" | "all";
+  rows: SummaryRowConfig[];
+  style?: SummaryStyle;
+}
+
+export interface SummaryRowConfig {
+  key: string;
+  height?: number;
+  cells?: SummaryCellConfig[];
+  build?: (context: SummaryContext) => SummaryCellConfig[] | SummaryRowResult;
+}
+
+export interface SummaryRowResult {
+  cells: SummaryCellConfig[];
+  height?: number;
+}
+
+export interface SummaryContext {
+  columns: Column[];
+  visibleLeafColumns: Column[];
+  viewRows: Row[];
+  allRows: Row[];
+  scopeRows: Row[];
+}
+
+export interface SummaryCellConfig {
+  columnKey?: string;
+  startColumnKey?: string;
+  endColumnKey?: string;
+  text?: string;
+  value?: unknown;
+  type?: CellType;
+  style?: CellStyle;
+  render?: (context: SummaryCellRenderContext) => RenderResult;
+}
+
+export interface SummaryCellRenderContext {
+  cell: SummaryCellConfig;
+  row: ComputedSummaryRow;
+  rowIndex: number;
+  column: Column;
+  columnIndex: number;
+  context: SummaryContext;
+}
+
+export interface SummaryStyle {
+  backgroundColor?: string;
+  borderColor?: string;
+  color?: string;
+  fontWeight?: "normal" | "bold";
+}
+
+export interface ComputedSummaryRow {
+  key: string;
+  height: number;
+  cells: ComputedSummaryCell[];
+  source: SummaryRowConfig;
+}
+
+export interface ComputedSummaryCell {
+  key: string;
+  startColumnIndex: number;
+  endColumnIndex: number;
+  startColumnKey: string;
+  endColumnKey: string;
+  config: SummaryCellConfig;
+  renderResult: RenderResult;
+}
+
+export interface ComputedSummaryResult {
+  enabled: boolean;
+  position: "top" | "bottom";
+  scope: "view" | "all";
+  rows: ComputedSummaryRow[];
+}
+
 export type DisabledValue = boolean | ((row: Row, column: Column) => boolean);
 
 export interface HeaderCell {
@@ -873,6 +952,8 @@ export interface ExportContext {
   columnTree: Column[];
   leafColumns: Column[];
   rows: ExportRowContext[];
+  summaryTopRows?: ComputedSummaryRow[];
+  summaryBottomRows?: ComputedSummaryRow[];
   bodyMerges: ExportMerge[];
   headerDepth: number;
   leftFixedLeafColumnCount: number;
@@ -1028,6 +1109,8 @@ export interface CanvasTableBaseProps {
   enableRowPinning?: boolean;
   /** 是否允许行固定。可全局关闭，也可按行动态控制 */
   rowPinnable?: boolean | ((row: Row) => boolean);
+  /** 合计行配置 */
+  summary?: SummaryConfig;
   /** 多选列分隔符，默认 ", " */
   multipleSelectSeparator?: string;
 }
@@ -1250,21 +1333,23 @@ export type RowBandType =
   | "pinned-bottom"
   | "summary-bottom";
 
-export interface RowBand {
+export interface RowBand<T extends Row | ComputedSummaryRow = Row> {
   type: RowBandType;
-  rows: Row[];
+  rows: T[];
   height: number;
   y: number;
 }
 
 export interface RowBands {
+  summaryTop: RowBand<ComputedSummaryRow>;
   pinnedTop: RowBand;
   body: RowBand;
   pinnedBottom: RowBand;
+  summaryBottom: RowBand<ComputedSummaryRow>;
 }
 
 export interface RowHitResult {
-  row: Row;
+  row: Row | ComputedSummaryRow;
   band: RowBandType;
   columnIndex: number;
 }
@@ -1426,6 +1511,9 @@ export interface HitTestResult {
 
   /** 单元格位置 */
   cell?: { rowIndex: number; columnIndex: number };
+
+  /** 行命中信息，包含所属 row band */
+  rowHit?: RowHitResult;
 
   /** 视口坐标 */
   viewport: { x: number; y: number };
