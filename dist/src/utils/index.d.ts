@@ -1,4 +1,4 @@
-import type { Column, Row, RenderResult, TagItem, TagsConfig, DisabledValue, FilterMode, SelectOption } from "../types";
+import { Column, Row, RenderResult, TagItem, TagsConfig, DisabledValue, FilterMode, SelectOption } from "../types";
 /**
  * 获取列的数据字段名
  * 优先使用 field，如果没有则使用 key

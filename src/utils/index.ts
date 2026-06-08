@@ -1,4 +1,4 @@
-import type {
+import {
   Column,
   Row,
   RenderResult,
@@ -7,6 +7,7 @@ import type {
   DisabledValue,
   FilterMode,
   SelectOption,
+  CellTypes,
 } from "../types";
 
 /**
@@ -553,13 +554,13 @@ export function getRenderResult(column: Column, row: Row, rowIndex: number): Ren
   }
 
   // 自动为 checkbox/switch 类型创建默认配置
-  if (renderResult.type === "checkbox" && !renderResult.checkbox) {
+  if (renderResult.type === CellTypes.CHECKBOX && !renderResult.checkbox) {
     renderResult.checkbox = {
       checked: Boolean(value),
     };
   }
 
-  if (renderResult.type === "switch" && !renderResult.switch) {
+  if (renderResult.type === CellTypes.SWITCH && !renderResult.switch) {
     renderResult.switch = {
       checked: Boolean(value),
     };
@@ -573,28 +574,28 @@ export function getCellDisplayText(column: Column, row: Row, rowIndex: number): 
   const value = row.data[field];
   const renderResult = getRenderResult(column, row, rowIndex);
 
-  if (renderResult.type === "switch" && renderResult.switch) {
+  if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
     return renderResult.switch.checked ? "是" : "否";
   }
-  if (renderResult.type === "checkbox" && renderResult.checkbox) {
+  if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
     if (renderResult.checkbox.indeterminate) {
       return "部分选中";
     }
     return renderResult.checkbox.checked ? "是" : "否";
   }
-  if (renderResult.type === "radio" && renderResult.radio) {
+  if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
     const selectedOption = renderResult.radio.options?.find(
       (opt) => opt.value === renderResult.radio?.value,
     );
     return selectedOption?.label || String(renderResult.radio.value ?? "");
   }
-  if (renderResult.type === "button" && renderResult.button) {
+  if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
     return renderResult.button.text || "";
   }
   if (renderResult.tags) {
     return (renderResult.tags.tags as TagItem[]).map((tag) => tag.text).join(", ");
   }
-  if (renderResult.type === "select" && renderResult.select) {
+  if (renderResult.type === CellTypes.SELECT && renderResult.select) {
     const selectValue = renderResult.select.value;
     if (Array.isArray(selectValue)) {
       const labels = selectValue
@@ -608,7 +609,7 @@ export function getCellDisplayText(column: Column, row: Row, rowIndex: number): 
     const selectedOption = renderResult.select.options?.find((opt) => opt.value === selectValue);
     return selectedOption?.label || String(selectValue ?? "");
   }
-  if (renderResult.type === "date" && renderResult.date) {
+  if (renderResult.type === CellTypes.DATE && renderResult.date) {
     if (renderResult.date.value) {
       const dateValue = renderResult.date.value;
       if (dateValue instanceof Date) {
@@ -618,7 +619,7 @@ export function getCellDisplayText(column: Column, row: Row, rowIndex: number): 
     }
     return "";
   }
-  if (renderResult.type === "input" && renderResult.input) {
+  if (renderResult.type === CellTypes.INPUT && renderResult.input) {
     return String(renderResult.input.value ?? "");
   }
 

@@ -269,7 +269,6 @@ export function createTestColumns() {
  */
 export function createTestRows(count: number = 3) {
   return Array.from({ length: count }, (_, i) => ({
-    id: `row-${i}`,
     data: {
       id: i + 1,
       name: `User ${i + 1}`,

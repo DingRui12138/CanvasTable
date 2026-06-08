@@ -9,7 +9,7 @@ import {
   HistoryAction,
   HistoryOptions,
 } from "../types";
-import { generateId, isPromise, getCellDisplayText, getColumnField } from "../utils";
+import { isPromise, getCellDisplayText, getColumnField } from "../utils";
 import { RowVersionManager } from "./RenderCache";
 
 const DEFAULT_MAX_ACTIONS = 200;
@@ -83,12 +83,10 @@ export class DataManager {
   private processRows(rows: Row[], level: number = 0): Row[] {
     return rows.map((row) => {
       const processedRow: Row = {
-        id: row.id ?? generateId(),
-        data: row.data,
+        ...row,
         level,
         expanded: row.expanded ?? false,
         selected: row.selected ?? false,
-        cellMerges: row.cellMerges,
       };
       if (row.children) {
         processedRow.children = this.processRows(row.children, level + 1);
@@ -517,13 +515,13 @@ export class DataManager {
       return 0;
     });
 
-    return sortedRows.map((row) => {
-      const sortedRow: Row = { ...row };
+    for (const row of sortedRows) {
       if (row.children) {
-        sortedRow.children = this.applySort(row.children);
+        this.applySort(row.children);
       }
-      return sortedRow;
-    });
+    }
+
+    return sortedRows;
   }
 
   private compareValues(a: unknown, b: unknown, type?: string): number {
@@ -622,13 +620,13 @@ export class DataManager {
     // 记录到历史栈
     this.recordAction({
       type: "update",
-      rowId: row.id,
+      row,
       column: dataField,
       oldValue,
       newValue: convertedValue,
     });
 
-    const stateRow = this.findStateRow(row.id);
+    const stateRow = this.findStateRow(row);
     if (stateRow) {
       stateRow.data[dataField] = convertedValue;
     }
@@ -670,7 +668,7 @@ export class DataManager {
     for (const change of changes) {
       this.recordAction({
         type: "update",
-        rowId: row.id,
+        row,
         column: change.column!,
         oldValue: change.oldValue,
         newValue: change.newValue,
@@ -682,7 +680,7 @@ export class DataManager {
       this.rowVersionManager.incrementVersion(row);
     }
 
-    const stateRow = this.findStateRow(row.id);
+    const stateRow = this.findStateRow(row);
     if (stateRow) {
       Object.assign(stateRow.data, data);
     }
@@ -693,7 +691,6 @@ export class DataManager {
 
   addRow(data: Record<string, unknown>, index?: number): Change {
     const newRow: Row = {
-      id: generateId(),
       data,
       expanded: false,
       selected: false,
@@ -714,7 +711,7 @@ export class DataManager {
     // 记录到历史栈
     this.recordAction({
       type: "add",
-      rowId: newRow.id,
+      row: newRow,
       rowIndex: insertIndex,
       rowData: { ...newRow, data: { ...newRow.data } },
     });
@@ -756,7 +753,7 @@ export class DataManager {
       throw new Error(`Row at index ${rowIndex} not found`);
     }
 
-    const originalIndex = this.state.rows.findIndex((r) => r.id === row.id);
+    const originalIndex = this.state.rows.indexOf(row);
     if (originalIndex !== -1) {
       this.state.rows.splice(originalIndex, 1);
     }
@@ -764,7 +761,7 @@ export class DataManager {
     // 记录到历史栈
     this.recordAction({
       type: "delete",
-      rowId: row.id,
+      row,
       rowIndex: originalIndex,
       rowData: { ...row, data: { ...row.data } },
     });
@@ -792,7 +789,7 @@ export class DataManager {
 
     this.recordAction({
       type: "delete",
-      rowId: row.id,
+      row,
       rowIndex: originalIndex,
       rowData: { ...row, data: { ...row.data } },
     });
@@ -812,7 +809,7 @@ export class DataManager {
 
     row.expanded = !row.expanded;
 
-    const stateRow = this.findStateRow(row.id);
+    const stateRow = this.findStateRow(row);
     if (stateRow) {
       stateRow.expanded = row.expanded;
     }
@@ -827,18 +824,18 @@ export class DataManager {
 
     row.selected = selected;
 
-    const stateRow = this.findStateRow(row.id);
+    const stateRow = this.findStateRow(row);
     if (stateRow) {
       stateRow.selected = selected;
     }
   }
 
-  private findStateRow(id: string): Row | undefined {
+  private findStateRow(row: Row): Row | undefined {
     const findInRows = (rows: Row[]): Row | undefined => {
-      for (const row of rows) {
-        if (row.id === id) return row;
-        if (row.children) {
-          const found = findInRows(row.children);
+      for (const r of rows) {
+        if (r === row) return r;
+        if (r.children) {
+          const found = findInRows(r.children);
           if (found) return found;
         }
       }
@@ -961,15 +958,12 @@ export class DataManager {
     switch (action.type) {
       case "update": {
         // 恢复旧值
-        const row = this.findRowById(action.rowId);
-        if (row) {
-          row.data[action.column] = action.oldValue;
-        }
+        action.row.data[action.column] = action.oldValue;
         break;
       }
       case "add": {
         // 撤销新增：删除该行
-        const index = this.state.rows.findIndex((r) => r.id === action.rowId);
+        const index = this.state.rows.indexOf(action.row);
         if (index !== -1) {
           this.state.rows.splice(index, 1);
         }
@@ -1011,10 +1005,7 @@ export class DataManager {
     switch (action.type) {
       case "update": {
         // 重做更新：恢复新值
-        const row = this.findRowById(action.rowId);
-        if (row) {
-          row.data[action.column] = action.newValue;
-        }
+        action.row.data[action.column] = action.newValue;
         break;
       }
       case "add": {
@@ -1028,7 +1019,7 @@ export class DataManager {
       }
       case "delete": {
         // 重做删除：重新删除该行
-        const index = this.state.rows.findIndex((r) => r.id === action.rowId);
+        const index = this.state.rows.indexOf(action.rowData);
         if (index !== -1) {
           this.state.rows.splice(index, 1);
         }
@@ -1037,23 +1028,6 @@ export class DataManager {
     }
 
     this.applyFiltersAndSort();
-  }
-
-  /**
-   * 根据ID查找行
-   */
-  private findRowById(id: string): Row | undefined {
-    const findInRows = (rows: Row[]): Row | undefined => {
-      for (const row of rows) {
-        if (row.id === id) return row;
-        if (row.children) {
-          const found = findInRows(row.children);
-          if (found) return found;
-        }
-      }
-      return undefined;
-    };
-    return findInRows(this.state.rows);
   }
 
   /**

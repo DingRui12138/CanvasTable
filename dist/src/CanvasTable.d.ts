@@ -1,4 +1,4 @@
-import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig, RowPinPosition, CanvasTableLocale, LocaleConfig } from "./types";
+import { CanvasTableProps, CanvasTableAPI, Row, Column, CellPosition, CellInfo, CellRange, SortConfig, FilterConfig, ViewConfig, ExportOptions, LayoutInfo, TableTheme, ThemeMode, WatermarkConfig, ImageLoadConfig, RowPinPosition, CanvasTableLocale, LocaleConfig, ValidationError } from "./types";
 interface TableEvents {
     load: [{
         rows: Row[];
@@ -29,9 +29,15 @@ interface TableEvents {
     dateEditStart: [CellInfo, import("./types").DateConfig?];
     dateEditEnd: [CellInfo, string];
     dateDropdownOpen: [];
-    dateDropdownClose: [];
+    dateDropdownClose: [CellPosition | null];
     dateDropdownHover: [];
     dateSelect: [CellInfo, string];
+    colorDropdownOpen: [];
+    colorDropdownClose: [CellPosition | null];
+    colorDropdownHover: [];
+    dropdownOpen: [];
+    dropdownClose: [CellPosition | null];
+    dropdownHover: [];
     contextMenuOpen: [];
     contextMenuClose: [];
     contextMenuHover: [];
@@ -48,6 +54,10 @@ interface TableEvents {
     buttonClick: [CellInfo, string | undefined];
     imageClick: [CellInfo, string, MouseEvent];
     progressChange: [CellInfo, number];
+    ratingChange: [CellInfo, number];
+    colorChange: [CellInfo, string];
+    selectChange: [CellInfo, unknown, boolean];
+    tagsChange: [CellInfo, string[], boolean];
     undo: [];
     redo: [];
     [key: string]: unknown[];
@@ -63,6 +73,7 @@ export declare class CanvasTable implements CanvasTableAPI {
     private renderer;
     private interactionManager;
     private editorManager;
+    private editorRegistry;
     private filterInputManager;
     private eventEmitter;
     private loadingOverlay;
@@ -77,6 +88,11 @@ export declare class CanvasTable implements CanvasTableAPI {
     private columnIdManager;
     private scheduledRender;
     private manualLoading;
+    private validationErrorRows;
+    private pendingValidationCells;
+    private pendingAnimationFrame;
+    private forcedValidationTooltipCell;
+    private warningTooltipTimeout;
     constructor(container: HTMLElement | string, props: CanvasTableProps);
     private setupInternalEventListeners;
     private setupEventHandlers;
@@ -86,6 +102,24 @@ export declare class CanvasTable implements CanvasTableAPI {
     private updateLayout;
     private updateSummaryRows;
     private refreshSummaryRowsAfterDataChange;
+    private normalizeValidationResult;
+    private handleValidation;
+    private addPendingValidation;
+    private removePendingValidation;
+    private startPendingAnimation;
+    private stopPendingAnimation;
+    private deleteValidationError;
+    private clearTooltipForValidation;
+    private commitCellValue;
+    /**
+     * 统一的编辑器提交流程 — 交互式和 DOM 编辑器共用
+     *
+     * get column → await commitCellValue → if committed call callback → render
+     */
+    private handleEditorCommit;
+    private validateEditorCommit;
+    private clearValidationErrorForCell;
+    private buildVisibleValidationErrorIndex;
     private render;
     private performRender;
     resize(): void;
@@ -106,8 +140,12 @@ export declare class CanvasTable implements CanvasTableAPI {
     setSelectedCells(cells: CellPosition[]): void;
     setSelectedRows(rows: number[]): void;
     clearSelection(): void;
-    updateCell(rowIndex: number, column: string, value: unknown): void;
-    updateRow(rowIndex: number, data: Record<string, unknown>): void;
+    updateCell(rowIndex: number, column: string, value: unknown): Promise<void>;
+    updateRow(rowIndex: number, data: Record<string, unknown>): Promise<void>;
+    getValidationErrors(): ValidationError[];
+    getValidationError(cell: CellPosition): ValidationError | null;
+    clearValidationErrors(): void;
+    private getValidationTooltip;
     addRow(data: Record<string, unknown>, index?: number): void;
     deleteRow(rowIndex: number): void;
     /**

@@ -101,10 +101,6 @@ export declare class DataManager {
      */
     private redoAction;
     /**
-     * 根据ID查找行
-     */
-    private findRowById;
-    /**
      * 是否可以撤销
      */
     canUndo(): boolean;

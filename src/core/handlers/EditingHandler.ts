@@ -15,10 +15,11 @@ import {
   ImageConfig,
   ColorPickerConfig,
   EditRenderResult,
+  CellTypes,
 } from "../../types";
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
-import { resolveDisabled, getColumnField } from "../../utils";
+import { getColumnField } from "../../utils";
 import { TableEvents } from "../../constants/events";
 
 export class EditingHandler extends BaseHandler {
@@ -43,10 +44,10 @@ export class EditingHandler extends BaseHandler {
   validateCellForEditing(cell: CellPosition): { column: Column; row: Row } | null {
     const leafColumns = this.layoutManager.getLeafColumns();
     const column = leafColumns[cell.columnIndex];
-    if (!column || column.editable === false) return null;
+    if (!column) return null;
     const row = this.rows[cell.rowIndex];
     if (!row) return null;
-    if (resolveDisabled(column.disabled, row, column)) return null;
+    if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) return null;
     return { column, row };
   }
 
@@ -74,12 +75,12 @@ export class EditingHandler extends BaseHandler {
         if (
           result &&
           result.type &&
-          result.type !== "custom" &&
-          result.type !== "button" &&
-          result.type !== "buttons" &&
-          result.type !== "image" &&
-          result.type !== "progress" &&
-          result.type !== "link"
+          result.type !== CellTypes.CUSTOM &&
+          result.type !== CellTypes.BUTTON &&
+          result.type !== CellTypes.BUTTONS &&
+          result.type !== CellTypes.IMAGE &&
+          result.type !== CellTypes.PROGRESS &&
+          result.type !== CellTypes.LINK
         ) {
           return {
             type: result.type,

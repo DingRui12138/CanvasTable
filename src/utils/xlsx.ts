@@ -5,6 +5,7 @@ import type {
   ExportContext,
   ExportMerge,
 } from "../types";
+import { CellTypes } from "../types";
 
 const XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -47,10 +48,10 @@ function resolveColumnFormat(
   if (explicit?.type && explicit.formatCode) {
     return { type: explicit.type, formatCode: explicit.formatCode };
   }
-  if (column.type === "date") {
+  if (column.type === CellTypes.DATE) {
     return { type: "date", formatCode: "yyyy-mm-dd" };
   }
-  if (column.type === "number") {
+  if (column.type === CellTypes.NUMBER) {
     return { type: "number", formatCode: "General" };
   }
   return undefined;

@@ -7,7 +7,6 @@
 
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
-import { getColumnField, resolveDisabled } from "../../utils";
 import { TableEvents } from "../../constants/events";
 
 export class DropdownHandler extends BaseHandler {
@@ -61,15 +60,6 @@ export class DropdownHandler extends BaseHandler {
                 selectedValues.push(optionValue);
               }
 
-              // Auto update row.data
-              const dropdownCell = this.state.dropdown.cell;
-              const leafColumns = this.layoutManager.getLeafColumns();
-              const dropdownColumn = leafColumns[dropdownCell.columnIndex];
-              const dropdownRow = this.rows[dropdownCell.rowIndex];
-              if (dropdownColumn && dropdownRow) {
-                dropdownRow.data[getColumnField(dropdownColumn)] = selectedValues;
-              }
-
               this.eventEmitter.emit(
                 TableEvents.TAGS_CHANGE,
                 this.getCellInfo(this.state.dropdown.cell)!,
@@ -85,23 +75,13 @@ export class DropdownHandler extends BaseHandler {
             } else {
               const optionValue = option.value ?? option.text;
 
-              // Auto update row.data
-              const dropdownCell = this.state.dropdown.cell;
-              const leafColumns = this.layoutManager.getLeafColumns();
-              const dropdownColumn = leafColumns[dropdownCell.columnIndex];
-              const dropdownRow = this.rows[dropdownCell.rowIndex];
-              if (dropdownColumn && dropdownRow) {
-                dropdownRow.data[getColumnField(dropdownColumn)] = optionValue;
-              }
-
               this.eventEmitter.emit(
                 TableEvents.TAGS_CHANGE,
                 this.getCellInfo(this.state.dropdown.cell)!,
                 [optionValue],
                 false,
               );
-              this.state.dropdown = null;
-              this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+              // 下拉关闭由 CanvasTable 在 commit 成功后处理
             }
           }
         }
@@ -136,19 +116,11 @@ export class DropdownHandler extends BaseHandler {
               currentValues.push(optionValue);
             }
 
-            // Auto update row.data
-            const dropdownCell = this.state.dropdown.cell;
-            const leafColumns = this.layoutManager.getLeafColumns();
-            const dropdownColumn = leafColumns[dropdownCell.columnIndex];
-            const dropdownRow = this.rows[dropdownCell.rowIndex];
-            if (dropdownColumn && dropdownRow) {
-              dropdownRow.data[getColumnField(dropdownColumn)] = currentValues;
-            }
-
             this.eventEmitter.emit(
               TableEvents.SELECT_CHANGE,
               this.getCellInfo(this.state.dropdown.cell)!,
               currentValues,
+              true,
             );
 
             this.state.dropdown.config = {
@@ -157,22 +129,14 @@ export class DropdownHandler extends BaseHandler {
             };
             this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
           } else {
-            // Auto update row.data
-            const dropdownCell = this.state.dropdown.cell;
-            const leafColumns = this.layoutManager.getLeafColumns();
-            const dropdownColumn = leafColumns[dropdownCell.columnIndex];
-            const dropdownRow = this.rows[dropdownCell.rowIndex];
-            if (dropdownColumn && dropdownRow) {
-              dropdownRow.data[getColumnField(dropdownColumn)] = option.value;
-            }
-
             this.eventEmitter.emit(
               TableEvents.SELECT_CHANGE,
               this.getCellInfo(this.state.dropdown.cell)!,
               option.value,
+              false,
             );
-            this.state.dropdown = null;
-            this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+            // 下拉关闭由 CanvasTable 在 commit 成功后处理
+            // 校验失败时保持下拉打开，让用户重新选择
           }
         }
       }
@@ -344,7 +308,11 @@ export class DropdownHandler extends BaseHandler {
   }): boolean {
     const column = this.layoutManager.getLeafColumns()[cell.columnIndex];
     const row = this.rows[cell.rowIndex];
-    return column && row ? resolveDisabled(column.disabled, row, column) : true;
+    return column && row
+      ? !this.editorRegistry
+          .getStrategy(column)
+          .canEdit({ rowIndex: cell.rowIndex, columnIndex: cell.columnIndex }, row, column)
+      : true;
   }
 
   /**
@@ -1160,7 +1128,7 @@ export class DropdownHandler extends BaseHandler {
   closeAllDropdowns(): void {
     if (this.state.dropdown) {
       this.state.dropdown = null;
-      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE, null);
     }
     if (this.state.filterDropdown) {
       this.state.filterDropdown = null;
@@ -1168,7 +1136,7 @@ export class DropdownHandler extends BaseHandler {
     }
     if (this.state.dateDropdown) {
       this.state.dateDropdown = null;
-      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE, null);
     }
     if (this.state.buttonsDropdown) {
       this.state.buttonsDropdown = null;
@@ -1176,7 +1144,7 @@ export class DropdownHandler extends BaseHandler {
     }
     if (this.state.colorDropdown) {
       this.state.colorDropdown = null;
-      this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE, null);
     }
   }
 
@@ -1438,16 +1406,9 @@ export class DropdownHandler extends BaseHandler {
           const formattedDate = this.formatDate(selectedDate);
 
           const cell = this.state.dateDropdown.cell;
-          const leafColumns = this.layoutManager.getLeafColumns();
-          const column = leafColumns[cell.columnIndex];
-          const row = this.rows[cell.rowIndex];
-
-          if (column && row) {
-            row.data[getColumnField(column)] = formattedDate;
-          }
 
           this.state.dateDropdown = null;
-          this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE);
+          this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE, null);
           this.eventEmitter.emit(TableEvents.DATE_SELECT, this.getCellInfo(cell)!, formattedDate);
           return true;
         }
@@ -1559,16 +1520,8 @@ export class DropdownHandler extends BaseHandler {
         if (index >= 0 && index < presetColors.length) {
           const selectedColor = presetColors[index]!;
 
-          // Auto update row.data
-          const leafColumns = this.layoutManager.getLeafColumns();
-          const column = leafColumns[cell.columnIndex];
-          const rowData = this.rows[cell.rowIndex];
-          if (column && rowData) {
-            rowData.data[getColumnField(column)] = selectedColor;
-          }
-
           this.state.colorDropdown = null;
-          this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE);
+          this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE, null);
           this.eventEmitter.emit(TableEvents.COLOR_CHANGE, this.getCellInfo(cell)!, selectedColor);
           return true;
         }

@@ -43,7 +43,6 @@ export declare function createTestColumns(): ({
  * 创建测试用的简单行数据
  */
 export declare function createTestRows(count?: number): {
-    id: string;
     data: {
         id: number;
         name: string;

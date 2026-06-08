@@ -1,4 +1,4 @@
-import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState, ColorPickerDropdownState, ImageLoadConfig, CanvasTableLocale } from "../types";
+import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState, ColorPickerDropdownState, ImageLoadConfig, CanvasTableLocale, ValidationError } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
 export declare class Renderer {
@@ -52,6 +52,8 @@ export declare class Renderer {
     private currentHoveredButtonIndex;
     private currentProgressDragState;
     private currentRowResizeState;
+    private currentValidationErrors;
+    private currentPendingValidations;
     private renderCache;
     private rowIdManager;
     private columnIdManager;
@@ -113,6 +115,8 @@ export declare class Renderer {
         hoveredButtonIndex?: number;
         progressDragState?: import("../types").InteractionState["progressDragState"];
         rowResizeState?: import("../types").InteractionState["rowResizeState"];
+        validationErrors?: Map<string, ValidationError>;
+        pendingValidations?: Set<string>;
     }): void;
     private shouldRenderRowBands;
     private renderRowBandCells;

@@ -21,6 +21,9 @@ import {
   RowPinPosition,
   CanvasTableLocale,
   LocaleConfig,
+  ValidationError,
+  ValidateResult,
+  TooltipState,
 } from "./types";
 import { DataManager } from "./core/DataManager";
 import { LayoutManager } from "./core/LayoutManager";
@@ -38,11 +41,13 @@ import {
   createXlsxBlobFromModel,
   debounce,
   getColumnField,
+  isPromise,
 } from "./utils";
 import { TableEvents as Events } from "./constants/events";
 import { LoadingOverlay } from "./core/LoadingOverlay";
 import { RowPinManager } from "./core/RowPinManager";
 import { SummaryManager } from "./core/SummaryManager";
+import { EditorRegistry, InteractiveEditorStrategy, DomEditorStrategy } from "./core/editors";
 import { resolveLocale } from "./locale";
 
 interface TableEvents {
@@ -72,9 +77,15 @@ interface TableEvents {
   dateEditStart: [CellInfo, import("./types").DateConfig?];
   dateEditEnd: [CellInfo, string];
   dateDropdownOpen: [];
-  dateDropdownClose: [];
+  dateDropdownClose: [CellPosition | null];
   dateDropdownHover: [];
   dateSelect: [CellInfo, string];
+  colorDropdownOpen: [];
+  colorDropdownClose: [CellPosition | null];
+  colorDropdownHover: [];
+  dropdownOpen: [];
+  dropdownClose: [CellPosition | null];
+  dropdownHover: [];
   contextMenuOpen: [];
   contextMenuClose: [];
   contextMenuHover: [];
@@ -91,6 +102,10 @@ interface TableEvents {
   buttonClick: [CellInfo, string | undefined];
   imageClick: [CellInfo, string, MouseEvent];
   progressChange: [CellInfo, number];
+  ratingChange: [CellInfo, number];
+  colorChange: [CellInfo, string];
+  selectChange: [CellInfo, unknown, boolean];
+  tagsChange: [CellInfo, string[], boolean];
   undo: [];
   redo: [];
   [key: string]: unknown[];
@@ -108,6 +123,7 @@ export class CanvasTable implements CanvasTableAPI {
   private renderer: Renderer;
   private interactionManager: InteractionManager;
   private editorManager: EditorManager;
+  private editorRegistry: EditorRegistry;
   private filterInputManager: FilterInputManager;
   private eventEmitter: EventEmitter<TableEvents>;
   private loadingOverlay: LoadingOverlay;
@@ -125,6 +141,11 @@ export class CanvasTable implements CanvasTableAPI {
 
   private scheduledRender: (() => void) | null = null;
   private manualLoading: boolean = false; // 用户手动设置的 loading 状态
+  private validationErrorRows: WeakMap<Row, Map<string, ValidationError>> = new WeakMap();
+  private pendingValidationCells: Set<string> = new Set();
+  private pendingAnimationFrame: number | null = null;
+  private forcedValidationTooltipCell: CellPosition | null = null;
+  private warningTooltipTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(container: HTMLElement | string, props: CanvasTableProps) {
     if (typeof container === "string") {
@@ -224,6 +245,7 @@ export class CanvasTable implements CanvasTableAPI {
       this.renderer.setImageLoadConfig(props.imageLoad);
     }
 
+    this.editorRegistry = new EditorRegistry();
     this.interactionManager = new InteractionManager(
       this.canvas,
       this.layoutManager,
@@ -232,9 +254,103 @@ export class CanvasTable implements CanvasTableAPI {
       selectionConfig,
       editingConfig,
       this.locale,
+      this.editorRegistry,
     );
     this.interactionManager.setRowHeightResizeEnabled(props.enableRowHeightResize === true);
     this.interactionManager.setRowResizable(props.rowResizable);
+    this.interactionManager.setShouldBlockDropdownClose(async (cell) => {
+      // 调用实际校验 hook，使用下拉中的待提交值（而不是 row.data 中已提交的旧值）
+      const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+      const row = this.dataManager.getRows()[cell.rowIndex];
+      if (!column || !row) return false;
+      const dropdown = this.interactionManager.getDropdown();
+      let value: unknown;
+      if (dropdown && dropdown.type === "tags" && dropdown.tagsConfig) {
+        // tags 下拉：待提交值是 tagsConfig.selectedValues
+        const isMultiple = dropdown.tagsConfig.multiple !== false;
+        value = isMultiple
+          ? (dropdown.tagsConfig.selectedValues ?? [])
+          : (dropdown.tagsConfig.selectedValues?.[0] ?? "");
+      } else if (dropdown) {
+        // select 下拉（多选）：待提交值是 config.value
+        value = dropdown.config.value;
+      } else {
+        value = row.data[getColumnField(column)];
+      }
+      const valid = await this.validateEditorCommit(cell, value);
+      return !valid;
+    });
+    this.interactionManager.setShouldBlockEditingClose(async (e?: MouseEvent) => {
+      // DOM 编辑器：先 preventDefault 阻止焦点转移（避免 blur），然后手动走 endEditing + beforeCommit
+      // beforeCommit 不通过 → 编辑态保持，焦点不丢失
+      // beforeCommit 通过 → 编辑态关闭，返回 false 允许后续交互
+      const editingCell = this.editorManager.getEditingCell();
+      if (editingCell) {
+        // 阻止 mousedown 的默认行为（焦点转移），防止 input blur
+        if (e) e.preventDefault();
+        // 标记跳过后续 handleBlur（防止 blur 竞态触发二次 endEditing）
+        this.editorManager.markSkipNextBlur();
+        // 手动走提交+校验流程
+        const committed = await this.editorManager.endEditing(true);
+        if (!committed) {
+          // 校验失败：根据 strategy.shouldBlockFocusLoss 决定是否强制取消
+          const column = this.layoutManager.getLeafColumn(editingCell.columnIndex);
+          if (column) {
+            const strategy = this.editorRegistry.getStrategy(column) as DomEditorStrategy;
+            const error = this.getValidationError(editingCell);
+            if (error && !strategy.shouldBlockFocusLoss(editingCell, error)) {
+              // strategy 允许丢失焦点（如 warning 级），强制取消编辑态
+              await this.editorManager.endEditing(false);
+              return false;
+            }
+          }
+          // 校验失败且不允许关闭 → 编辑态保持，焦点仍在 input
+          return true;
+        }
+        // 校验通过 → 编辑态已关闭，允许后续交互
+        return false;
+      }
+      // 交互式编辑器（select/tags/date/color）：使用下拉中的待提交值校验
+      const dropdown = this.interactionManager.getDropdown();
+      if (dropdown) {
+        const column = this.layoutManager.getLeafColumn(dropdown.cell.columnIndex);
+        const row = this.dataManager.getRows()[dropdown.cell.rowIndex];
+        if (!column || !row) return false;
+        let value: unknown;
+        if (dropdown.type === "tags" && dropdown.tagsConfig) {
+          const isMultiple = dropdown.tagsConfig.multiple !== false;
+          value = isMultiple
+            ? (dropdown.tagsConfig.selectedValues ?? [])
+            : (dropdown.tagsConfig.selectedValues?.[0] ?? "");
+        } else {
+          value = dropdown.config.value;
+        }
+        const valid = await this.validateEditorCommit(dropdown.cell, value);
+        return !valid;
+      }
+      const dateDropdown = this.interactionManager.getDateDropdown();
+      if (dateDropdown) {
+        const column = this.layoutManager.getLeafColumn(dateDropdown.cell.columnIndex);
+        const row = this.dataManager.getRows()[dateDropdown.cell.rowIndex];
+        if (!column || !row) return false;
+        // date 下拉：待提交值是 selectedDate
+        const value = dateDropdown.selectedDate ?? row.data[getColumnField(column)];
+        const valid = await this.validateEditorCommit(dateDropdown.cell, value);
+        return !valid;
+      }
+      const colorDropdown = this.interactionManager.getColorDropdown();
+      if (colorDropdown) {
+        const column = this.layoutManager.getLeafColumn(colorDropdown.cell.columnIndex);
+        const row = this.dataManager.getRows()[colorDropdown.cell.rowIndex];
+        if (!column || !row) return false;
+        // color 下拉：待提交值是 config.value 或 hoveredColor
+        const value = colorDropdown.config.value ?? row.data[getColumnField(column)];
+        const valid = await this.validateEditorCommit(colorDropdown.cell, value);
+        return !valid;
+      }
+      return false;
+    });
+    this.interactionManager.setDomEditorActiveChecker(() => this.editorManager.isEditing());
     this.interactionManager.setRowPinningEnabled(props.enableRowPinning === true);
     this.interactionManager.setRowPinnable(props.rowPinnable);
     this.interactionManager.setGetScrollbarBounds(() => {
@@ -252,11 +368,24 @@ export class CanvasTable implements CanvasTableAPI {
       this.layoutManager,
       this.eventEmitter as unknown as EventEmitter,
       this.theme,
+      this.locale,
       () => this.dataManager.getRows(),
     );
 
     this.editorManager.setOnScrollCallback((deltaX: number, deltaY: number) => {
       this.interactionManager.handleExternalWheel(deltaX, deltaY);
+    });
+    this.editorManager.setBeforeCommitCallback((cell, value) =>
+      this.validateEditorCommit(cell, value),
+    );
+    this.editorManager.setCancelCallback((cell) => {
+      this.clearValidationErrorForCell(cell);
+      // DOM 编辑器生命周期 hook：onCancel
+      const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+      if (column) {
+        const strategy = this.editorRegistry.getStrategy(column) as DomEditorStrategy;
+        strategy.onCancel?.(cell);
+      }
     });
 
     this.filterInputManager = new FilterInputManager(
@@ -448,7 +577,7 @@ export class CanvasTable implements CanvasTableAPI {
       }
     });
 
-    this.eventEmitter.on(Events.CELL_HOVER, () => {
+    this.eventEmitter.on(Events.CELL_HOVER, (_cell: unknown) => {
       this.render();
     });
 
@@ -456,65 +585,77 @@ export class CanvasTable implements CanvasTableAPI {
       this.render();
     });
 
-    this.eventEmitter.on(Events.CHECKBOX_CHANGE, () => {
-      this.refreshSummaryRowsAfterDataChange();
-      this.render();
+    this.eventEmitter.on(Events.CHECKBOX_CHANGE, async (_cell: unknown, _checked: unknown) => {
+      await this.handleEditorCommit(
+        _cell as CellPosition,
+        _checked as boolean,
+        this.props.onCheckboxChange,
+      );
     });
 
-    this.eventEmitter.on(Events.RADIO_CHANGE, () => {
-      this.refreshSummaryRowsAfterDataChange();
-      this.render();
+    this.eventEmitter.on(Events.RADIO_CHANGE, async (_cell: unknown, _value: unknown) => {
+      await this.handleEditorCommit(_cell as CellPosition, _value, this.props.onRadioChange);
     });
 
-    this.eventEmitter.on(Events.SWITCH_CHANGE, (_cell: unknown, _checked: unknown) => {
-      const cell = _cell as CellPosition;
-      const checked = _checked as boolean;
-      if (this.props.onSwitchChange) {
-        this.props.onSwitchChange(cell, checked);
-      }
-      this.refreshSummaryRowsAfterDataChange();
-      this.render();
+    this.eventEmitter.on(Events.SWITCH_CHANGE, async (_cell: unknown, _checked: unknown) => {
+      await this.handleEditorCommit(
+        _cell as CellPosition,
+        _checked as boolean,
+        this.props.onSwitchChange,
+      );
     });
 
-    this.eventEmitter.on(Events.PROGRESS_CHANGE, (_cell: unknown, _value: unknown) => {
-      const cell = _cell as CellPosition;
-      const value = _value as number;
-      if (this.props.onProgressChange) {
-        this.props.onProgressChange(cell, value);
-      }
-      this.refreshSummaryRowsAfterDataChange();
-      this.render();
+    this.eventEmitter.on(Events.PROGRESS_CHANGE, async (_cell: unknown, _value: unknown) => {
+      await this.handleEditorCommit(
+        _cell as CellPosition,
+        _value as number,
+        this.props.onProgressChange,
+      );
     });
 
     this.eventEmitter.on(Events.PROGRESS_DRAG, () => {
       this.render();
     });
 
-    this.eventEmitter.on(Events.RATING_CHANGE, (_cell: unknown, _value: unknown) => {
-      const cell = _cell as CellPosition;
-      const value = _value as number;
-      if (this.props.onRatingChange) {
-        this.props.onRatingChange(cell, value);
-      }
-      this.refreshSummaryRowsAfterDataChange();
-      this.render();
+    this.eventEmitter.on(Events.RATING_CHANGE, async (_cell: unknown, _value: unknown) => {
+      await this.handleEditorCommit(
+        _cell as CellPosition,
+        _value as number,
+        this.props.onRatingChange,
+      );
     });
 
-    this.eventEmitter.on(Events.COLOR_CHANGE, (_cell: unknown, _color: unknown) => {
-      const cell = _cell as CellPosition;
-      const color = _color as string;
-      if (this.props.onColorChange) {
-        this.props.onColorChange(cell, color);
-      }
-      this.refreshSummaryRowsAfterDataChange();
-      this.render();
+    this.eventEmitter.on(Events.COLOR_CHANGE, async (_cell: unknown, _color: unknown) => {
+      await this.handleEditorCommit(
+        _cell as CellPosition,
+        _color as string,
+        this.props.onColorChange,
+      );
     });
 
     this.eventEmitter.on(Events.COLOR_DROPDOWN_OPEN, () => {
+      const colorDropdown = this.interactionManager.getColorDropdown();
+      if (colorDropdown) {
+        const column = this.layoutManager.getLeafColumn(colorDropdown.cell.columnIndex);
+        const row = this.dataManager.getRows()[colorDropdown.cell.rowIndex];
+        if (column && row) {
+          const strategy = this.editorRegistry.getStrategy(column) as InteractiveEditorStrategy;
+          strategy.onDropdownOpen?.(colorDropdown.cell, row, column);
+        }
+      }
       this.render();
     });
 
-    this.eventEmitter.on(Events.COLOR_DROPDOWN_CLOSE, () => {
+    this.eventEmitter.on(Events.COLOR_DROPDOWN_CLOSE, (_cell: unknown) => {
+      const cell = _cell as CellPosition | null;
+      if (cell) {
+        // 用户取消颜色下拉（点击外部/Escape），调用 onDropdownCancel hook
+        const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+        if (column) {
+          const strategy = this.editorRegistry.getStrategy(column) as InteractiveEditorStrategy;
+          strategy.onDropdownCancel?.(cell);
+        }
+      }
       this.render();
     });
 
@@ -530,58 +671,55 @@ export class CanvasTable implements CanvasTableAPI {
       this.render();
     });
 
-    this.eventEmitter.on(Events.EDIT_START, (_cell: unknown, _inputConfig: unknown) => {
+    this.eventEmitter.on(Events.EDIT_START, async (_cell: unknown, _inputConfig: unknown) => {
       const cell = _cell as CellPosition;
       const inputConfig = _inputConfig as import("./types").InputConfig | undefined;
-      this.editorManager.startEditing(cell, inputConfig);
-      this.render();
-    });
-
-    this.eventEmitter.on(Events.SELECT_CHANGE, (_cell: unknown, _value: unknown) => {
-      const cell = _cell as CellPosition;
-      const value = _value;
-      const leafColumns = this.layoutManager.getLeafColumns();
-      const column = leafColumns[cell.columnIndex];
-
+      await this.editorManager.startEditing(cell, inputConfig);
+      // DOM 编辑器生命周期 hook：onEditStart
+      const column = this.layoutManager.getLeafColumn(cell.columnIndex);
       if (column) {
-        this.dataManager.updateCell(cell.rowIndex, column.key, value, getColumnField(column));
+        const strategy = this.editorRegistry.getStrategy(column);
+        if (!strategy.isInteractive && (strategy as DomEditorStrategy).onEditStart) {
+          (strategy as DomEditorStrategy).onEditStart!(cell, inputConfig);
+        }
       }
-
-      if (this.props.onSelectChange) {
-        this.props.onSelectChange(cell, value);
-      }
-
-      // 只修改数据，不需要重新计算布局
-      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
     this.eventEmitter.on(
+      Events.SELECT_CHANGE,
+      async (_cell: unknown, _value: unknown, _multiple?: unknown) => {
+        const cell = _cell as CellPosition;
+        const isMultiple = _multiple as boolean;
+        const committed = await this.handleEditorCommit(cell, _value, this.props.onSelectChange);
+        if (committed) {
+          // 单选成功后关闭下拉并清除校验 error
+          // 多选模式：保持下拉打开，让用户继续选择
+          if (!isMultiple) {
+            this.clearValidationErrorForCell(cell);
+            this.interactionManager.closeSelectDropdown();
+          }
+        }
+      },
+    );
+
+    this.eventEmitter.on(
       Events.TAGS_CHANGE,
-      (_cell: unknown, _values: unknown, _multiple?: unknown) => {
+      async (_cell: unknown, _values: unknown, _multiple?: unknown) => {
         const cell = _cell as CellPosition;
         const values = _values as string[];
         const isMultiple = _multiple as boolean;
-        const leafColumns = this.layoutManager.getLeafColumns();
-        const column = leafColumns[cell.columnIndex];
-
-        if (column) {
-          const valueToStore = isMultiple ? values : (values[0] ?? "");
-          this.dataManager.updateCell(
-            cell.rowIndex,
-            column.key,
-            valueToStore,
-            getColumnField(column),
-          );
+        const valueToStore = isMultiple ? values : (values[0] ?? "");
+        const committed = await this.handleEditorCommit(
+          cell,
+          valueToStore,
+          this.props.onTagsChange ? (c, _v) => this.props.onTagsChange!(c, values) : undefined,
+        );
+        // tags 单选模式：成功后关闭下拉并清除校验 error
+        if (committed && !isMultiple) {
+          this.clearValidationErrorForCell(cell);
+          this.interactionManager.closeSelectDropdown();
         }
-
-        if (this.props.onTagsChange) {
-          this.props.onTagsChange(cell, values);
-        }
-
-        // 只修改数据，不需要重新计算布局
-        this.refreshSummaryRowsAfterDataChange();
-        this.render();
       },
     );
 
@@ -598,10 +736,30 @@ export class CanvasTable implements CanvasTableAPI {
     });
 
     this.eventEmitter.on(Events.DROPDOWN_OPEN, () => {
+      // 交互式编辑器生命周期 hook：onDropdownOpen
+      const dropdown = this.interactionManager.getDropdown();
+      if (dropdown) {
+        const column = this.layoutManager.getLeafColumn(dropdown.cell.columnIndex);
+        const row = this.dataManager.getRows()[dropdown.cell.rowIndex];
+        if (column && row) {
+          const strategy = this.editorRegistry.getStrategy(column) as InteractiveEditorStrategy;
+          strategy.onDropdownOpen?.(dropdown.cell, row, column);
+        }
+      }
       this.render();
     });
 
-    this.eventEmitter.on(Events.DROPDOWN_CLOSE, () => {
+    this.eventEmitter.on(Events.DROPDOWN_CLOSE, (_cell: unknown) => {
+      const cell = _cell as CellPosition | null;
+      if (cell) {
+        // 用户取消下拉（Escape/点击外部）：清除校验 error 并调用 onCancel hook
+        this.clearValidationErrorForCell(cell);
+        const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+        if (column) {
+          const strategy = this.editorRegistry.getStrategy(column) as InteractiveEditorStrategy;
+          strategy.onDropdownCancel?.(cell);
+        }
+      }
       this.render();
     });
 
@@ -614,10 +772,28 @@ export class CanvasTable implements CanvasTableAPI {
     });
 
     this.eventEmitter.on(Events.DATE_DROPDOWN_OPEN, () => {
+      const dateDropdown = this.interactionManager.getDateDropdown();
+      if (dateDropdown) {
+        const column = this.layoutManager.getLeafColumn(dateDropdown.cell.columnIndex);
+        const row = this.dataManager.getRows()[dateDropdown.cell.rowIndex];
+        if (column && row) {
+          const strategy = this.editorRegistry.getStrategy(column) as InteractiveEditorStrategy;
+          strategy.onDropdownOpen?.(dateDropdown.cell, row, column);
+        }
+      }
       this.render();
     });
 
-    this.eventEmitter.on(Events.DATE_DROPDOWN_CLOSE, () => {
+    this.eventEmitter.on(Events.DATE_DROPDOWN_CLOSE, (_cell: unknown) => {
+      const cell = _cell as CellPosition | null;
+      if (cell) {
+        // 用户取消日期下拉（点击外部/Escape），调用 onDropdownCancel hook
+        const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+        if (column) {
+          const strategy = this.editorRegistry.getStrategy(column) as InteractiveEditorStrategy;
+          strategy.onDropdownCancel?.(cell);
+        }
+      }
       this.render();
     });
 
@@ -625,19 +801,9 @@ export class CanvasTable implements CanvasTableAPI {
       this.render();
     });
 
-    this.eventEmitter.on(Events.DATE_SELECT, (_cell: unknown, _value: unknown) => {
-      const cell = _cell as CellPosition;
-      const value = _value as string;
-      const leafColumns = this.layoutManager.getLeafColumns();
-      const column = leafColumns[cell.columnIndex];
-
-      if (column) {
-        this.dataManager.updateCell(cell.rowIndex, column.key, value, getColumnField(column));
-      }
-
+    this.eventEmitter.on(Events.DATE_SELECT, async (_cell: unknown, _value: unknown) => {
+      await this.handleEditorCommit(_cell as CellPosition, _value as string, this.props.onEditEnd);
       this.interactionManager.clearEditingState();
-      // 只修改数据，不需要重新计算布局
-      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -790,19 +956,9 @@ export class CanvasTable implements CanvasTableAPI {
       },
     );
 
-    this.eventEmitter.on(Events.EDIT_END, (_cell: unknown, _value: unknown) => {
-      const cell = _cell as CellPosition;
-      const value = _value;
-      const leafColumns = this.layoutManager.getLeafColumns();
-      const column = leafColumns[cell.columnIndex];
-
-      if (column) {
-        this.dataManager.updateCell(cell.rowIndex, column.key, value, getColumnField(column));
-      }
-
+    this.eventEmitter.on(Events.EDIT_END, async (_cell: unknown, _value: unknown) => {
+      await this.handleEditorCommit(_cell as CellPosition, _value, this.props.onEditEnd);
       this.interactionManager.clearEditingState();
-      // 编辑单元格只修改数据，不需要重新计算布局
-      this.refreshSummaryRowsAfterDataChange();
       this.render();
     });
 
@@ -833,10 +989,7 @@ export class CanvasTable implements CanvasTableAPI {
       onRowHeightChange: this.props.onRowHeightChange,
       onColumnReorder: this.props.onColumnReorder,
       onEditStart: this.props.onEditStart,
-      onEditEnd: this.props.onEditEnd,
       onExpand: this.props.onExpand,
-      onCheckboxChange: this.props.onCheckboxChange,
-      onRadioChange: this.props.onRadioChange,
       onButtonClick: this.props.onButtonClick,
       onColumnHide: this.props.onColumnHide,
       onColumnShow: this.props.onColumnShow,
@@ -939,6 +1092,273 @@ export class CanvasTable implements CanvasTableAPI {
     this.editorManager.updatePosition();
   }
 
+  private normalizeValidationResult(result: ValidateResult): {
+    valid: boolean;
+    message?: string;
+    level: "error" | "warning";
+  } {
+    if (result === true) {
+      return { valid: true, level: "error" };
+    }
+
+    if (result === false) {
+      return { valid: false, message: "Invalid value", level: "error" };
+    }
+
+    if (typeof result === "string") {
+      return { valid: false, message: result || "Invalid value", level: "error" };
+    }
+
+    // object result — undefined/null 意味着 async validator 无显式返回值（校验通过无问题）
+    if (!result || typeof result !== "object") {
+      return { valid: true, level: "error" };
+    }
+
+    const message = result.message || (result.valid ? undefined : "Invalid value");
+    return {
+      valid: result.valid,
+      message,
+      level: result.level ?? "error",
+    };
+  }
+
+  private async handleValidation(
+    cell: CellPosition,
+    column: Column,
+    value: unknown,
+  ): Promise<{ valid: boolean; issue: ValidationError | null }> {
+    const strategy = this.editorRegistry.getStrategy(column);
+    const columnValidator = column.validate ?? column.editor?.validate;
+    const strategyValidator = strategy.validate;
+    if (!columnValidator && !strategyValidator) return { valid: true, issue: null };
+
+    // 判断 validator 签名：column 级 (value, row, column) vs strategy 级 (cell, value, row, column)
+    const row = this.dataManager.getRows()[cell.rowIndex];
+    if (!row) return { valid: true, issue: null };
+
+    const rawResult: ValidateResult | Promise<ValidateResult> = columnValidator
+      ? columnValidator(value, row, column)
+      : strategyValidator!(cell, value, row, column);
+    const isAsync = isPromise(rawResult);
+    if (isAsync) {
+      this.addPendingValidation(cell);
+    }
+
+    const result = isAsync ? await rawResult : rawResult;
+    const normalized = this.normalizeValidationResult(result);
+    const issue =
+      normalized.message && (normalized.level === "warning" || !normalized.valid)
+        ? {
+            cell,
+            row,
+            column,
+            value,
+            message: normalized.message,
+            level: normalized.level,
+          }
+        : null;
+
+    if (isAsync) {
+      this.removePendingValidation(cell);
+    }
+
+    if (issue) {
+      const columnErrors = this.validationErrorRows.get(row) ?? new Map<string, ValidationError>();
+      columnErrors.set(column.key, issue);
+      this.validationErrorRows.set(row, columnErrors);
+      // Show tooltip immediately for both error and warning
+      this.forcedValidationTooltipCell = issue.cell;
+      // Auto-dismiss warning tooltip after 3 seconds (error persists until cleared)
+      if (issue.level === "warning") {
+        const warningCell = issue.cell;
+        if (this.warningTooltipTimeout) clearTimeout(this.warningTooltipTimeout);
+        this.warningTooltipTimeout = setTimeout(() => {
+          if (this.isDestroyed) return;
+          if (
+            this.forcedValidationTooltipCell &&
+            this.forcedValidationTooltipCell.rowIndex === warningCell.rowIndex &&
+            this.forcedValidationTooltipCell.columnIndex === warningCell.columnIndex
+          ) {
+            this.forcedValidationTooltipCell = null;
+            this.render();
+          }
+        }, 3000);
+      }
+      this.props.onValidationError?.(issue);
+      // 生命周期 hook：通知校验结果
+      if (issue.level === "error") {
+        strategy.onReject?.(cell, issue);
+      } else if (issue.level === "warning") {
+        strategy.onWarning?.(cell, issue);
+      }
+    } else {
+      this.deleteValidationError(row, column.key);
+    }
+
+    return {
+      valid: normalized.valid || normalized.level === "warning",
+      issue,
+    };
+  }
+
+  private addPendingValidation(cell: CellPosition): void {
+    const key = `${cell.rowIndex}-${cell.columnIndex}`;
+    this.pendingValidationCells.add(key);
+    this.startPendingAnimation();
+  }
+
+  private removePendingValidation(cell: CellPosition): void {
+    const key = `${cell.rowIndex}-${cell.columnIndex}`;
+    this.pendingValidationCells.delete(key);
+    if (this.pendingValidationCells.size === 0) {
+      this.stopPendingAnimation();
+    }
+  }
+
+  private startPendingAnimation(): void {
+    if (this.pendingAnimationFrame !== null) return;
+    const animate = () => {
+      if (this.pendingValidationCells.size > 0) {
+        this.render();
+        this.pendingAnimationFrame = requestAnimationFrame(animate);
+      } else {
+        this.pendingAnimationFrame = null;
+      }
+    };
+    this.pendingAnimationFrame = requestAnimationFrame(animate);
+  }
+
+  private stopPendingAnimation(): void {
+    if (this.pendingAnimationFrame !== null) {
+      cancelAnimationFrame(this.pendingAnimationFrame);
+      this.pendingAnimationFrame = null;
+    }
+  }
+
+  private deleteValidationError(row: Row, columnKey: string): void {
+    const columnErrors = this.validationErrorRows.get(row);
+    if (columnErrors) {
+      columnErrors.delete(columnKey);
+      if (columnErrors.size === 0) {
+        this.validationErrorRows.delete(row);
+      }
+    }
+    this.clearTooltipForValidation(row, columnKey);
+  }
+
+  private clearTooltipForValidation(row: Row | null, columnKey: string): void {
+    if (this.forcedValidationTooltipCell) {
+      const fRow = this.dataManager.getRows()[this.forcedValidationTooltipCell.rowIndex];
+      const fColumn = this.layoutManager.getLeafColumn(
+        this.forcedValidationTooltipCell.columnIndex,
+      );
+      if (fRow === row && fColumn?.key === columnKey) {
+        this.forcedValidationTooltipCell = null;
+      }
+    }
+  }
+
+  private async commitCellValue(
+    cell: CellPosition,
+    column: Column,
+    value: unknown,
+  ): Promise<boolean> {
+    const { valid } = await this.handleValidation(cell, column, value);
+    if (!valid) return false;
+
+    const row = this.dataManager.getRows()[cell.rowIndex];
+    this.dataManager.updateCell(cell.rowIndex, column.key, value, getColumnField(column));
+    this.refreshSummaryRowsAfterDataChange();
+    // 生命周期 hook：通知值已写入
+    const strategy = this.editorRegistry.getStrategy(column);
+    strategy.onCommit?.(cell, value, row!, column);
+    return true;
+  }
+
+  /**
+   * 统一的编辑器提交流程 — 交互式和 DOM 编辑器共用
+   *
+   * get column → await commitCellValue → if committed call callback → render
+   */
+  private async handleEditorCommit(
+    cell: CellPosition,
+    value: unknown,
+    callback?: (cell: CellPosition, value: any) => void,
+  ): Promise<boolean> {
+    const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+    if (!column) {
+      this.render();
+      return false;
+    }
+    const strategy = this.editorRegistry.getStrategy(column);
+    // 交互式编辑器：beforeInteract hook 拦截
+    if (strategy.isInteractive) {
+      const interactiveStrategy = strategy as InteractiveEditorStrategy;
+      if (interactiveStrategy.beforeInteract) {
+        const row = this.dataManager.getRows()[cell.rowIndex];
+        if (row && !interactiveStrategy.beforeInteract(cell, row, column)) {
+          this.render();
+          return false;
+        }
+      }
+    }
+    const committed = await this.commitCellValue(cell, column, value);
+    if (committed) {
+      callback?.(cell, value);
+    }
+    // DOM 编辑器关闭后立即同步渲染，避免一帧 placeholder 闪烁
+    this.performRender();
+    this.scheduledRender = null;
+    return committed;
+  }
+
+  private async validateEditorCommit(cell: CellPosition, value: unknown): Promise<boolean> {
+    const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+    if (!column) return true;
+
+    const { valid } = await this.handleValidation(cell, column, value);
+    if (valid) {
+      this.clearValidationErrorForCell(cell);
+      return true;
+    }
+
+    this.render();
+    return false;
+  }
+
+  private clearValidationErrorForCell(cell: CellPosition): void {
+    const row = this.dataManager.getRows()[cell.rowIndex];
+    const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+    if (row && column) {
+      this.deleteValidationError(row, column.key);
+    }
+    this.render();
+  }
+
+  private buildVisibleValidationErrorIndex(): Map<string, ValidationError> {
+    const index = new Map<string, ValidationError>();
+    const rows = this.dataManager.getRows();
+    const visibleRange = this.layoutManager.getVisibleRange();
+    const leafColumns = this.layoutManager.getLeafColumns();
+
+    for (let rowIndex = visibleRange.startRow; rowIndex <= visibleRange.endRow; rowIndex++) {
+      const row = rows[rowIndex];
+      if (!row) continue;
+      const columnErrors = this.validationErrorRows.get(row);
+      if (!columnErrors) continue;
+
+      for (let columnIndex = 0; columnIndex < leafColumns.length; columnIndex++) {
+        const column = leafColumns[columnIndex];
+        if (!column) continue;
+        const error = columnErrors.get(column.key);
+        if (error) {
+          index.set(`${rowIndex}-${columnIndex}`, error);
+        }
+      }
+    }
+    return index;
+  }
+
   private render(): void {
     if (this.isDestroyed) return;
 
@@ -1020,6 +1440,8 @@ export class CanvasTable implements CanvasTableAPI {
         hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
         progressDragState: interactionState.progressDragState,
         rowResizeState: interactionState.rowResizeState,
+        validationErrors: this.buildVisibleValidationErrorIndex(),
+        pendingValidations: this.pendingValidationCells,
       },
     );
 
@@ -1032,7 +1454,35 @@ export class CanvasTable implements CanvasTableAPI {
       scrollbarState,
     );
 
-    if (interactionState.tooltip) {
+    const validationTooltipCell = this.forcedValidationTooltipCell ?? interactionState.hoveredCell;
+    const validationTooltip = this.getValidationTooltip(
+      validationTooltipCell,
+      scrollState.scrollLeft,
+      scrollState.scrollTop,
+    );
+    if (validationTooltip && interactionState.tooltip) {
+      // 同一单元格同时有校验提示和普通 tooltip → 合并显示
+      const normalCell = interactionState.tooltip.cell;
+      const isSameCell =
+        validationTooltip.cell.rowIndex === normalCell.rowIndex &&
+        validationTooltip.cell.columnIndex === normalCell.columnIndex;
+      const validationText =
+        validationTooltip.content.type === "text" ? validationTooltip.content.text : "";
+      if (isSameCell && interactionState.tooltip.content.type === "text") {
+        const normalText = interactionState.tooltip.content.text;
+        this.renderer.renderTooltip({
+          ...validationTooltip,
+          content: {
+            type: "text",
+            text: validationText + "\n" + normalText,
+          },
+        });
+      } else {
+        this.renderer.renderTooltip(validationTooltip);
+      }
+    } else if (validationTooltip) {
+      this.renderer.renderTooltip(validationTooltip);
+    } else if (interactionState.tooltip) {
       this.renderer.renderTooltip(interactionState.tooltip);
     }
 
@@ -1187,18 +1637,121 @@ export class CanvasTable implements CanvasTableAPI {
     this.render();
   }
 
-  updateCell(rowIndex: number, column: string, value: unknown): void {
-    const change = this.dataManager.updateCell(rowIndex, column, value);
+  async updateCell(rowIndex: number, column: string, value: unknown): Promise<void> {
+    const columnDef = this.layoutManager.getColumnByKey(column);
+    const columnIndex = this.layoutManager.getLeafColumnIndexByKey(column);
+    if (columnDef && columnIndex !== null) {
+      if (!(await this.commitCellValue({ rowIndex, columnIndex }, columnDef, value))) {
+        this.render();
+        return;
+      }
+    } else {
+      const change = this.dataManager.updateCell(rowIndex, column, value);
+      this.eventEmitter.emit(Events.CHANGE, [change]);
+      this.refreshSummaryRowsAfterDataChange();
+      this.render();
+      return;
+    }
+
+    const row = this.dataManager.getRows()[rowIndex];
+    const dataField = getColumnField(columnDef);
+    const change = {
+      type: "update" as const,
+      rowIndex,
+      column: dataField,
+      newValue: row?.data[dataField],
+    };
     this.eventEmitter.emit(Events.CHANGE, [change]);
-    this.refreshSummaryRowsAfterDataChange();
     this.render();
   }
 
-  updateRow(rowIndex: number, data: Record<string, unknown>): void {
+  async updateRow(rowIndex: number, data: Record<string, unknown>): Promise<void> {
+    const leafColumns = this.layoutManager.getLeafColumns();
+    for (let columnIndex = 0; columnIndex < leafColumns.length; columnIndex++) {
+      const column = leafColumns[columnIndex];
+      if (!column) continue;
+
+      const field = getColumnField(column);
+      const hasFieldValue = Object.prototype.hasOwnProperty.call(data, field);
+      const hasKeyValue = Object.prototype.hasOwnProperty.call(data, column.key);
+      if (!hasFieldValue && !hasKeyValue) {
+        continue;
+      }
+
+      const value = hasFieldValue ? data[field] : data[column.key];
+      const cell = { rowIndex, columnIndex };
+      const validation = await this.handleValidation(cell, column, value);
+
+      if (!validation.valid) {
+        this.render();
+        return;
+      }
+    }
+
     const changes = this.dataManager.updateRow(rowIndex, data);
     this.eventEmitter.emit(Events.CHANGE, changes);
     this.refreshSummaryRowsAfterDataChange();
     this.render();
+  }
+
+  getValidationErrors(): ValidationError[] {
+    const errors: ValidationError[] = [];
+    const rows = this.dataManager.getRows();
+    for (const row of rows) {
+      const columnErrors = this.validationErrorRows.get(row);
+      if (columnErrors) {
+        for (const error of columnErrors.values()) {
+          errors.push(error);
+        }
+      }
+    }
+    return errors;
+  }
+
+  getValidationError(cell: CellPosition): ValidationError | null {
+    const row = this.dataManager.getRows()[cell.rowIndex];
+    const column = this.layoutManager.getLeafColumn(cell.columnIndex);
+    if (!row || !column) return null;
+    return this.validationErrorRows.get(row)?.get(column.key) ?? null;
+  }
+
+  clearValidationErrors(): void {
+    this.validationErrorRows = new WeakMap();
+    this.forcedValidationTooltipCell = null;
+    this.render();
+  }
+
+  private getValidationTooltip(
+    hoveredCell: CellPosition | null,
+    scrollLeft: number,
+    scrollTop: number,
+  ): TooltipState | null {
+    if (!hoveredCell) {
+      return null;
+    }
+
+    const error = this.getValidationError(hoveredCell);
+    if (!error) {
+      return null;
+    }
+
+    const column = this.layoutManager.getLeafColumn(hoveredCell.columnIndex);
+    const cellPosition = this.layoutManager.getCellPosition(
+      hoveredCell.rowIndex,
+      hoveredCell.columnIndex,
+    );
+    const x =
+      column?.fixed === "left" || column?.fixed === "right"
+        ? cellPosition.x
+        : cellPosition.x - scrollLeft;
+
+    return {
+      cell: hoveredCell,
+      x,
+      y: cellPosition.y - scrollTop,
+      width: cellPosition.width,
+      content: { type: "text", text: error.message },
+    };
   }
 
   addRow(data: Record<string, unknown>, index?: number): void {
@@ -1957,6 +2510,11 @@ export class CanvasTable implements CanvasTableAPI {
 
     this.isDestroyed = true;
 
+    this.stopPendingAnimation();
+    if (this.warningTooltipTimeout) {
+      clearTimeout(this.warningTooltipTimeout);
+      this.warningTooltipTimeout = null;
+    }
     this.teardownAutoThemeDetection();
 
     if (this.resizeObserver) {

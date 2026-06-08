@@ -67,8 +67,8 @@ const columns: Column[] = [
 ];
 
 const rows: Row[] = [
-  { id: 'row-1', data: { id: 1, name: '张三', age: 28, department: '技术部' } },
-  { id: 'row-2', data: { id: 2, name: '李四', age: 32, department: '市场部' } }
+  { data: { id: 1, name: '张三', age: 28, department: '技术部' } },
+  { data: { id: 2, name: '李四', age: 32, department: '市场部' } }
 ];
 
 const container = document.getElementById('table-container')!;
@@ -130,6 +130,7 @@ interface Column {
   filterable?: boolean;           // 是否可筛选
   editable?: boolean;             // 是否可编辑
   formatter?: (value: unknown) => string;  // 格式化函数
+  placeholder?: string;            // 空值占位提示（number 等列类型生效）
   render?: (value: unknown, row: Row, rowIndex: number) => CellRenderResult;  // 自定义渲染
   editRender?: (value: unknown, row: Row, rowIndex: number) => EditRenderResult;  // 编辑渲染
   children?: Column[];            // 子列（多级表头）
@@ -416,6 +417,66 @@ interface Column {
 }
 ```
 
+#### 编辑校验
+
+列可以通过 `validate` 限制提交值。校验失败时不会写入 `row.data`，单元格会显示错误边框，悬浮错误单元格会显示错误信息，并触发 `onValidationError`。
+
+`validate` 支持同步和异步两种方式。返回 `true` 表示通过，返回 `string`/`false` 表示失败，返回 `{ valid, message?, level? }` 对象可指定 warning 级别（值仍会被提交但显示黄色边框）。异步校验返回 `Promise<ValidateResult>`，等待期间单元格显示蓝色脉冲边框动画，DOM 编辑器会进入 disabled + loading 状态。
+
+**同步校验示例：**
+
+```typescript
+{
+  key: 'salary',
+  title: '薪资',
+  type: 'number',
+  editable: true,
+  validate: (value, row, column) => {
+    const salary = Number(value);
+    if (!Number.isFinite(salary)) return '薪资必须是数字';
+    if (salary < 0) return '薪资不能小于 0';
+    if (salary > 1000000) return '薪资不能超过 100 万';
+    // warning 级别：值会被提交，但显示黄色边框提示
+    if (salary >= 500000) {
+      return { valid: true, level: 'warning', message: '高薪资，请确认' };
+    }
+    return true;
+  }
+}
+```
+
+**异步校验示例：**
+
+```typescript
+{
+  key: 'email',
+  title: '邮箱',
+  editable: true,
+  validate: async (value, row, column) => {
+    const email = String(value);
+    if (!email.includes('@')) return '邮箱格式不正确';
+    // 模拟远程校验
+    await new Promise(r => setTimeout(r, 300));
+    if (email.endsWith('@example.com')) return '该邮箱后缀已被占用';
+    return true;
+  }
+}
+```
+
+也可以通过 API 查询或清理校验错误：
+
+```typescript
+const errors = table.getValidationErrors();
+const salaryError = table.getValidationError({ rowIndex: 0, columnIndex: 3 });
+table.clearValidationErrors();
+```
+
+`updateCell` 和 `updateRow` 现在返回 `Promise<void>`，异步校验完成后才会 resolve：
+
+```typescript
+await table.updateCell(0, 'email', 'test@example.com');
+```
+
 #### 图片列
 
 ```typescript
@@ -493,7 +554,7 @@ interface Column {
 interface CellInfo {
   rowIndex: number;      // 行索引
   columnIndex: number;   // 列索引
-  row: Row;              // 行数据对象（包含 id, data, children 等）
+  row: Row;              // 行数据对象（包含 data, children 等，id 为可选字段）
   column: Column;        // 列配置对象（包含 key, title, width 等）
 }
 ```
@@ -524,7 +585,7 @@ const table = new CanvasTable(container, {
     const rowData = cell.row.data;
   },
   onCheckboxChange: (cell, checked) => {
-    console.log('复选框变化:', cell.row.id, checked);
+    console.log('复选框变化:', cell.row.data, checked);
   },
   onRadioChange: (cell, value) => {
     console.log('单选框变化:', cell.column.key, value);
@@ -594,11 +655,11 @@ const columns = table.getColumns();
 // 获取指定行数据
 const rowData = table.getRow(rowIndex);
 
-// 更新单元格数据
-table.updateCell(rowIndex, columnKey, value);
+// 更新单元格数据（异步，校验完成后 resolve）
+await table.updateCell(rowIndex, columnKey, value);
 
-// 更新整行数据
-table.updateRow(rowIndex, { name: '新名字', age: 30 });
+// 更新整行数据（异步，校验完成后 resolve）
+await table.updateRow(rowIndex, { name: '新名字', age: 30 });
 
 // 新增行
 table.addRow({ id: 999, name: '新用户' }, 2);  // 在索引 2 处插入
@@ -989,7 +1050,7 @@ const table = new CanvasTable(container, {
   enableRowPinning: true,
   rowPinnable: (row) => row.data.locked !== true,
   onRowPinChange: (row, position) => {
-    console.log('固定状态变化:', row.id, position); // 'top' | 'bottom' | null
+    console.log('固定状态变化:', row.data, position); // 'top' | 'bottom' | null
   }
 });
 ```

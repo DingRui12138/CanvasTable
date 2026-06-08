@@ -18,6 +18,7 @@ import {
 import { LayoutManager } from "../LayoutManager";
 import { DataManager } from "../DataManager";
 import { EventEmitter } from "../EventEmitter";
+import { EditorRegistry } from "../editors";
 import {
   DropdownPositionCalculator,
   DropdownPositionResult,
@@ -34,6 +35,7 @@ export interface HandlerContext {
   ctx: CanvasRenderingContext2D;
   expandColumnKey: string | null;
   locale: CanvasTableLocale;
+  editorRegistry: EditorRegistry;
 }
 
 // Event emitter type for interaction events
@@ -57,10 +59,10 @@ export interface InteractionEvents {
   radioChange: [CellInfo, unknown];
   switchChange: [CellInfo, boolean];
   buttonClick: [CellInfo, string | undefined];
-  selectChange: [CellInfo, unknown];
+  selectChange: [CellInfo, unknown, boolean];
   tagsChange: [CellInfo, string[], boolean];
   dropdownOpen: [];
-  dropdownClose: [];
+  dropdownClose: [CellPosition | null];
   dropdownHover: [];
   filterDropdownOpen: [];
   filterDropdownClose: [];
@@ -140,6 +142,10 @@ export abstract class BaseHandler {
 
   protected get allRows(): Row[] {
     return this.dataManager.getAllRows();
+  }
+
+  protected get editorRegistry(): EditorRegistry {
+    return this.context.editorRegistry;
   }
 
   // Shared utility methods

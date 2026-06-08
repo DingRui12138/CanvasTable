@@ -5,11 +5,11 @@
  * and scrolling to cells.
  */
 
-import { CellPosition } from "../../types";
+import { CellPosition, CellTypes } from "../../types";
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
 import { SelectionHandler } from "./SelectionHandler";
-import { resolveDisabled, getColumnField, getRenderResult } from "../../utils";
+import { getColumnField, getRenderResult } from "../../utils";
 import { TableEvents } from "../../constants/events";
 
 export class NavigationHandler extends BaseHandler {
@@ -92,10 +92,8 @@ export class NavigationHandler extends BaseHandler {
         const renderResult = getRenderResult(column, row, cell.rowIndex);
         const controlTypes = ["checkbox", "radio", "button", "switch"];
         if (renderResult.type && controlTypes.includes(renderResult.type)) {
-          if (renderResult.type === "switch" && renderResult.switch) {
-            if (!resolveDisabled(column.disabled, row, column)) {
-              // Auto update row.data
-              row.data[getColumnField(column)] = !renderResult.switch.checked;
+          if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
+            if (this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
               this.eventEmitter.emit(
                 TableEvents.SWITCH_CHANGE,
                 this.getCellInfo(cell)!,
@@ -109,10 +107,8 @@ export class NavigationHandler extends BaseHandler {
         }
 
         // Check editable
-        if (column.editable === false) return null;
-
-        // Check column disabled
-        if (resolveDisabled(column.disabled, row, column)) return null;
+        // Check canEdit (editable + disabled)
+        if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) return null;
 
         // Check input readonly
         if (renderResult.input?.readonly) return null;
@@ -164,19 +160,19 @@ export class NavigationHandler extends BaseHandler {
     }
 
     // Fall back to render result
-    if (renderResult.type === "select" && renderResult.select) {
+    if (renderResult.type === CellTypes.SELECT && renderResult.select) {
       return { type: "select", config: renderResult.select };
     }
 
-    if (renderResult.type === "tag" && renderResult.tags && renderResult.tags.editable) {
+    if (renderResult.type === CellTypes.TAG && renderResult.tags && renderResult.tags.editable) {
       return { type: "tags", config: renderResult.tags };
     }
 
-    if (renderResult.type === "date" && renderResult.date) {
+    if (renderResult.type === CellTypes.DATE && renderResult.date) {
       return { type: "date", config: renderResult.date };
     }
 
-    if (renderResult.type === "image" && renderResult.image) {
+    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
       return { type: "image", config: renderResult.image };
     }
 

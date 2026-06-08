@@ -20,14 +20,15 @@ describe('DataManager', () => {
       expect(dataManager.getRows().length).toBe(5);
     });
 
-    it('should process rows and add ids', async () => {
+    it('should process rows preserving user fields', async () => {
       const simpleRows: Row[] = [
-        { id: 'test-1', data: { id: 1, name: 'Test' } },
+        { data: { id: 1, name: 'Test' } },
       ];
       await dataManager.loadRows(simpleRows);
 
       const loadedRows = dataManager.getRows();
-      expect(loadedRows[0]!.id).toBeDefined();
+      expect(loadedRows[0]!.data.id).toBe(1);
+      expect(loadedRows[0]!.data.name).toBe('Test');
     });
   });
 
@@ -119,12 +120,12 @@ describe('DataManager', () => {
   describe('deleteRow', () => {
     it('should delete row by index', () => {
       const rowsBefore = dataManager.getRows();
-      const idToDelete = rowsBefore[1]!.id;
+      const deletedRow = rowsBefore[1]!;
       dataManager.deleteRow(1);
 
       const rows = dataManager.getRows();
       expect(rows.length).toBe(4);
-      expect(rows.find(r => r.id === idToDelete)).toBeUndefined();
+      expect(rows).not.toContain(deletedRow);
     });
   });
 
@@ -187,7 +188,7 @@ describe('DataManager', () => {
       const context = dataManager.getExportContext({ selectedOnly: true });
 
       expect(context.rows).toHaveLength(1);
-      expect(context.rows[0]!.row.id).toBe(currentRows[0]!.id);
+      expect(context.rows[0]!.row).toBe(currentRows[0]);
     });
   });
 

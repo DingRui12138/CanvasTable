@@ -33,6 +33,8 @@ export const zhCN: CanvasTableLocale = {
   cell: {
     selectPlaceholder: "请选择",
     datePlaceholder: "选择日期",
+    tagPlaceholder: "请选择标签",
+    numberPlaceholder: "—",
     buttonText: "Button",
   },
   image: {
@@ -80,6 +82,8 @@ export const enUS: CanvasTableLocale = {
   cell: {
     selectPlaceholder: "Select",
     datePlaceholder: "Select date",
+    tagPlaceholder: "Select tags",
+    numberPlaceholder: "—",
     buttonText: "Button",
   },
   image: {

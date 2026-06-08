@@ -10,13 +10,19 @@ export class TagsRenderer extends BaseCellRenderer {
   readonly type: CellType = "tag";
 
   render(context: CellRendererContext): CellRenderResult {
-    const { ctx, theme, x, y, width, height, value } = context;
+    const { ctx, theme, x, y, width, height, value, locale } = context;
 
     const config = value as TagsConfig;
     const padding = 8;
-    const { tags } = config;
 
-    if (!tags || tags.length === 0) {
+    if (!config.tags || config.tags.length === 0) {
+      const placeholder = config.placeholder ?? locale.cell.tagPlaceholder;
+      if (placeholder) {
+        ctx.fillStyle = theme.colors.placeholderText;
+        ctx.font = `${theme.font.size}px ${theme.font.family}`;
+        ctx.textBaseline = "middle";
+        ctx.fillText(placeholder, x + padding, y + height / 2);
+      }
       return { type: "tag", config };
     }
 
@@ -66,7 +72,7 @@ export class TagsRenderer extends BaseCellRenderer {
       }
 
       if (lineIndex === lines.length - 1) {
-        const remainingCount = tags.length - processedTags;
+        const remainingCount = config.tags.length - processedTags;
         if (remainingCount > 0) {
           const moreText = `+${remainingCount}`;
           const moreWidth = moreTagWidth(remainingCount);

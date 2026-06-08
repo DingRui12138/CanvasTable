@@ -3,6 +3,7 @@ import {
   Row,
   TableTheme,
   CellType,
+  CellTypes,
   VisibleRange,
   CellPosition,
   CellRange,
@@ -32,6 +33,7 @@ import {
   RowBand,
   CanvasTableLocale,
   ComputedSummaryRow,
+  ValidationError,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
@@ -133,6 +135,8 @@ export class Renderer {
   private currentProgressDragState: import("../types").InteractionState["progressDragState"] =
     undefined;
   private currentRowResizeState: import("../types").InteractionState["rowResizeState"] = undefined;
+  private currentValidationErrors: Map<string, ValidationError> = new Map();
+  private currentPendingValidations: Set<string> = new Set();
 
   // 渲染缓存相关
   private renderCache: RenderCache | null = null;
@@ -337,6 +341,8 @@ export class Renderer {
       hoveredButtonIndex?: number;
       progressDragState?: import("../types").InteractionState["progressDragState"];
       rowResizeState?: import("../types").InteractionState["rowResizeState"];
+      validationErrors?: Map<string, ValidationError>;
+      pendingValidations?: Set<string>;
     },
   ): void {
     this.currentSwitchAnimations = options.switchAnimations;
@@ -346,6 +352,8 @@ export class Renderer {
     this.currentHoveredButtonIndex = options.hoveredButtonIndex ?? -1;
     this.currentProgressDragState = options.progressDragState;
     this.currentRowResizeState = options.rowResizeState;
+    this.currentValidationErrors = options.validationErrors ?? new Map();
+    this.currentPendingValidations = options.pendingValidations ?? new Set();
 
     // 开始性能监控帧
     this.beginFrame();
@@ -2112,6 +2120,27 @@ export class Renderer {
     this.ctx.lineWidth = this.theme.border.width;
     this.ctx.strokeRect(x, y, width, height);
 
+    const validationError = this.currentValidationErrors.get(`${rowIndex}-${colIndex}`);
+    if (validationError) {
+      const outlineWidth = Math.max(this.theme.border.width, 2);
+      const inset = outlineWidth / 2;
+      this.ctx.strokeStyle =
+        validationError.level === "warning"
+          ? (this.theme.colors.tagColors.warning ?? "#faad14")
+          : (this.theme.colors.tagColors.error ?? "#ff4d4f");
+      this.ctx.lineWidth = outlineWidth;
+      this.ctx.strokeRect(x + inset, y + inset, width - outlineWidth, height - outlineWidth);
+    } else if (this.currentPendingValidations.has(`${rowIndex}-${colIndex}`)) {
+      // Pending async validation — pulsing blue border
+      const outlineWidth = Math.max(this.theme.border.width, 2);
+      const inset = outlineWidth / 2;
+      const pulsePhase = (Date.now() % 1500) / 1500;
+      const alpha = 0.3 + 0.4 * Math.sin(pulsePhase * Math.PI * 2);
+      this.ctx.strokeStyle = `rgba(59, 130, 246, ${alpha})`;
+      this.ctx.lineWidth = outlineWidth;
+      this.ctx.strokeRect(x + inset, y + inset, width - outlineWidth, height - outlineWidth);
+    }
+
     // Apply disabled overlay
     if (isDisabled) {
       // Use appropriate overlay color based on theme
@@ -2147,6 +2176,11 @@ export class Renderer {
       text: this.formatValue(value, column, row),
       type: column.type ?? "text",
     };
+
+    // number 类型：将 column.placeholder 传入 renderResult，供占位符渲染使用
+    if (column.type === "number") {
+      renderResult.placeholder = column.placeholder ?? this.locale.cell.numberPlaceholder;
+    }
 
     if (column.render) {
       try {
@@ -2274,7 +2308,7 @@ export class Renderer {
 
       this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
-      if (type === "checkbox" && checkbox) {
+      if (type === CellTypes.CHECKBOX && checkbox) {
         this.measureRender("checkbox", () => {
           this.renderWithCellRenderer("checkbox", checkbox, x, y, width, height, {
             rowIndex,
@@ -2285,7 +2319,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "radio" && radio) {
+      if (type === CellTypes.RADIO && radio) {
         this.measureRender("radio", () => {
           this.renderWithCellRenderer("radio", radio, x, y, width, height, {
             rowIndex,
@@ -2296,7 +2330,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "button" && button) {
+      if (type === CellTypes.BUTTON && button) {
         let buttonHoverState: ButtonHoverState | undefined;
         if (rowIndex !== undefined && colIndex !== undefined && this.currentButtonHoverStates) {
           const cellKey = `${rowIndex}-${colIndex}`;
@@ -2316,7 +2350,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "buttons" && renderResult.buttons) {
+      if (type === CellTypes.BUTTONS && renderResult.buttons) {
         let hoveredButtonIndex = -1;
         if (rowIndex !== undefined && colIndex !== undefined) {
           const isCurrentCellHovered =
@@ -2337,7 +2371,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "switch" && renderResult.switch) {
+      if (type === CellTypes.SWITCH && renderResult.switch) {
         let switchAnimation: SwitchAnimationState | undefined;
         if (rowIndex !== undefined && colIndex !== undefined && this.currentSwitchAnimations) {
           const cellKey = `${rowIndex}-${colIndex}`;
@@ -2357,7 +2391,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "input" && input) {
+      if (type === CellTypes.INPUT && input) {
         this.measureRender("input", () => {
           this.renderWithCellRenderer("input", input, x, y, width, height, {
             rowIndex,
@@ -2368,7 +2402,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "select" && renderResult.select) {
+      if (type === CellTypes.SELECT && renderResult.select) {
         this.measureRender("select", () => {
           this.renderWithCellRenderer("select", renderResult.select!, x, y, width, height, {
             rowIndex,
@@ -2380,7 +2414,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "date" && renderResult.date) {
+      if (type === CellTypes.DATE && renderResult.date) {
         this.measureRender("date", () => {
           this.renderWithCellRenderer("date", renderResult.date!, x, y, width, height, {
             rowIndex,
@@ -2391,7 +2425,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "tag" && tags) {
+      if (type === CellTypes.TAG && tags) {
         this.measureRender("tags", () => {
           this.renderWithCellRenderer("tag", tags, x, y, width, height, {
             rowIndex,
@@ -2402,7 +2436,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "image" && renderResult.image) {
+      if (type === CellTypes.IMAGE && renderResult.image) {
         const isHovered =
           rowIndex !== undefined &&
           colIndex !== undefined &&
@@ -2414,7 +2448,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "progress" && renderResult.progress) {
+      if (type === CellTypes.PROGRESS && renderResult.progress) {
         // 检查是否是正在拖拽的进度条
         const isDragging =
           rowIndex !== undefined &&
@@ -2438,7 +2472,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "rating" && renderResult.rating) {
+      if (type === CellTypes.RATING && renderResult.rating) {
         let starBounds: StrategyCellRenderResult["starBounds"] | undefined;
         this.measureRender("rating", () => {
           starBounds = this.renderWithCellRenderer(
@@ -2461,7 +2495,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "color" && renderResult.color) {
+      if (type === CellTypes.COLOR && renderResult.color) {
         this.measureRender("color", () => {
           this.renderWithCellRenderer("color", renderResult.color!, x, y, width, height, {
             rowIndex,
@@ -2473,7 +2507,7 @@ export class Renderer {
       }
 
       // JSX render handling - before customRender
-      if (type === "custom" && renderResult.jsxRender) {
+      if (type === CellTypes.CUSTOM && renderResult.jsxRender) {
         this.measureRender("jsx", () => {
           const elementTree = renderResult.jsxRender!();
           const measurementEngine = new MeasurementEngine(this.ctx);
@@ -2513,7 +2547,7 @@ export class Renderer {
         return;
       }
 
-      if (type === "custom" && renderResult.customRender) {
+      if (type === CellTypes.CUSTOM && renderResult.customRender) {
         this.measureRender("custom", () => {
           renderResult.customRender!({
             ctx: this.ctx,
@@ -2534,9 +2568,15 @@ export class Renderer {
         // 处理 link 类型的显示文本
         let displayText = text;
         let color = style?.color ?? this.theme.colors.cellText;
-        if (type === "link" && link) {
+        if (type === CellTypes.LINK && link) {
           displayText = link.text || link.link;
           color = style?.color ?? this.theme.colors.linkColor;
+        }
+
+        // number 类型：空值显示 placeholder
+        if (type === CellTypes.NUMBER && !displayText) {
+          displayText = renderResult.placeholder ?? this.locale.cell.numberPlaceholder;
+          color = this.theme.colors.placeholderText;
         }
 
         if (!displayText) return;
@@ -2628,12 +2668,12 @@ export class Renderer {
               textY = y + height / 2;
           }
 
-          if (type === "tag") {
+          if (type === CellTypes.TAG) {
             this.renderTag(displayText, textX, textY, fontSize);
           } else {
             this.ctx.fillText(displayText, textX, textY);
 
-            if (type === "link") {
+            if (type === CellTypes.LINK) {
               const textWidth = this.ctx.measureText(displayText).width;
               this.ctx.strokeStyle = color;
               this.ctx.lineWidth = 1;

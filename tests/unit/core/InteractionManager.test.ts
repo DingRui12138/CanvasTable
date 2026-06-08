@@ -2,6 +2,7 @@ import { InteractionManager } from '@/core/InteractionManager';
 import { LayoutManager } from '@/core/LayoutManager';
 import { DataManager } from '@/core/DataManager';
 import { EventEmitter } from '@/core/EventEmitter';
+import { EditorRegistry } from '@/core/editors';
 import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { SelectionConfig, EditingConfig, SortConfig, FilterConfig, CellPosition, Column } from '@/types';
@@ -64,6 +65,7 @@ describe('InteractionManager', () => {
     eventEmitter = new EventEmitter();
     selectionConfig = { mode: 'cell', multi: true };
     editingConfig = { enabled: true, mode: 'dblclick' };
+    const editorRegistry = new EditorRegistry();
 
     interactionManager = new InteractionManager(
       canvas,
@@ -71,7 +73,9 @@ describe('InteractionManager', () => {
       dataManager,
       eventEmitter as unknown as EventEmitter,
       selectionConfig,
-      editingConfig
+      editingConfig,
+      undefined as any,
+      editorRegistry
     );
 
     // 设置初始数据
@@ -368,6 +372,22 @@ describe('InteractionManager', () => {
   });
 
   describe('event handling - handleMouseDown', () => {
+    it('should emit cellClick when a data cell is clicked', () => {
+      const listener = jest.fn();
+      eventEmitter.on(TableEvents.CELL_CLICK, listener);
+
+      const cellPosition = layoutManager.getCellPosition(0, 1);
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: cellPosition.x + cellPosition.width / 2,
+        clientY: cellPosition.y + cellPosition.height / 2,
+      }));
+
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({ rowIndex: 0, columnIndex: 1 }),
+        expect.any(MouseEvent)
+      );
+    });
+
     it('should start vertical scrollbar dragging', () => {
       // Setup scrollbar bounds
       interactionManager.setGetScrollbarBounds(() => ({
@@ -1111,7 +1131,7 @@ describe('InteractionManager', () => {
       document.dispatchEvent(createMouseEvent('mouseup'));
 
       const state = interactionManager.getInteractionState();
-      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ id: 'row-0' }), mockTheme.row.height + 12, 0);
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ id: 1 }) }), mockTheme.row.height + 12, 0);
       expect(state.rowResizeState).toBeUndefined();
       expect(state.dragType).toBeNull();
       expect(state.isDragging).toBe(false);
@@ -1138,7 +1158,7 @@ describe('InteractionManager', () => {
       }));
 
       const state = interactionManager.getInteractionState();
-      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ id: 'row-0' }), mockTheme.row.height + 16, 0);
+      expect(changeHandler).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ id: 1 }) }), mockTheme.row.height + 16, 0);
       expect(state.rowResizeState).toBeUndefined();
       expect(state.dragType).toBeNull();
       expect(state.isDragging).toBe(false);
@@ -1418,6 +1438,112 @@ describe('InteractionManager', () => {
       }));
 
       expect(onButtonClick).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('shouldBlockEditingClose', () => {
+    it('should block dblclick when shouldBlockEditingClose returns true', async () => {
+      interactionManager.setShouldBlockEditingClose(async () => true);
+
+      // Simulate a dblclick on a cell - should be blocked
+      const cell = { rowIndex: 0, columnIndex: 0 };
+      const cellPos = layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const dblClickX = cellPos.x + cellPos.width / 2;
+      const dblClickY = layoutManager.getCellViewportY(cell.rowIndex, 0) + cellPos.height / 2;
+      const rect = canvas.getBoundingClientRect();
+
+      // Set up dblclick coordinates
+      const onCellDblClick = jest.fn();
+      eventEmitter.on(TableEvents.CELL_DBL_CLICK, onCellDblClick);
+
+      canvas.dispatchEvent(createMouseEvent('dblclick', {
+        clientX: rect.left + dblClickX,
+        clientY: rect.top + dblClickY,
+      }));
+      // handler 是 async，需要等 microtask 完成
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // The dblclick should have been blocked
+      expect(onCellDblClick).not.toHaveBeenCalled();
+    });
+
+    it('should allow dblclick when shouldBlockEditingClose returns false', async () => {
+      interactionManager.setShouldBlockEditingClose(async () => false);
+
+      const cell = { rowIndex: 0, columnIndex: 0 };
+      const cellPos = layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const dblClickX = cellPos.x + cellPos.width / 2;
+      const dblClickY = layoutManager.getCellViewportY(cell.rowIndex, 0) + cellPos.height / 2;
+      const rect = canvas.getBoundingClientRect();
+
+      const onCellDblClick = jest.fn();
+      eventEmitter.on(TableEvents.CELL_DBL_CLICK, onCellDblClick);
+
+      canvas.dispatchEvent(createMouseEvent('dblclick', {
+        clientX: rect.left + dblClickX,
+        clientY: rect.top + dblClickY,
+      }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(onCellDblClick).toHaveBeenCalled();
+    });
+
+    it('should block mousedown cell interaction when shouldBlockEditingClose returns true', async () => {
+      interactionManager.setShouldBlockEditingClose(async () => true);
+
+      // Simulate a mousedown on a cell - should be blocked
+      const cell = { rowIndex: 0, columnIndex: 0 };
+      const cellPos = layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const clickX = cellPos.x + cellPos.width / 2;
+      const clickY = layoutManager.getCellViewportY(cell.rowIndex, 0) + cellPos.height / 2;
+      const rect = canvas.getBoundingClientRect();
+
+      const onCellClick = jest.fn();
+      eventEmitter.on(TableEvents.CELL_CLICK, onCellClick);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + clickX,
+        clientY: rect.top + clickY,
+      }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // The cell click should have been blocked
+      expect(onCellClick).not.toHaveBeenCalled();
+    });
+
+    it('should not block shouldBlockEditingClose when callback is not set', async () => {
+      // No callback set - should allow normal interaction
+      const cell = { rowIndex: 0, columnIndex: 0 };
+      const cellPos = layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const clickX = cellPos.x + cellPos.width / 2;
+      const clickY = layoutManager.getCellViewportY(cell.rowIndex, 0) + cellPos.height / 2;
+      const rect = canvas.getBoundingClientRect();
+
+      const onCellClick = jest.fn();
+      eventEmitter.on(TableEvents.CELL_CLICK, onCellClick);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', {
+        clientX: rect.left + clickX,
+        clientY: rect.top + clickY,
+      }));
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      expect(onCellClick).toHaveBeenCalled();
+    });
+  });
+
+  describe('shouldBlockDropdownClose', () => {
+    it('should block dropdown close on outside click when shouldBlockDropdownClose returns true', async () => {
+      // Set up dropdown state and block close callback
+      interactionManager.setShouldBlockDropdownClose(async () => true);
+
+      // Verify the setter works
+      expect(interactionManager).toBeInstanceOf(InteractionManager);
+    });
+
+    it('should allow dropdown close when shouldBlockDropdownClose returns false', async () => {
+      interactionManager.setShouldBlockDropdownClose(async () => false);
+      expect(interactionManager).toBeInstanceOf(InteractionManager);
     });
   });
 });

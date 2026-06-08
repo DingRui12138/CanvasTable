@@ -196,14 +196,27 @@ function initDemo() {
     { key: 'avatar', title: '头像', width: 80, align: 'center', fixed: 'left', editable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'image', image: { src: row.data.avatar, width: 24, height: 24, scaleWithRowHeight: false, circle: true, clickable: true, hoverable: true } }; } },
     { key: 'photos', title: '相册', width: 180, align: 'center', editable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'image', image: { images: row.data.photos, width: 32, height: 32, scaleWithRowHeight: false, borderRadius: 4, gap: 4, maxCount: 9, clickable: true, hoverable: true } }; } },
     { key: 'basicInfo', title: '基本信息', children: [
-      { key: 'age', title: '年龄', width: 60, type: 'number', sortable: true, filterable: true, align: 'center', disabled: isRowDisabled },
+      { key: 'age', title: '年龄', width: 60, type: 'number', sortable: true, filterable: true, editable: true, align: 'center', disabled: isRowDisabled, validate: function(value) {
+        var age = Number(value);
+        if (!Number.isFinite(age)) return '年龄必须是数字';
+        if (age < 18) return '年龄不能小于 18';
+        if (age > 60) return '年龄不能大于 60';
+        if (age >= 50) return { valid: true, level: 'warning', message: '年龄在 50-60 之间，请确认是否符合入库要求' };
+        return true;
+      } },
       { key: 'department', title: '部门', width: 100, sortable: true, filterable: true, editable: true, disabled: isRowDisabled }
     ]},
     { key: 'joinDate', title: '入职日期', width: 120, type: 'date', sortable: true, filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'date', date: { value: value, format: 'YYYY-MM-DD' } }; } },
     { key: 'email', title: '邮箱', width: 180, type: 'link', filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'link', link: { text: value, link: 'mailto:' + value } }; } },
     { key: 'website', title: '个人主页', width: 150, type: 'link', filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'link', link: { text: value, link: value } }; } },
     { key: 'income', title: '收入信息', children: [
-      { key: 'salary', title: '基本薪资', width: 100, type: 'number', sortable: true, filterable: true, disabled: isRowDisabled, formatter: function(value) { return '¥' + value.toLocaleString(); } },
+      { key: 'salary', title: '基本薪资', width: 100, type: 'number', sortable: true, filterable: true, editable: true, disabled: isRowDisabled, formatter: function(value) { return '¥' + value.toLocaleString(); }, validate: function(value) {
+        var salary = Number(value);
+        if (!Number.isFinite(salary)) return '薪资必须是数字';
+        if (salary < 0) return '薪资不能小于 0';
+        if (salary > 1000000) return '薪资不能超过 100 万';
+        return true;
+      } },
       { key: 'bonus', title: '奖金', width: 80, type: 'number', sortable: true, filterable: true, disabled: isRowDisabled, formatter: function(value) { return '¥' + value.toLocaleString(); } }
     ]},
     { key: 'status', title: '状态', width: 100, type: 'tag', sortable: true, filterable: true, disabled: isRowDisabled, render: function(value) {
@@ -606,6 +619,10 @@ function initDemo() {
     onSort: function(sort) { console.log('Sort changed:', sort); },
     onFilter: function(filters) { console.log('Filter changed:', filters); },
     onEditEnd: function(cell, value) { console.log('Edit ended:', cell, value); },
+    onValidationError: function(error) {
+      var title = error.level === 'warning' ? '校验警告' : '校验失败';
+      console[error.level === 'warning' ? 'warn' : 'error'](title, error);
+    },
     onCheckboxChange: function(cell, checked) { console.log('Checkbox changed:', cell, checked); },
     onRadioChange: function(cell, value) { console.log('Radio changed:', cell, value); },
     onButtonClick: function(cell, actionKey) { console.log('Button clicked:', cell, 'actionKey:', actionKey); alert('点击了第 ' + cell.rowIndex + ' 行的按钮，actionKey: ' + (actionKey || '未设置')); },

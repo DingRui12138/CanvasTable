@@ -293,7 +293,6 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
     const website = `https://example.com/users/${i + 1}`;
 
     rows.push({
-      id: `row-${i}`,
       data: {
         id: i + 1,
         name,
@@ -485,6 +484,12 @@ const columns: Column[] = [
     editable: true,
     fixed: "left",
     disabled: isRowDisabled,
+    validate: (value) => {
+      const name = String(value).trim();
+      if (!name) return "姓名不能为空";
+      if (name.length > 20) return "姓名不能超过 20 个字符";
+      return true;
+    },
     render: (value) => ({
       type: "custom" as CellType,
       customRender: (context: CustomRenderContext) => {
@@ -585,8 +590,23 @@ const columns: Column[] = [
         type: "number",
         sortable: true,
         filterable: true,
+        editable: true,
         align: "center",
         disabled: isRowDisabled,
+        validate: (value) => {
+          const age = Number(value);
+          if (!Number.isFinite(age)) return "年龄必须是数字";
+          if (age < 18) return "年龄不能小于 18";
+          if (age > 60) return "年龄不能大于 60";
+          if (age >= 50) {
+            return {
+              valid: true,
+              level: "warning",
+              message: "年龄在 50-60 之间，请确认是否符合入库要求",
+            };
+          }
+          return true;
+        },
       },
       {
         key: "department",
@@ -596,6 +616,30 @@ const columns: Column[] = [
         filterable: true,
         editable: true,
         disabled: isRowDisabled,
+        editRender: () => ({
+          type: "select",
+          select: {
+            options: [
+              { label: "技术部", value: "技术部" },
+              { label: "市场部", value: "市场部" },
+              { label: "销售部", value: "销售部" },
+              { label: "人事部", value: "人事部" },
+              { label: "财务部", value: "财务部" },
+            ],
+          },
+        }),
+        validate: (value) => {
+          const validDepartments = [
+            "技术部",
+            "市场部",
+            "销售部",
+            "人事部",
+            "财务部",
+          ];
+          if (!validDepartments.includes(String(value)))
+            return "部门必须是预选选项之一";
+          return true;
+        },
       },
     ],
   },
@@ -621,7 +665,16 @@ const columns: Column[] = [
     width: 180,
     type: "link",
     filterable: true,
+    editable: true,
     disabled: isRowDisabled,
+    validate: async (value) => {
+      const email = String(value);
+      if (!email.includes("@")) return "邮箱格式不正确，必须包含 @";
+      // 模拟异步远程校验：检查邮箱是否已被注册
+      await new Promise((r) => setTimeout(r, 300));
+      if (email.endsWith("@example.com")) return "该邮箱后缀已被占用";
+      return true;
+    },
     render: (value) => ({
       type: "link" as CellType,
       link: {
@@ -657,8 +710,16 @@ const columns: Column[] = [
         type: "number",
         sortable: true,
         filterable: true,
+        editable: true,
         disabled: isRowDisabled,
         formatter: (value) => "¥" + (value as number).toLocaleString(),
+        validate: (value) => {
+          const salary = Number(value);
+          if (!Number.isFinite(salary)) return "薪资必须是数字";
+          if (salary < 0) return "薪资不能小于 0";
+          if (salary > 1000000) return "薪资不能超过 100 万";
+          return true;
+        },
       },
       {
         key: "bonus",
@@ -667,8 +728,24 @@ const columns: Column[] = [
         type: "number",
         sortable: true,
         filterable: true,
+        editable: true,
         disabled: isRowDisabled,
         formatter: (value) => "¥" + (value as number).toLocaleString(),
+        validate: async (value) => {
+          const bonus = Number(value);
+          if (!Number.isFinite(bonus)) return "奖金必须是数字";
+          if (bonus < 0) return "奖金不能小于 0";
+          // 模拟异步远程校验：检查奖金是否超过公司上限
+          await new Promise((r) => setTimeout(r, 500));
+          if (bonus > 50000) {
+            return {
+              valid: false,
+              level: "warning",
+              message: `奖金 ¥${bonus.toLocaleString()} 超过公司上限 ¥50,000，请确认`,
+            };
+          }
+          return true;
+        },
       },
     ],
   },
@@ -715,6 +792,10 @@ const columns: Column[] = [
     align: "left",
     filterable: true,
     disabled: isRowDisabled,
+    validate: (value) => {
+      if (!value) return "请选择优先级";
+      return true;
+    },
     render: (_value, row) => ({
       type: "radio" as CellType,
       radio: {
@@ -736,6 +817,11 @@ const columns: Column[] = [
     align: "center",
     editable: true,
     disabled: isRowDisabled,
+    validate: (value) => {
+      const validValues = ["high", "medium", "low"];
+      if (!validValues.includes(String(value))) return "优先级必须是高/中/低";
+      return true;
+    },
     // 自定义渲染：显示图标 + 文字
     render: (value) => {
       const priorityConfig: Record<
@@ -783,7 +869,15 @@ const columns: Column[] = [
     width: 120,
     align: "center",
     filterable: true,
+    editable: true,
     disabled: isRowDisabled,
+    validate: (value) => {
+      const v = Number(value);
+      if (!Number.isFinite(v)) return "进度必须是数字";
+      if (v < 0) return "进度不能小于 0";
+      if (v > 100) return "进度不能超过 100";
+      return true;
+    },
     render: (value) => ({
       type: "progress" as CellType,
       progress: {
@@ -860,6 +954,19 @@ const columns: Column[] = [
     title: "仪表盘(可调)",
     width: 100,
     disabled: isRowDisabled,
+    validate: async (value) => {
+      const v = Number(value ?? 0);
+      // 模拟异步远程校验：仪表盘值超过 80 触发 warning
+      await new Promise((r) => setTimeout(r, 200));
+      if (v > 80) {
+        return {
+          valid: true,
+          level: "warning",
+          message: "仪表盘值超过 80%，请注意负载风险",
+        };
+      }
+      return true;
+    },
     render: (value) => ({
       type: "progress",
       progress: {
@@ -874,6 +981,12 @@ const columns: Column[] = [
     title: "圆环(可调)",
     width: 80,
     disabled: isRowDisabled,
+    validate: (value) => {
+      const v = Number(value ?? 0);
+      if (v < 0) return "圆环值不能小于 0";
+      if (v > 100) return "圆环值不能超过 100";
+      return true;
+    },
     render: (value) => ({
       type: "progress",
       progress: {
@@ -904,6 +1017,19 @@ const columns: Column[] = [
     title: "音量",
     width: 100,
     disabled: isRowDisabled,
+    validate: async (value) => {
+      const v = Number(value ?? 0);
+      // 模拟异步远程校验：音量超过 80 时发出 warning
+      await new Promise((r) => setTimeout(r, 150));
+      if (v > 80) {
+        return {
+          valid: true,
+          level: "warning",
+          message: "音量超过 80%，长时间可能影响听力",
+        };
+      }
+      return true;
+    },
     render: (value) => ({
       type: "progress",
       progress: {
@@ -921,6 +1047,19 @@ const columns: Column[] = [
     type: "rating",
     align: "center",
     disabled: isRowDisabled,
+    validate: (value) => {
+      const v = Number(value ?? 0);
+      if (v < 0) return "评分不能小于 0";
+      if (v > 5) return "评分不能超过 5";
+      if (v <= 1) {
+        return {
+          valid: true,
+          level: "warning",
+          message: "评分过低（≤1），请确认是否准确",
+        };
+      }
+      return true;
+    },
     render: (value) => ({
       type: "rating",
       rating: {
@@ -958,6 +1097,11 @@ const columns: Column[] = [
     sortable: false,
     filterable: true,
     disabled: isRowDisabled,
+    validate: (value) => {
+      const skills = Array.isArray(value) ? value : [];
+      if (skills.length > 10) return "技能标签最多选择 10 个";
+      return true;
+    },
     render: (value, row, column, rowIndex) => {
       if (!Array.isArray(value) && rowIndex === 0) {
         console.log("value is not an array:", value);
@@ -1014,6 +1158,7 @@ const columns: Column[] = [
           options,
           selectedValues: skills,
           multiple: true,
+          placeholder: "请选择技能标签",
         },
       };
     },
@@ -1105,7 +1250,7 @@ const columns: Column[] = [
     fixed: "right",
     disabled: isRowDisabled,
     render: (_value, row) => {
-      const rowIndex = parseInt(row.id.replace("row-", ""));
+      const rowIndex = (row.data.id as number) - 1;
       const isEven = rowIndex % 2 === 0;
       const isAdmin = (row.data as { role?: string }).role === "admin";
 
@@ -1287,7 +1432,12 @@ function generateComplexColumns(): Column[] {
           key: "sales-phone",
           title: "手机",
           children: [
-            { key: "sales-phone-name", field: "name", title: "名称", width: 100 },
+            {
+              key: "sales-phone-name",
+              field: "name",
+              title: "名称",
+              width: 100,
+            },
             {
               key: "sales-phone-sold",
               field: "soldQuantity",
@@ -1315,7 +1465,12 @@ function generateComplexColumns(): Column[] {
           key: "sales-laptop",
           title: "电脑",
           children: [
-            { key: "sales-laptop-name", field: "name", title: "名称", width: 100 },
+            {
+              key: "sales-laptop-name",
+              field: "name",
+              title: "名称",
+              width: 100,
+            },
             {
               key: "sales-laptop-sold",
               field: "soldQuantity",
@@ -1343,7 +1498,12 @@ function generateComplexColumns(): Column[] {
           key: "sales-accessory",
           title: "配件",
           children: [
-            { key: "sales-accessory-name", field: "name", title: "名称", width: 100 },
+            {
+              key: "sales-accessory-name",
+              field: "name",
+              title: "名称",
+              width: 100,
+            },
             {
               key: "sales-accessory-sold",
               field: "soldQuantity",
@@ -1419,7 +1579,6 @@ function generateComplexData(count: number, seed: number = DATA_SEED): Row[] {
       ["张", "李", "王", "刘", "陈"][i % 5]! +
       ["伟", "芳", "娜", "敏", "静"][i % 5]!;
     rows.push({
-      id: `row-${i}`,
       data: {
         id: i + 1,
         firstName: name.charAt(0),
@@ -1494,7 +1653,6 @@ function generate1000ColumnsData(count: number): Row[] {
     }
     data.status = i % 3 === 0 ? "正常" : "异常";
     rows.push({
-      id: `row-${i}`,
       data,
     });
   }
@@ -1503,7 +1661,6 @@ function generate1000ColumnsData(count: number): Row[] {
 
 const container = document.getElementById("table-container")!;
 const exampleWindow = window as ExampleWindow;
-
 const table = new CanvasTable(container, {
   rows: generateData(100),
   columns,
@@ -1656,31 +1813,10 @@ const table = new CanvasTable(container, {
   },
   onEditEnd: (cell, value) => {
     console.log("Edit ended:", cell, value);
-    const rowIndex = cell.rowIndex;
-    const leafColumns = [
-      "selected",
-      "id",
-      "name",
-      "age",
-      "department",
-      "salary",
-      "bonus",
-      "joinDate",
-      "status",
-      "skills",
-      "radioValue",
-      "remark",
-      "level",
-      "actions",
-      "score",
-    ];
-    const columnKey = leafColumns[cell.columnIndex];
-    if (columnKey === "level") {
-      const row = table.getRow(cell.rowIndex);
-      if (row) {
-        row.data.level = value as string;
-      }
-    }
+  },
+  onValidationError: (error) => {
+    const title = error.level === "warning" ? "校验警告" : "校验失败";
+    console[error.level === "warning" ? "warn" : "error"](title, error);
   },
   onCheckboxChange: (cell, checked) => {
     console.log("Checkbox changed:", cell, checked);
@@ -1857,7 +1993,8 @@ localeDisplay.textContent = `(中文)`;
 document.getElementById("toggleLocale")!.addEventListener("click", () => {
   currentLocale = currentLocale === "zh-CN" ? "en-US" : "zh-CN";
   table.setLocale(currentLocale);
-  localeDisplay.textContent = currentLocale === "zh-CN" ? `(中文)` : `(English)`;
+  localeDisplay.textContent =
+    currentLocale === "zh-CN" ? `(中文)` : `(English)`;
   console.log("Locale changed to:", currentLocale);
 });
 
@@ -2145,7 +2282,6 @@ function generateMergedCellsData(seed: number = DATA_SEED): {
           const q4 = Math.floor(random() * 50) + 50;
 
           rows.push({
-            id: `row-${id}`,
             data: {
               id: id,
               region: regions[r],

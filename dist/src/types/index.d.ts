@@ -1,5 +1,25 @@
 import type { CTElement } from "../core/jsx/types";
 export type CellType = "text" | "number" | "boolean" | "link" | "tag" | "date" | "custom" | "checkbox" | "radio" | "button" | "buttons" | "input" | "select" | "switch" | "image" | "progress" | "rating" | "color";
+export declare const CellTypes: {
+    TEXT: CellType;
+    NUMBER: CellType;
+    BOOLEAN: CellType;
+    LINK: CellType;
+    TAG: CellType;
+    DATE: CellType;
+    CUSTOM: CellType;
+    CHECKBOX: CellType;
+    RADIO: CellType;
+    BUTTON: CellType;
+    BUTTONS: CellType;
+    INPUT: CellType;
+    SELECT: CellType;
+    SWITCH: CellType;
+    IMAGE: CellType;
+    PROGRESS: CellType;
+    RATING: CellType;
+    COLOR: CellType;
+};
 export type SortDirection = "asc" | "desc" | "none";
 export type FixedType = "left" | "right" | false;
 export type HorizontalAlign = "left" | "center" | "right";
@@ -41,6 +61,8 @@ export interface CanvasTableLocale {
     cell: {
         selectPlaceholder: string;
         datePlaceholder: string;
+        tagPlaceholder: string;
+        numberPlaceholder: string;
         buttonText: string;
     };
     image: {
@@ -100,6 +122,7 @@ export interface RenderResult {
     type?: CellType;
     style?: CellStyle;
     attributes?: CellAttributes;
+    placeholder?: string;
     checkbox?: CheckboxConfig;
     radio?: RadioConfig;
     button?: ButtonConfig;
@@ -155,6 +178,7 @@ export interface TagsConfig {
     selectedValues?: string[];
     maxRows?: number;
     multiple?: boolean;
+    placeholder?: string;
 }
 export interface CheckboxConfig {
     checked?: boolean;
@@ -385,10 +409,14 @@ export interface Column {
     type?: CellType;
     align?: HorizontalAlign;
     hidden?: boolean;
+    /** 值为空时显示的提示文字（仅对 text/number 等文字型列生效） */
+    placeholder?: string;
     render?: (value: unknown, row: Row, column: Column, rowIndex: number) => RenderResult;
     /** 编辑时使用的渲染函数，返回编辑器类型和配置 */
     editRender?: (value: unknown, row: Row, rowIndex: number) => EditRenderResult;
     formatter?: (value: unknown, row: Row, column: Column) => string;
+    /** 提交编辑值前的校验。返回 true 表示通过，返回 string/false/object 表示失败或警告。支持返回 Promise 实现异步校验。 */
+    validate?: (value: unknown, row: Row, column: Column) => ValidateResult | Promise<ValidateResult>;
     editor?: CellEditor;
     filter?: ColumnFilter;
     children?: Column[];
@@ -418,7 +446,7 @@ export interface CellMerge {
     colspan: number;
 }
 export interface Row {
-    id: string;
+    id?: string;
     data: Record<string, unknown>;
     children?: Row[];
     expanded?: boolean;
@@ -557,7 +585,7 @@ export interface CellEditor {
     max?: number;
     step?: number;
     placeholder?: string;
-    validate?: (value: unknown, row: Row, column: Column) => string | boolean;
+    validate?: (value: unknown, row: Row, column: Column) => ValidateResult | Promise<ValidateResult>;
 }
 export interface CellPosition {
     rowIndex: number;
@@ -566,6 +594,20 @@ export interface CellPosition {
 export interface CellInfo extends CellPosition {
     row: Row;
     column: Column;
+}
+export type ValidationLevel = "error" | "warning";
+export type ValidateResult = boolean | string | {
+    valid: boolean;
+    message?: string;
+    level?: ValidationLevel;
+};
+export interface ValidationError {
+    cell: CellPosition;
+    row: Row;
+    column: Column;
+    value: unknown;
+    message: string;
+    level: ValidationLevel;
 }
 export interface CellRange {
     start: CellPosition;
@@ -863,7 +905,7 @@ export type HistoryActionType = "update" | "add" | "delete";
 /** 更新操作历史数据 */
 export interface UpdateHistoryData {
     type: "update";
-    rowId: string;
+    row: Row;
     column: string;
     oldValue: unknown;
     newValue: unknown;
@@ -871,14 +913,14 @@ export interface UpdateHistoryData {
 /** 新增操作历史数据 */
 export interface AddHistoryData {
     type: "add";
-    rowId: string;
+    row: Row;
     rowIndex: number;
     rowData: Row;
 }
 /** 删除操作历史数据 */
 export interface DeleteHistoryData {
     type: "delete";
-    rowId: string;
+    row: Row;
     rowIndex: number;
     rowData: Row;
 }
@@ -928,6 +970,8 @@ export interface TableEventHandlers {
     onImageDelete?: (cell: CellPosition, deletedImage: string, index: number) => void;
     /** 懒加载触发回调 */
     onLoadMore?: (params: LoadMoreParams) => void;
+    /** 单元格校验失败回调 */
+    onValidationError?: (error: ValidationError) => void;
 }
 export type ThemeMode = "light" | "dark" | "auto";
 /**
@@ -1267,8 +1311,11 @@ export interface CanvasTableAPI {
     setSelectedCells(cells: CellPosition[]): void;
     setSelectedRows(rows: number[]): void;
     clearSelection(): void;
-    updateCell(rowIndex: number, column: string, value: unknown): void;
-    updateRow(rowIndex: number, data: Record<string, unknown>): void;
+    updateCell(rowIndex: number, column: string, value: unknown): Promise<void>;
+    updateRow(rowIndex: number, data: Record<string, unknown>): Promise<void>;
+    getValidationErrors(): ValidationError[];
+    getValidationError(cell: CellPosition): ValidationError | null;
+    clearValidationErrors(): void;
     addRow(data: Record<string, unknown>, index?: number): void;
     deleteRow(rowIndex: number): void;
     sort(configs: SortConfig[]): void;

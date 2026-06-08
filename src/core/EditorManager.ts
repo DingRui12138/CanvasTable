@@ -1,7 +1,8 @@
-import { CellPosition, CellInfo, InputConfig, TableTheme, Row } from "../types";
+import { CellPosition, CellInfo, InputConfig, TableTheme, Row, CanvasTableLocale } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { EventEmitter } from "./EventEmitter";
-import { resolveDisabled, getColumnField } from "../utils";
+import { resolveDisabled, getColumnField, isPromise } from "../utils";
+import { TableEvents } from "../constants/events";
 
 interface EditorEvents {
   editStart: [CellInfo, InputConfig?];
@@ -20,6 +21,7 @@ export class EditorManager {
   private layoutManager: LayoutManager;
   private eventEmitter: EventEmitter<EditorEvents>;
   private theme: TableTheme;
+  private locale: CanvasTableLocale;
   private getRows: () => Row[];
 
   private inputElement: HTMLInputElement | HTMLTextAreaElement | null = null;
@@ -27,7 +29,13 @@ export class EditorManager {
   private scrollLeft: number = 0;
   private scrollTop: number = 0;
   private onScrollCallback: ((deltaX: number, deltaY: number) => void) | null = null;
+  private beforeCommitCallback:
+    | ((cell: CellPosition, value: unknown) => boolean | Promise<boolean>)
+    | null = null;
+  private cancelCallback: ((cell: CellPosition) => void) | null = null;
   private wheelHandler: ((e: WheelEvent) => void) | null = null;
+  /** 当 shouldBlockEditingClose 路径已处理提交时，跳过后续的 handleBlur */
+  private skipNextBlur: boolean = false;
   private placeholderStyle: HTMLStyleElement | null = null;
   private scrollbarStyle: HTMLStyleElement | null = null;
 
@@ -37,17 +45,38 @@ export class EditorManager {
     layoutManager: LayoutManager,
     eventEmitter: EventEmitter<EditorEvents>,
     theme: TableTheme,
+    locale: CanvasTableLocale,
     getRows: () => Row[],
   ) {
     this.wrapper = wrapper;
     this.layoutManager = layoutManager;
     this.eventEmitter = eventEmitter;
     this.theme = theme;
+    this.locale = locale;
     this.getRows = getRows;
+  }
+
+  setLocale(locale: CanvasTableLocale): void {
+    this.locale = locale;
   }
 
   setOnScrollCallback(callback: (deltaX: number, deltaY: number) => void): void {
     this.onScrollCallback = callback;
+  }
+
+  setBeforeCommitCallback(
+    callback: (cell: CellPosition, value: unknown) => boolean | Promise<boolean>,
+  ): void {
+    this.beforeCommitCallback = callback;
+  }
+
+  setCancelCallback(callback: (cell: CellPosition) => void): void {
+    this.cancelCallback = callback;
+  }
+
+  /** 标记下一次 blur 事件应被跳过（由 shouldBlockEditingClose 路径已处理提交） */
+  markSkipNextBlur(): void {
+    this.skipNextBlur = true;
   }
 
   setTheme(theme: TableTheme): void {
@@ -76,9 +105,13 @@ export class EditorManager {
     };
   }
 
-  startEditing(cell: CellPosition, config?: InputConfig): void {
+  async startEditing(cell: CellPosition, config?: InputConfig): Promise<boolean> {
     if (this.inputElement) {
-      this.endEditing(true);
+      const committed = await this.endEditing(true);
+      // 如果前一个编辑态校验失败（未提交），不能进入新编辑
+      if (!committed && this.inputElement) {
+        return false;
+      }
     }
 
     const leafColumns = this.layoutManager.getLeafColumns();
@@ -86,7 +119,7 @@ export class EditorManager {
     const rows = this.getRows();
     const row = rows[cell.rowIndex];
 
-    if (!column || !row) return;
+    if (!column || !row) return false;
 
     this.editingCell = cell;
 
@@ -278,22 +311,43 @@ export class EditorManager {
         this.inputElement.select();
       }
     });
+
+    return true;
   }
 
-  endEditing(save: boolean): void {
+  async endEditing(save: boolean): Promise<boolean> {
     const cell = this.editingCell;
     let value: unknown = null;
 
     if (this.inputElement) {
       value = this.inputElement.value;
+      if (save && cell && this.beforeCommitCallback) {
+        const result = this.beforeCommitCallback(cell, value);
+        if (isPromise(result)) {
+          this.setLoadingState(true);
+        }
+        const commitAllowed = isPromise(result) ? await result : result;
+        this.setLoadingState(false);
+        if (!commitAllowed) {
+          this.applyValidationStyle("error");
+          requestAnimationFrame(() => {
+            this.inputElement?.focus();
+          });
+          return false; // 校验失败，未提交
+        }
+      }
+      if (!save && cell) {
+        this.cancelCallback?.(cell);
+      }
       this.destroyInputElement();
     }
 
     if (save && cell) {
-      this.eventEmitter.emit("editEnd", this.getCellInfo(cell)!, value);
+      this.eventEmitter.emit(TableEvents.EDIT_END, this.getCellInfo(cell)!, value);
     }
 
     this.editingCell = null;
+    return true; // 成功提交或取消
   }
 
   isEditing(): boolean {
@@ -339,23 +393,27 @@ export class EditorManager {
     }
   }
 
-  private handleBlur = (): void => {
-    this.endEditing(true);
+  private handleBlur = async (): Promise<void> => {
+    if (this.skipNextBlur) {
+      this.skipNextBlur = false;
+      return;
+    }
+    await this.endEditing(true);
   };
 
-  private handleKeyDown = (e: Event): void => {
+  private handleKeyDown = async (e: Event): Promise<void> => {
     const keyEvent = e as KeyboardEvent;
     const isTextarea = this.inputElement?.tagName === "TEXTAREA";
 
     if (keyEvent.key === "Enter" && !isTextarea) {
       keyEvent.preventDefault();
-      this.endEditing(true);
+      await this.endEditing(true);
     } else if (keyEvent.key === "Enter" && isTextarea && (keyEvent.ctrlKey || keyEvent.metaKey)) {
       keyEvent.preventDefault();
-      this.endEditing(true);
+      await this.endEditing(true);
     } else if (keyEvent.key === "Escape") {
       keyEvent.preventDefault();
-      this.endEditing(false);
+      await this.endEditing(false);
     } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(keyEvent.key)) {
       e.stopPropagation();
     }
@@ -368,6 +426,28 @@ export class EditorManager {
       this.onScrollCallback(wheelEvent.deltaX, wheelEvent.deltaY);
     }
   };
+
+  private applyValidationStyle(level: "error" | null): void {
+    if (!this.inputElement) return;
+    const borderColor =
+      level === "error"
+        ? (this.theme.colors.tagColors.error ?? "#ff4d4f")
+        : this.theme.colors.selectionBorder;
+    this.inputElement.style.border = `2px solid ${borderColor}`;
+  }
+
+  private setLoadingState(loading: boolean): void {
+    if (!this.inputElement) return;
+    if (loading) {
+      this.inputElement.disabled = true;
+      this.inputElement.style.opacity = "0.6";
+      this.inputElement.style.cursor = "wait";
+    } else {
+      this.inputElement.disabled = false;
+      this.inputElement.style.opacity = "";
+      this.inputElement.style.cursor = "";
+    }
+  }
 
   private destroyInputElement(): void {
     if (this.inputElement) {

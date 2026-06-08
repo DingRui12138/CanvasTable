@@ -9,6 +9,7 @@ import { CanvasTableLocale, CellPosition, CellInfo, InteractionState, ScrollStat
 import { LayoutManager } from "../LayoutManager";
 import { DataManager } from "../DataManager";
 import { EventEmitter } from "../EventEmitter";
+import { EditorRegistry } from "../editors";
 import { DropdownPositionCalculator, DropdownPositionResult, DropdownAnchorType } from "../DropdownPositionCalculator";
 export interface HandlerContext {
     state: InteractionState;
@@ -19,6 +20,7 @@ export interface HandlerContext {
     ctx: CanvasRenderingContext2D;
     expandColumnKey: string | null;
     locale: CanvasTableLocale;
+    editorRegistry: EditorRegistry;
 }
 export interface InteractionEvents {
     cellClick: [CellInfo, MouseEvent];
@@ -40,10 +42,10 @@ export interface InteractionEvents {
     radioChange: [CellInfo, unknown];
     switchChange: [CellInfo, boolean];
     buttonClick: [CellInfo, string | undefined];
-    selectChange: [CellInfo, unknown];
+    selectChange: [CellInfo, unknown, boolean];
     tagsChange: [CellInfo, string[], boolean];
     dropdownOpen: [];
-    dropdownClose: [];
+    dropdownClose: [CellPosition | null];
     dropdownHover: [];
     filterDropdownOpen: [];
     filterDropdownClose: [];
@@ -84,6 +86,7 @@ export declare abstract class BaseHandler {
     protected get locale(): CanvasTableLocale;
     protected get rows(): Row[];
     protected get allRows(): Row[];
+    protected get editorRegistry(): EditorRegistry;
     /**
      * Convert CellPosition to CellInfo with row and column data
      */

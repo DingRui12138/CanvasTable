@@ -32,15 +32,16 @@ import {
   ColorPickerDropdownState,
   ContextMenuItem,
   CanvasTableLocale,
+  CellTypes,
 } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
 import { EventEmitter } from "./EventEmitter";
+import { EditorRegistry } from "./editors";
 import {
   clamp,
   getCellDisplayText,
   getRenderResult,
-  resolveDisabled,
   getColumnField,
   getColumnFilterOptions,
   searchFilterOptions,
@@ -81,10 +82,10 @@ interface InteractionEvents {
   radioChange: [CellInfo, unknown];
   switchChange: [CellInfo, boolean];
   buttonClick: [CellInfo, string | undefined];
-  selectChange: [CellInfo, unknown];
+  selectChange: [CellInfo, unknown, boolean];
   tagsChange: [CellInfo, string[], boolean];
   dropdownOpen: [];
-  dropdownClose: [];
+  dropdownClose: [CellPosition | null];
   dropdownHover: [];
   filterDropdownOpen: [];
   filterDropdownClose: [];
@@ -186,6 +187,12 @@ export class InteractionManager {
   private rowPinnable: boolean | ((row: Row) => boolean) = true;
   private locale: CanvasTableLocale;
   private handlerContext: HandlerContext | null = null;
+  private editorRegistry: EditorRegistry;
+  /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
+  private shouldBlockDropdownClose: ((cell: CellPosition) => Promise<boolean>) | null = null;
+  /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
+   * 接收 mousedown 事件以便在 DOM 编辑器场景下 preventDefault 阻止焦点转移 */
+  private shouldBlockEditingClose: ((e?: MouseEvent) => Promise<boolean>) | null = null;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -195,6 +202,7 @@ export class InteractionManager {
     _selectionConfig: SelectionConfig,
     editingConfig: EditingConfig,
     locale: CanvasTableLocale = zhCN,
+    editorRegistry: EditorRegistry,
   ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
@@ -203,6 +211,7 @@ export class InteractionManager {
     this.eventEmitter = eventEmitter;
     this.editingConfig = editingConfig;
     this.locale = locale;
+    this.editorRegistry = editorRegistry;
 
     this.state = {
       hoveredCell: null,
@@ -268,6 +277,7 @@ export class InteractionManager {
       ctx: this.ctx,
       expandColumnKey: this.expandColumnKey,
       locale: this.locale,
+      editorRegistry: this.editorRegistry,
     };
     this.handlerContext = context;
 
@@ -390,7 +400,7 @@ export class InteractionManager {
     return { ...this.scrollbarState };
   }
 
-  private handleMouseDown = (e: MouseEvent): void => {
+  private handleMouseDown = async (e: MouseEvent): Promise<void> => {
     const rect = this.canvas.getBoundingClientRect();
     const viewportX = e.clientX - rect.left;
     const viewportY = e.clientY - rect.top;
@@ -423,24 +433,39 @@ export class InteractionManager {
     if (this.state.dateDropdown) {
       const dateClick = this.dropdownHandler.handleDateDropdownClick(e);
       if (dateClick) return;
+      // 校验 hook 决定是否阻止关闭日期下拉
+      if (this.shouldBlockEditingClose && (await this.shouldBlockEditingClose())) {
+        return;
+      }
+      const dateCell = this.state.dateDropdown.cell;
       this.state.dateDropdown = null;
-      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE, dateCell);
       return;
     }
 
     if (this.state.colorDropdown) {
       const colorClick = this.dropdownHandler.handleColorDropdownClick(e);
       if (colorClick) return;
+      // 校验 hook 决定是否阻止关闭颜色下拉
+      if (this.shouldBlockEditingClose && (await this.shouldBlockEditingClose())) {
+        return;
+      }
+      const colorCell = this.state.colorDropdown.cell;
       this.state.colorDropdown = null;
-      this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE, colorCell);
       return;
     }
 
     if (this.state.dropdown) {
       const dropdownClick = this.dropdownHandler.handleDropdownClick(e);
       if (dropdownClick) return;
+      // 校验 hook 决定是否阻止关闭下拉
+      const dropdownCell = this.state.dropdown.cell;
+      if (this.shouldBlockDropdownClose && (await this.shouldBlockDropdownClose(dropdownCell))) {
+        return;
+      }
       this.state.dropdown = null;
-      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE, dropdownCell);
       return;
     }
 
@@ -517,6 +542,21 @@ export class InteractionManager {
         return;
 
       case "cell":
+        // 校验 hook 决定是否阻止单元格区域交互（不影响滚动条和表头）
+        // 只有在编辑态存在时才执行 async 校验，避免每次点击都走 async 流程
+        const hadEditingCell = !!this.state.editingCell;
+        if (
+          hadEditingCell &&
+          this.shouldBlockEditingClose &&
+          (await this.shouldBlockEditingClose(e))
+        ) {
+          return;
+        }
+
+        // async await 后编辑态可能已关闭（blur/mouseup 在 await 期间触发）
+        // 此时不应设置 isSelecting，否则鼠标移动会触发拖拽选区
+        const wasInEditing = hadEditingCell;
+
         if (
           this.rowHeightResizeEnabled &&
           hitResult.isRowResizeHandle &&
@@ -549,8 +589,17 @@ export class InteractionManager {
             this.selectionHandler.handleToggleSelection(hitResult.cell);
           } else {
             this.selectionHandler.handleSingleSelection(hitResult.cell);
-            this.state.isSelecting = true;
-            this.state.selectionStart = hitResult.cell;
+            // 只有从非编辑态进入的点击才开启拖拽选区
+            // 从编辑态关闭后进入的点击，用户意图是选择新单元格，不是开始拖拽
+            if (!wasInEditing) {
+              this.state.isSelecting = true;
+              this.state.selectionStart = hitResult.cell;
+            }
+          }
+
+          const cellInfo = this.getCellInfo(hitResult.cell);
+          if (cellInfo) {
+            this.eventEmitter.emit(TableEvents.CELL_CLICK, cellInfo, e);
           }
         }
         return;
@@ -609,8 +658,13 @@ export class InteractionManager {
     await this.imageHandler.handleDrop(e);
   };
 
-  private handleContextMenu = (e: MouseEvent): void => {
+  private handleContextMenu = async (e: MouseEvent): Promise<void> => {
     e.preventDefault();
+
+    // 校验 hook 决定是否阻止右键菜单并保留编辑态
+    if (this.shouldBlockEditingClose && (await this.shouldBlockEditingClose(e))) {
+      return;
+    }
 
     const rect = this.canvas.getBoundingClientRect();
     const viewportX = e.clientX - rect.left;
@@ -1151,7 +1205,8 @@ export class InteractionManager {
       const leafColumns = this.layoutManager.getLeafColumns();
       const column = cell.columnIndex >= 0 ? leafColumns[cell.columnIndex] : undefined;
       const row = cell.rowIndex >= 0 ? this.rows[cell.rowIndex] : undefined;
-      const isDisabled = column && row ? resolveDisabled(column.disabled, row, column) : false;
+      const isDisabled =
+        column && row ? !this.editorRegistry.getStrategy(column).canEdit(cell, row, column) : false;
 
       if (isDisabled) {
         this.canvas.style.cursor = "not-allowed";
@@ -1221,9 +1276,9 @@ export class InteractionManager {
     const renderResult = getRenderResult(column, row, cell.rowIndex);
 
     if (
-      renderResult.type !== "button" ||
+      renderResult.type !== CellTypes.BUTTON ||
       !renderResult.button ||
-      resolveDisabled(column.disabled, row, column)
+      !this.editorRegistry.getStrategy(column).canEdit(cell, row, column)
     ) {
       this.startButtonHoverAnimationLoop();
       return;
@@ -1347,7 +1402,7 @@ export class InteractionManager {
     const renderResult = getRenderResult(column, row, cell.rowIndex);
 
     // 检查是否是图片列
-    if (renderResult.type !== "image" || !renderResult.image) {
+    if (renderResult.type !== CellTypes.IMAGE || !renderResult.image) {
       this.state.hoveredImageIndex = -1;
       return;
     }
@@ -1477,12 +1532,12 @@ export class InteractionManager {
     const renderResult = getRenderResult(column, row, cell.rowIndex);
 
     // 检查是否是 buttons 类型
-    if (renderResult.type !== "buttons" || !renderResult.buttons) {
+    if (renderResult.type !== CellTypes.BUTTONS || !renderResult.buttons) {
       this.state.hoveredButtonIndex = -1;
       return;
     }
 
-    if (resolveDisabled(column.disabled, row, column)) {
+    if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
       this.state.hoveredButtonIndex = -1;
       return;
     }
@@ -1572,7 +1627,7 @@ export class InteractionManager {
     const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
 
     // Check column-level disabled
-    const isDisabled = resolveDisabled(column.disabled, row, column);
+    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
 
     const cellViewportX = this.getCellViewportX(cellPos, column);
     const cellViewportY = this.getCellViewportY(cell.rowIndex);
@@ -1580,7 +1635,7 @@ export class InteractionManager {
     const relativeX = mouseX - cellViewportX;
     const relativeY = mouseY - cellViewportY;
 
-    if (renderResult.type === "checkbox" && renderResult.checkbox) {
+    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
       if (isDisabled) return false;
       const size = 16;
       const checkboxX = (cellPos.width - size) / 2;
@@ -1593,7 +1648,7 @@ export class InteractionManager {
       );
     }
 
-    if (renderResult.type === "radio" && renderResult.radio) {
+    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
       if (isDisabled) return false;
       const size = 16;
 
@@ -1658,7 +1713,7 @@ export class InteractionManager {
       }
     }
 
-    if (renderResult.type === "button" && renderResult.button) {
+    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
       if (isDisabled) return false;
       const buttonHeight =
         renderResult.button.size === "small" ? 24 : renderResult.button.size === "large" ? 40 : 32;
@@ -1672,7 +1727,7 @@ export class InteractionManager {
       );
     }
 
-    if (renderResult.type === "buttons" && renderResult.buttons) {
+    if (renderResult.type === CellTypes.BUTTONS && renderResult.buttons) {
       if (isDisabled) return false;
       const padding = 8;
       const gap = renderResult.buttons.gap ?? 4;
@@ -1721,7 +1776,7 @@ export class InteractionManager {
       return false;
     }
 
-    if (renderResult.type === "switch" && renderResult.switch) {
+    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
       if (isDisabled) return false;
       const switchWidth = 44;
       const switchHeight = 22;
@@ -1735,21 +1790,21 @@ export class InteractionManager {
       );
     }
 
-    if (renderResult.type === "select" && renderResult.select) {
+    if (renderResult.type === CellTypes.SELECT && renderResult.select) {
       if (isDisabled) return false;
       return true;
     }
 
-    if (renderResult.type === "tag" && renderResult.tags) {
+    if (renderResult.type === CellTypes.TAG && renderResult.tags) {
       return true;
     }
 
-    if (renderResult.type === "input" && renderResult.input) {
+    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
       if (isDisabled || renderResult.input.readonly) return false;
       return true;
     }
 
-    if (renderResult.type === "link" && renderResult.link) {
+    if (renderResult.type === CellTypes.LINK && renderResult.link) {
       const link = renderResult.link;
       const linkText = link.text || link.link;
       if (!linkText) return false;
@@ -1800,7 +1855,7 @@ export class InteractionManager {
       );
     }
 
-    if (renderResult.type === "image" && renderResult.image) {
+    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
       const config = renderResult.image;
       if (config.clickable === false) return false;
 
@@ -1816,7 +1871,7 @@ export class InteractionManager {
       return hoveredImageIndex >= 0 && hoveredImageIndex < images.length;
     }
 
-    if (renderResult.type === "progress" && renderResult.progress) {
+    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
       const config = renderResult.progress;
       // 只有 interactive 进度条才可点击
       if (config.interactive !== true) return false;
@@ -1876,7 +1931,7 @@ export class InteractionManager {
       }
     }
 
-    if (renderResult.type === "rating" && renderResult.rating) {
+    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
       if (isDisabled) return false;
 
       const config = renderResult.rating;
@@ -1897,7 +1952,7 @@ export class InteractionManager {
       );
     }
 
-    if (renderResult.type === "color" && renderResult.color) {
+    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
       if (isDisabled) return false;
 
       // 检测是否在颜色块区域内
@@ -1942,12 +1997,7 @@ export class InteractionManager {
       this.state.dragType === "progress-drag" &&
       this.state.progressDragState
     ) {
-      const { cell, column, row, displayValue } = this.state.progressDragState;
-
-      // 拖拽结束时才更新数据
-      if (column && row) {
-        row.data[getColumnField(column)] = displayValue;
-      }
+      const { cell, displayValue } = this.state.progressDragState;
 
       this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell)!, displayValue);
 
@@ -2014,10 +2064,15 @@ export class InteractionManager {
     }
   };
 
-  private handleDblClick = (e: MouseEvent): void => {
+  private handleDblClick = async (e: MouseEvent): Promise<void> => {
     const rect = this.canvas.getBoundingClientRect();
     const viewportX = e.clientX - rect.left;
     const viewportY = e.clientY - rect.top;
+
+    // 校验 hook 决定是否阻止进入新编辑
+    if (this.shouldBlockEditingClose && (await this.shouldBlockEditingClose(e))) {
+      return;
+    }
 
     if (this.state.dateDropdown) {
       const { x, y, width } = this.state.dateDropdown;
@@ -2037,8 +2092,13 @@ export class InteractionManager {
         return;
       }
 
+      // 校验 hook 决定是否阻止 dblclick 关闭日期下拉
+      if (this.shouldBlockEditingClose && (await this.shouldBlockEditingClose())) {
+        return;
+      }
+      const dateCell = this.state.dateDropdown.cell;
       this.state.dateDropdown = null;
-      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE, dateCell);
     }
 
     if (this.state.dropdown) {
@@ -2063,8 +2123,14 @@ export class InteractionManager {
         return;
       }
 
+      // 校验 hook 决定是否阻止 dblclick 关闭下拉
+      const dropdownCell = this.state.dropdown.cell;
+      if (this.shouldBlockDropdownClose && (await this.shouldBlockDropdownClose(dropdownCell))) {
+        return;
+      }
+
       this.state.dropdown = null;
-      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE, null);
     }
 
     if (this.state.filterDropdown) {
@@ -2135,7 +2201,14 @@ export class InteractionManager {
     const column = leafColumns[cell.columnIndex];
     const row = this.rows[cell.rowIndex];
 
-    const controlTypes = ["checkbox", "radio", "button", "buttons", "switch", "rating"];
+    const controlTypes = [
+      CellTypes.CHECKBOX,
+      CellTypes.RADIO,
+      CellTypes.BUTTON,
+      CellTypes.BUTTONS,
+      CellTypes.SWITCH,
+      CellTypes.RATING,
+    ];
 
     if (column && row) {
       const renderResult = getRenderResult(column, row, cell.rowIndex);
@@ -2145,10 +2218,9 @@ export class InteractionManager {
       }
 
       // progress 类型：可交互时支持双击编辑
-      if (renderResult.type === "progress" && renderResult.progress) {
+      if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
         if (renderResult.progress.interactive !== true) return;
-        if (column.editable === false) return;
-        if (resolveDisabled(column.disabled, row, column)) return;
+        if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) return;
 
         // 进入数值编辑模式
         this.eventEmitter.emit(TableEvents.CELL_DBL_CLICK, this.getCellInfo(cell)!, e);
@@ -2165,7 +2237,7 @@ export class InteractionManager {
       }
 
       // 颜色类型需要检测点击位置是否在颜色块上
-      if (renderResult.type === "color" && renderResult.color) {
+      if (renderResult.type === CellTypes.COLOR && renderResult.color) {
         const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
         const cellViewportX = this.getCellViewportX(cellPos, column);
         const cellViewportY = this.getCellViewportY(cell.rowIndex);
@@ -2184,10 +2256,8 @@ export class InteractionManager {
         if (!isOnColorBox) return;
       }
 
-      // 统一检查 editable
-      if (column.editable === false) return;
-
-      if (resolveDisabled(column.disabled, row, column)) return;
+      // 统一检查 editable + disabled
+      if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) return;
 
       this.eventEmitter.emit(TableEvents.CELL_DBL_CLICK, this.getCellInfo(cell)!, e);
       this.eventEmitter.emit(TableEvents.ROW_DBL_CLICK, row, cell.rowIndex, e);
@@ -2198,15 +2268,15 @@ export class InteractionManager {
 
         if (editConfig) {
           // 使用 editRender 返回的配置
-          if (editConfig.type === "select" && editConfig.select) {
+          if (editConfig.type === CellTypes.SELECT && editConfig.select) {
             this.startSelectEditing(cell, editConfig.select);
-          } else if (editConfig.type === "tag" && editConfig.tags) {
+          } else if (editConfig.type === CellTypes.TAG && editConfig.tags) {
             this.startTagsEditing(cell, editConfig.tags);
-          } else if (editConfig.type === "date" && editConfig.date) {
+          } else if (editConfig.type === CellTypes.DATE && editConfig.date) {
             this.startDateEditing(cell, editConfig.date);
-          } else if (editConfig.type === "color" && editConfig.color) {
+          } else if (editConfig.type === CellTypes.COLOR && editConfig.color) {
             this.startColorEditing(cell, editConfig.color);
-          } else if (editConfig.type === "input" || !editConfig.type) {
+          } else if (editConfig.type === CellTypes.INPUT || !editConfig.type) {
             this.startEditing(cell, editConfig.input);
           } else {
             // 其他类型，使用 input 编辑器
@@ -2214,19 +2284,19 @@ export class InteractionManager {
           }
         } else {
           // 走原有逻辑
-          if (renderResult.type === "select" && renderResult.select) {
+          if (renderResult.type === CellTypes.SELECT && renderResult.select) {
             this.startSelectEditing(cell, renderResult.select);
           } else if (
-            renderResult.type === "tag" &&
+            renderResult.type === CellTypes.TAG &&
             renderResult.tags &&
             renderResult.tags.editable
           ) {
             this.startTagsEditing(cell, renderResult.tags);
-          } else if (renderResult.type === "date" && renderResult.date) {
+          } else if (renderResult.type === CellTypes.DATE && renderResult.date) {
             this.startDateEditing(cell, renderResult.date);
-          } else if (renderResult.type === "color" && renderResult.color) {
+          } else if (renderResult.type === CellTypes.COLOR && renderResult.color) {
             this.startColorEditing(cell, renderResult.color);
-          } else if (renderResult.type === "image" && renderResult.image) {
+          } else if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
             this.startImageEditing(cell, renderResult.image);
           } else {
             this.startEditing(cell, renderResult.input);
@@ -2259,10 +2329,10 @@ export class InteractionManager {
 
     const renderResult = getRenderResult(column, row, cell.rowIndex);
 
-    // Check column-level disabled
-    const isDisabled = resolveDisabled(column.disabled, row, column);
+    // Check column-level canEdit
+    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
 
-    if (renderResult.type === "checkbox" && renderResult.checkbox) {
+    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
       const rect = this.canvas.getBoundingClientRect();
       const viewportX = e.clientX - rect.left;
@@ -2283,8 +2353,6 @@ export class InteractionManager {
 
       if (isOnCheckbox && !isDisabled) {
         const newChecked = !renderResult.checkbox.checked;
-        // 自动更新 row.data
-        row.data[getColumnField(column)] = newChecked;
         this.eventEmitter.emit(TableEvents.CHECKBOX_CHANGE, this.getCellInfo(cell)!, newChecked);
         return true;
       }
@@ -2292,14 +2360,12 @@ export class InteractionManager {
       return false;
     }
 
-    if (renderResult.type === "radio" && renderResult.radio) {
+    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
       if (isDisabled) return false;
 
       if (renderResult.radio.options && renderResult.radio.options.length > 0) {
         const clickedOption = this.getClickedRadioOption(cell, e, renderResult.radio.options);
         if (clickedOption && !clickedOption.disabled) {
-          // 自动更新 row.data
-          row.data[getColumnField(column)] = clickedOption.value;
           this.eventEmitter.emit(
             TableEvents.RADIO_CHANGE,
             this.getCellInfo(cell)!,
@@ -2309,8 +2375,6 @@ export class InteractionManager {
         }
         return false;
       } else {
-        // 自动更新 row.data
-        row.data[getColumnField(column)] = renderResult.radio.value;
         this.eventEmitter.emit(
           TableEvents.RADIO_CHANGE,
           this.getCellInfo(cell)!,
@@ -2320,7 +2384,7 @@ export class InteractionManager {
       }
     }
 
-    if (renderResult.type === "button" && renderResult.button) {
+    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
       if (isDisabled) return false;
 
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
@@ -2367,7 +2431,7 @@ export class InteractionManager {
       return true;
     }
 
-    if (renderResult.type === "buttons" && renderResult.buttons) {
+    if (renderResult.type === CellTypes.BUTTONS && renderResult.buttons) {
       if (isDisabled) return false;
 
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
@@ -2456,7 +2520,7 @@ export class InteractionManager {
       return false;
     }
 
-    if (renderResult.type === "switch" && renderResult.switch) {
+    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
       if (isDisabled) return false;
 
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
@@ -2495,8 +2559,6 @@ export class InteractionManager {
       const targetChecked = targetProgress === 1;
 
       if (currentChecked !== targetChecked) {
-        // 自动更新 row.data
-        row.data[getColumnField(column)] = targetChecked;
         this.eventEmitter.emit(TableEvents.SWITCH_CHANGE, this.getCellInfo(cell)!, targetChecked);
       }
 
@@ -2512,13 +2574,13 @@ export class InteractionManager {
       return true;
     }
 
-    if (renderResult.type === "input" && renderResult.input) {
+    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
       if (isDisabled || renderResult.input.readonly) return false;
 
       return false;
     }
 
-    if (renderResult.type === "link" && renderResult.link) {
+    if (renderResult.type === CellTypes.LINK && renderResult.link) {
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
       const rect = this.canvas.getBoundingClientRect();
       const viewportX = e.clientX - rect.left;
@@ -2600,7 +2662,7 @@ export class InteractionManager {
       return true;
     }
 
-    if (renderResult.type === "progress" && renderResult.progress) {
+    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
       const result = this.handleProgressClick(cell, e, renderResult.progress, column, row);
       if (result) {
         // 点击成功后启动拖拽状态，只更新显示值不更新数据
@@ -2626,11 +2688,11 @@ export class InteractionManager {
       return result;
     }
 
-    if (renderResult.type === "rating" && renderResult.rating) {
+    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
       return this.handleRatingClick(cell, e, renderResult.rating, column, row);
     }
 
-    if (renderResult.type === "color" && renderResult.color) {
+    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
       if (isDisabled) return false;
 
       // 计算颜色块位置，只有点击颜色块才触发
@@ -2661,7 +2723,7 @@ export class InteractionManager {
       return false;
     }
 
-    if (renderResult.type === "image" && renderResult.image) {
+    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
       if (renderResult.image.clickable === false) return false;
 
       const config = renderResult.image;
@@ -3128,7 +3190,7 @@ export class InteractionManager {
       // 懒加载检测
       this.checkLazyLoad(newScrollTop, deltaY);
 
-      clearTimeout(this.scrollTimeout);
+      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
       this.scrollTimeout = setTimeout(() => {
         this.scrollState.isScrolling = false;
       }, 150);
@@ -3202,7 +3264,7 @@ export class InteractionManager {
 
       this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
 
-      clearTimeout(this.scrollTimeout);
+      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
       this.scrollTimeout = setTimeout(() => {
         this.scrollState.isScrolling = false;
       }, 150);
@@ -3213,9 +3275,9 @@ export class InteractionManager {
     this.tooltipHandler.updateTooltipPosition();
   };
 
-  private scrollTimeout: ReturnType<typeof setTimeout> = setTimeout(() => {}, 0);
+  private scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  private handleKeyDown = (e: KeyboardEvent): void => {
+  private handleKeyDown = async (e: KeyboardEvent): Promise<void> => {
     if (this.state.editingCell) {
       this.handleEditingKeyDown(e);
       return;
@@ -3223,8 +3285,10 @@ export class InteractionManager {
 
     if (this.state.dropdown) {
       if (e.key === "Escape") {
+        const dropdownCell = this.state.dropdown.cell;
+        // Escape 总是取消下拉编辑（不提交），与 DOM 编辑器一致
         this.state.dropdown = null;
-        this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+        this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE, dropdownCell);
       }
       return;
     }
@@ -3281,6 +3345,17 @@ export class InteractionManager {
 
   private handleEditingKeyDown(e: KeyboardEvent): void {
     if (!this.state.editingCell) return;
+    // DOM 编辑器有自己的 input keydown handler 处理 Enter/Escape/Tab，
+    // document keydown 不应重复触发 endEditing，否则会 emit 两个 EDIT_END（第二个用 editingValue=null）
+    if (this.isDomEditorActive?.()) {
+      // Tab 的 moveSelection 仍需由 InteractionManager 处理（EditorManager 不处理导航）
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const nextCol = e.shiftKey ? -1 : 1;
+        this.selectionHandler.moveSelection(0, nextCol);
+      }
+      return;
+    }
 
     switch (e.key) {
       case "Enter":
@@ -3314,19 +3389,17 @@ export class InteractionManager {
       if (column && row) {
         const renderResult = getRenderResult(column, row, cell.rowIndex);
         const controlTypes = [
-          "checkbox",
-          "radio",
-          "button",
-          "buttons",
-          "switch",
-          "rating",
-          "progress",
+          CellTypes.CHECKBOX,
+          CellTypes.RADIO,
+          CellTypes.BUTTON,
+          CellTypes.BUTTONS,
+          CellTypes.SWITCH,
+          CellTypes.RATING,
+          CellTypes.PROGRESS,
         ];
         if (renderResult.type && controlTypes.includes(renderResult.type)) {
-          if (renderResult.type === "switch" && renderResult.switch) {
-            if (!resolveDisabled(column.disabled, row, column)) {
-              // 自动更新 row.data
-              row.data[getColumnField(column)] = !renderResult.switch.checked;
+          if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
+            if (this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
               this.eventEmitter.emit(
                 TableEvents.SWITCH_CHANGE,
                 this.getCellInfo(cell)!,
@@ -3340,10 +3413,8 @@ export class InteractionManager {
         }
 
         // 统一检查 editable
-        if (column.editable === false) return;
-
-        // 统一检查 column 级别的 disabled
-        if (resolveDisabled(column.disabled, row, column)) return;
+        // 统一检查 editable + disabled
+        if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) return;
 
         // 检查 input 的 readonly
         if (renderResult.input?.readonly) return;
@@ -3353,20 +3424,20 @@ export class InteractionManager {
 
         if (editConfig) {
           // 使用 editRender 返回的配置
-          if (editConfig.type === "select" && editConfig.select) {
+          if (editConfig.type === CellTypes.SELECT && editConfig.select) {
             this.startSelectEditing(cell, editConfig.select);
             return;
           }
-          if (editConfig.type === "tag" && editConfig.tags) {
+          if (editConfig.type === CellTypes.TAG && editConfig.tags) {
             this.startTagsEditing(cell, editConfig.tags);
             return;
           }
-          if (editConfig.type === "date" && editConfig.date) {
+          if (editConfig.type === CellTypes.DATE && editConfig.date) {
             this.startDateEditing(cell, editConfig.date);
             return;
           }
 
-          if (editConfig.type === "color" && editConfig.color) {
+          if (editConfig.type === CellTypes.COLOR && editConfig.color) {
             this.startColorEditing(cell, editConfig.color);
             return;
           }
@@ -3376,27 +3447,31 @@ export class InteractionManager {
         }
 
         // 走原有逻辑
-        if (renderResult.type === "select" && renderResult.select) {
+        if (renderResult.type === CellTypes.SELECT && renderResult.select) {
           this.startSelectEditing(cell, renderResult.select);
           return;
         }
 
-        if (renderResult.type === "tag" && renderResult.tags && renderResult.tags.editable) {
+        if (
+          renderResult.type === CellTypes.TAG &&
+          renderResult.tags &&
+          renderResult.tags.editable
+        ) {
           this.startTagsEditing(cell, renderResult.tags);
           return;
         }
 
-        if (renderResult.type === "date" && renderResult.date) {
+        if (renderResult.type === CellTypes.DATE && renderResult.date) {
           this.startDateEditing(cell, renderResult.date);
           return;
         }
 
-        if (renderResult.type === "color" && renderResult.color) {
+        if (renderResult.type === CellTypes.COLOR && renderResult.color) {
           this.startColorEditing(cell, renderResult.color);
           return;
         }
 
-        if (renderResult.type === "image" && renderResult.image) {
+        if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
           this.startImageEditing(cell, renderResult.image);
           return;
         }
@@ -3432,12 +3507,12 @@ export class InteractionManager {
         if (
           result &&
           result.type &&
-          result.type !== "custom" &&
-          result.type !== "button" &&
-          result.type !== "buttons" &&
-          result.type !== "image" &&
-          result.type !== "progress" &&
-          result.type !== "link"
+          result.type !== CellTypes.CUSTOM &&
+          result.type !== CellTypes.BUTTON &&
+          result.type !== CellTypes.BUTTONS &&
+          result.type !== CellTypes.IMAGE &&
+          result.type !== CellTypes.PROGRESS &&
+          result.type !== CellTypes.LINK
         ) {
           return {
             type: result.type,
@@ -3539,11 +3614,16 @@ export class InteractionManager {
 
   // ==================== Dropdown 公共方法 ====================
 
+  /** 关闭 select/tags dropdown（公开方法，供 CanvasTable 在校验成功后调用） */
+  closeSelectDropdown(): void {
+    this.closeDropdown();
+  }
+
   /** 关闭 select/tags dropdown */
   private closeDropdown(): void {
     if (this.state.dropdown) {
       this.state.dropdown = null;
-      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE, null);
     }
   }
 
@@ -3555,19 +3635,19 @@ export class InteractionManager {
     }
   }
 
-  /** 关闭 date dropdown */
+  /** 关闭 date dropdown（programmatic，非用户取消） */
   private closeDateDropdown(): void {
     if (this.state.dateDropdown) {
       this.state.dateDropdown = null;
-      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.DATE_DROPDOWN_CLOSE, null);
     }
   }
 
-  /** 关闭 color dropdown */
+  /** 关闭 color dropdown（programmatic，非用户取消） */
   private closeColorDropdown(): void {
     if (this.state.colorDropdown) {
       this.state.colorDropdown = null;
-      this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE);
+      this.eventEmitter.emit(TableEvents.COLOR_DROPDOWN_CLOSE, null);
     }
   }
 
@@ -4000,6 +4080,20 @@ export class InteractionManager {
     this.rowHeightResizeEnabled = enabled;
   }
 
+  setShouldBlockDropdownClose(callback: (cell: CellPosition) => Promise<boolean>): void {
+    this.shouldBlockDropdownClose = callback;
+  }
+
+  /** 设置 DOM 编辑器活跃状态检查回调，用于避免 keydown 重复触发 endEditing */
+  private isDomEditorActive: (() => boolean) | null = null;
+  setDomEditorActiveChecker(checker: () => boolean): void {
+    this.isDomEditorActive = checker;
+  }
+
+  setShouldBlockEditingClose(callback: (e?: MouseEvent) => Promise<boolean>): void {
+    this.shouldBlockEditingClose = callback;
+  }
+
   setRowResizable(
     resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined,
   ): void {
@@ -4076,6 +4170,10 @@ export class InteractionManager {
 
   destroy(): void {
     this.isDestroyed = true;
+    if (this.scrollTimeout) {
+      clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = null;
+    }
     this.unbindEvents();
     this.unbindDocumentEvents();
     this.buttonAnimationHandler.setDestroyed(true);

@@ -9,7 +9,6 @@ import { CellPosition, Column, Row, ProgressConfig, RatingConfig } from "../../t
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
 import { TableEvents } from "../../constants/events";
-import { resolveDisabled, getColumnField } from "../../utils";
 
 export class ControlClickHandler extends BaseHandler {
   constructor(context: HandlerContext, eventEmitter: EventEmitter<InteractionEvents>) {
@@ -26,11 +25,10 @@ export class ControlClickHandler extends BaseHandler {
     column: Column | undefined,
     row: Row | undefined,
   ): boolean {
-    // Check if interactive
-    if (!config.interactive) return false;
-
     // Check if disabled
-    if (row && column && resolveDisabled(column.disabled, row, column)) return false;
+    if (!config.interactive) return false;
+    if (row && column && !this.editorRegistry.getStrategy(column).canEdit(cell, row, column))
+      return false;
 
     // Get click position
     const rect = this.canvas.getBoundingClientRect();
@@ -65,11 +63,6 @@ export class ControlClickHandler extends BaseHandler {
         const rawValue = Math.max(0, Math.min(100, (relativeX / barWidth) * 100));
         const newValue =
           precision === 0 ? Math.round(rawValue) : Number(rawValue.toFixed(precision));
-
-        // Auto update row.data
-        if (column && row) {
-          row.data[getColumnField(column)] = newValue;
-        }
 
         this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell)!, newValue);
         return true;
@@ -136,11 +129,6 @@ export class ControlClickHandler extends BaseHandler {
         const precision = config.precision ?? 0;
         newValue = precision === 0 ? Math.round(newValue) : Number(newValue.toFixed(precision));
 
-        // Auto update row.data
-        if (column && row) {
-          row.data[getColumnField(column)] = newValue;
-        }
-
         this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell)!, newValue);
         return true;
       }
@@ -159,8 +147,9 @@ export class ControlClickHandler extends BaseHandler {
     column: Column | undefined,
     row: Row | undefined,
   ): boolean {
-    // Check if disabled
-    if (row && column && resolveDisabled(column.disabled, row, column)) return false;
+    // Check if can edit
+    if (row && column && !this.editorRegistry.getStrategy(column).canEdit(cell, row, column))
+      return false;
 
     // Get click position
     const rect = this.canvas.getBoundingClientRect();
@@ -181,6 +170,15 @@ export class ControlClickHandler extends BaseHandler {
     // Calculate star start position (consistent with Renderer.renderRating)
     const totalWidth = max * starSize;
     const startX = (cellPos.width - totalWidth) / 2;
+    const startY = (cellPos.height - starSize) / 2;
+
+    // Get click position Y relative to cell (consistent with isClickableElement hot zone)
+    const clickViewportY = e.clientY - rect.top;
+    const cellViewportY = cellPos.y - this.context.scrollState.scrollTop;
+    const relativeY = clickViewportY - cellViewportY;
+
+    // Validate Y position — click must be within star vertical range to match cursor:pointer hot zone
+    if (relativeY < startY || relativeY > startY + starSize) return false;
 
     // Find clicked star
     for (let i = 0; i < max; i++) {
@@ -217,11 +215,6 @@ export class ControlClickHandler extends BaseHandler {
 
         // Ensure not exceeding max
         newValue = Math.min(newValue, max);
-
-        // Auto update row.data
-        if (column && row) {
-          row.data[getColumnField(column)] = newValue;
-        }
 
         this.eventEmitter.emit(TableEvents.RATING_CHANGE, this.getCellInfo(cell)!, newValue);
         return true;

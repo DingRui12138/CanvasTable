@@ -14,6 +14,7 @@ import {
   TagsConfig,
   RowHitResult,
   ComputedSummaryRow,
+  CellTypes,
 } from "../../types";
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
@@ -59,19 +60,19 @@ export class TooltipHandler extends BaseHandler {
     const cellViewportY = this.getCellViewportY(cell.rowIndex);
 
     // Tags tooltip
-    if (renderResult.type === "tag" && renderResult.tags) {
+    if (renderResult.type === CellTypes.TAG && renderResult.tags) {
       this.handleTagsTooltip(cell, renderResult.tags, cellPos, cellViewportX);
       return;
     }
 
     // Select tooltip
-    if (renderResult.type === "select" && renderResult.select) {
+    if (renderResult.type === CellTypes.SELECT && renderResult.select) {
       this.handleSelectTooltip(cell, renderResult.select, cellPos, cellViewportX);
       return;
     }
 
     // Image tooltip (preview dropdown)
-    if (renderResult.type === "image" && renderResult.image) {
+    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
       this.handleImageTooltip(cell, renderResult.image, cellPos, cellViewportX, cellViewportY);
       return;
     }

@@ -18,11 +18,14 @@ export class TextRenderer extends BaseCellRenderer {
     ctx.font = `${theme.font.size}px ${theme.font.family}`;
     ctx.textBaseline = "middle";
 
-    const textColor = this.getTextColor(theme, isSelected, isHovered);
+    const text = displayValue || (column.placeholder ?? "");
+    const textColor = displayValue
+      ? this.getTextColor(theme, isSelected, isHovered)
+      : theme.colors.placeholderText;
     ctx.fillStyle = textColor;
 
     const maxTextWidth = width - padding * 2;
-    const truncatedText = this.truncateText(ctx, displayValue, maxTextWidth);
+    const truncatedText = this.truncateText(ctx, text, maxTextWidth);
 
     const textX = this.calculateTextX(truncatedText, x, width, padding, align, ctx);
     const textY = y + height / 2;

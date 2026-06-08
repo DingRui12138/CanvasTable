@@ -2,6 +2,7 @@ import { LayoutManager } from "@/core/LayoutManager";
 import { DataManager } from "@/core/DataManager";
 import { EventEmitter } from "@/core/EventEmitter";
 import { TooltipHandler } from "@/core/handlers/TooltipHandler";
+import { EditorRegistry } from "@/core/editors";
 import type { ComputedSummaryRow, InteractionState, ScrollState, Column, Row } from "@/types";
 import { zhCN } from "@/locale";
 import { createMockCanvas, createMockTheme } from "../../helpers/mockFactories";
@@ -74,6 +75,7 @@ describe("TooltipHandler", () => {
         ctx,
         expandColumnKey: null,
         locale: zhCN,
+        editorRegistry: new EditorRegistry(),
       },
       new EventEmitter(),
     );
@@ -173,6 +175,7 @@ describe("TooltipHandler", () => {
         ctx,
         expandColumnKey: null,
         locale: zhCN,
+        editorRegistry: new EditorRegistry(),
       },
       new EventEmitter(),
     );
@@ -267,6 +270,7 @@ describe("TooltipHandler", () => {
         ctx,
         expandColumnKey: null,
         locale: zhCN,
+        editorRegistry: new EditorRegistry(),
       },
       new EventEmitter(),
     );

@@ -2,6 +2,7 @@ import { CellPosition, CellInfo, CellRange, InteractionState, ScrollState, Selec
 import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
 import { EventEmitter } from "./EventEmitter";
+import { EditorRegistry } from "./editors";
 interface InteractionEvents {
     cellClick: [CellInfo, MouseEvent];
     cellDblClick: [CellInfo, MouseEvent];
@@ -22,10 +23,10 @@ interface InteractionEvents {
     radioChange: [CellInfo, unknown];
     switchChange: [CellInfo, boolean];
     buttonClick: [CellInfo, string | undefined];
-    selectChange: [CellInfo, unknown];
+    selectChange: [CellInfo, unknown, boolean];
     tagsChange: [CellInfo, string[], boolean];
     dropdownOpen: [];
-    dropdownClose: [];
+    dropdownClose: [CellPosition | null];
     dropdownHover: [];
     filterDropdownOpen: [];
     filterDropdownClose: [];
@@ -107,7 +108,13 @@ export declare class InteractionManager {
     private rowPinnable;
     private locale;
     private handlerContext;
-    constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig, locale?: CanvasTableLocale);
+    private editorRegistry;
+    /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
+    private shouldBlockDropdownClose;
+    /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
+     * 接收 mousedown 事件以便在 DOM 编辑器场景下 preventDefault 阻止焦点转移 */
+    private shouldBlockEditingClose;
+    constructor(canvas: HTMLCanvasElement, layoutManager: LayoutManager, dataManager: DataManager, eventEmitter: EventEmitter<InteractionEvents>, _selectionConfig: SelectionConfig, editingConfig: EditingConfig, locale: CanvasTableLocale | undefined, editorRegistry: EditorRegistry);
     /**
      * Initialize handler instances
      */
@@ -203,13 +210,15 @@ export declare class InteractionManager {
     private toggleRowExpand;
     clearSelection(): void;
     resetState(): void;
+    /** 关闭 select/tags dropdown（公开方法，供 CanvasTable 在校验成功后调用） */
+    closeSelectDropdown(): void;
     /** 关闭 select/tags dropdown */
     private closeDropdown;
     /** 关闭 filter dropdown */
     private closeFilterDropdown;
-    /** 关闭 date dropdown */
+    /** 关闭 date dropdown（programmatic，非用户取消） */
     private closeDateDropdown;
-    /** 关闭 color dropdown */
+    /** 关闭 color dropdown（programmatic，非用户取消） */
     private closeColorDropdown;
     /** 关闭 buttons dropdown */
     private closeButtonsDropdown;
@@ -272,6 +281,11 @@ export declare class InteractionManager {
     setSelectedCells(cells: CellPosition[]): void;
     updateConfig(_selection: SelectionConfig, editing: EditingConfig): void;
     setRowHeightResizeEnabled(enabled: boolean): void;
+    setShouldBlockDropdownClose(callback: (cell: CellPosition) => Promise<boolean>): void;
+    /** 设置 DOM 编辑器活跃状态检查回调，用于避免 keydown 重复触发 endEditing */
+    private isDomEditorActive;
+    setDomEditorActiveChecker(checker: () => boolean): void;
+    setShouldBlockEditingClose(callback: (e?: MouseEvent) => Promise<boolean>): void;
     setRowResizable(resizable: boolean | ((row: Row, rowIndex: number) => boolean) | undefined): void;
     setRowPinningEnabled(enabled: boolean): void;
     setRowPinnable(pinnable: boolean | ((row: Row) => boolean) | undefined): void;

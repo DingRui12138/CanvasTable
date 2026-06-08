@@ -478,6 +478,54 @@ describe('Renderer', () => {
       }).not.toThrow();
     });
 
+    it('renders validation error outline for invalid cells', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(3);
+      const visibleRange: VisibleRange = {
+        startRow: 0,
+        endRow: 2,
+        startColumn: 0,
+        endColumn: 3,
+      };
+      layoutManager.calculateLayout(columns, rows);
+
+      const ctx = canvas.getContext('2d')!;
+      const validationStrokeStyles: unknown[] = [];
+      const strokeRectSpy = jest.spyOn(ctx, 'strokeRect');
+      strokeRectSpy.mockImplementation((x, y, width, height) => {
+        if (
+          x === 81 &&
+          y === mockTheme.row.headerHeight + 1 &&
+          width === 118 &&
+          height === mockTheme.row.height - 2
+        ) {
+          validationStrokeStyles.push(ctx.strokeStyle);
+        }
+      });
+
+      renderer.render(columns, rows, visibleRange, 0, 0, {
+        ...createRenderOptions(),
+        validationErrors: new Map([
+          ['0-1', {
+            cell: { rowIndex: 0, columnIndex: 1 },
+            row: rows[0]!,
+            column: columns[1]!,
+            value: '',
+            message: 'Name is required',
+            level: 'error',
+          }],
+        ]),
+      });
+
+      expect(strokeRectSpy).toHaveBeenCalledWith(
+        81,
+        mockTheme.row.headerHeight + 1,
+        118,
+        mockTheme.row.height - 2,
+      );
+      expect(validationStrokeStyles).toContain('#ff4d4f');
+    });
+
     it('should render with sort config', () => {
       const columns = createTestColumns();
       const rows = createTestRows(10);
