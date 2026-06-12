@@ -64,6 +64,19 @@
 - [x] 控件事件 - checkbox、radio、switch、button 等变化事件
 - [x] 图片事件 - 点击、上传、删除等
 
+### JSX 自定义渲染系统
+
+- [x] **JSX 元素树** - CTElement 树形结构（CTBox / CTCircle / CTText / CTImage / CTLine）
+- [x] **Flex 布局引擎** - flexDirection、justifyContent、alignItems、gap、padding、margin
+- [x] **尺寸约束** - minWidth/maxWidth/minHeight/maxHeight、百分比 width/height（"100%"）
+- [x] **alignSelf 覆盖** - 子元素交叉轴对齐覆盖父级 alignItems
+- [x] **定位模式** - position="relative" 子元素 x/y/zIndex 绝对定位
+- [x] **Canvas2D 渲染器** - 背景色、渐变、圆角、边框（统一 + 单侧）、阴影、裁剪、透明度
+- [x] **文本增强** - textAlign、textDecoration（underline/line-through）、letterSpacing
+- [x] **公共组件** - Box、Row、Column、Stack、Text、Circle、Image、Line + createCTElement
+- [x] **属性别名** - bgColor、radius、direction、align、justify、mg、shadow、gradient、clip 等 CSS 风格简写
+- [x] **根元素撑满单元格** - 无内置 padding/居中，根元素默认 width/height "100%"
+
 ### 其他特性
 
 - [x] 导出 CSV
@@ -103,6 +116,13 @@
 
 - [ ] **文件列** - 文件上传/下载
 - [ ] **富文本列** - 简单的富文本显示
+
+### JSX 组件增强
+
+- [ ] **更多内置组件** - 增加 JSX 内置组件种类（如 Badge、Avatar、ProgressBar、Icon 等）
+- [ ] **hover/active 样式状态** - CTStyles 支持 hover/active 视觉反馈
+- [ ] **图片实际渲染** - CTImage src 加载真实图片
+- [ ] **交互事件** - JSX 元素点击、hover 等交互回调
 
 ### 编辑功能
 

@@ -12,8 +12,14 @@ export class MeasurementEngine {
     this.ctx = ctx;
   }
 
-  measureTextWidth(text: string, fontSize: number, fontFamily: string): number {
-    this.ctx.font = `${fontSize}px ${fontFamily}`;
+  measureTextWidth(
+    text: string,
+    fontSize: number,
+    fontFamily: string,
+    fontWeight?: string,
+    fontStyle?: string,
+  ): number {
+    this.ctx.font = `${fontStyle ?? "normal"} ${fontWeight ?? "normal"} ${fontSize}px ${fontFamily}`;
     return this.ctx.measureText(text).width;
   }
 
@@ -21,16 +27,14 @@ export class MeasurementEngine {
     switch (element.type) {
       case "CTText":
         return this.measureText(element);
-      case "CTRect":
-        return this.measureRect(element);
+      case "CTBox":
+        return this.measureBox(element);
       case "CTCircle":
         return this.measureCircle(element);
       case "CTImage":
         return this.measureImage(element);
       case "CTLine":
         return this.measureLine(element);
-      case "CTGroup":
-        return { x: 0, y: 0, width: 0, height: 0 };
       default:
         return { x: 0, y: 0, width: 0, height: 0 };
     }
@@ -41,14 +45,25 @@ export class MeasurementEngine {
       text: string;
       fontSize?: number;
       fontFamily?: string;
+      fontWeight?: string;
+      fontStyle?: string;
       lineHeight?: number;
       maxWidth?: number;
+      letterSpacing?: number;
     };
     const fontSize = props.fontSize ?? 14;
     const fontFamily = props.fontFamily ?? "Arial";
     const lineHeight = props.lineHeight ?? fontSize;
+    const fontWeight = props.fontWeight ?? "normal";
+    const fontStyle = props.fontStyle ?? "normal";
+    const letterSpacing = props.letterSpacing ?? 0;
 
-    let width = this.measureTextWidth(props.text, fontSize, fontFamily);
+    let width = this.measureTextWidth(props.text, fontSize, fontFamily, fontWeight, fontStyle);
+
+    // Add letterSpacing contribution
+    if (letterSpacing > 0 && props.text.length > 1) {
+      width += letterSpacing * (props.text.length - 1);
+    }
 
     if (props.maxWidth && width > props.maxWidth) {
       width = props.maxWidth;
@@ -57,9 +72,11 @@ export class MeasurementEngine {
     return { x: 0, y: 0, width, height: lineHeight };
   }
 
-  private measureRect(element: CTElement): CTLayoutInfo {
-    const props = element.props as { width: number; height: number };
-    return { x: 0, y: 0, width: props.width, height: props.height };
+  private measureBox(element: CTElement): CTLayoutInfo {
+    const props = element.props as { width?: number; height?: number };
+    // CTBox 在无子元素时走 measureBox，有子元素时由 LayoutEngine 处理
+    // 如果有显式 width/height 则使用，否则返回 0（交给布局引擎）
+    return { x: 0, y: 0, width: props.width ?? 0, height: props.height ?? 0 };
   }
 
   private measureCircle(element: CTElement): CTLayoutInfo {

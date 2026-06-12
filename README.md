@@ -417,6 +417,145 @@ interface Column {
 }
 ```
 
+#### JSX 公共组件
+
+CanvasTable 提供 JSX 公共组件，可在 `jsxRender` 中使用声明式布局。`jsxRender` 从单元格左上角开始绘制，不应用内置 padding 或居中，样式完全由用户决定。根元素默认撑满单元格（`width: "100%"`、`height: "100%"`）。
+
+**可用组件：** `Box`、`Row`（= `Box { direction: "row" }`）、`Column`（= `Box { direction: "column" }`）、`Stack`（= `Box`）、`Text`、`Circle`、`Image`、`Line` + `createCTElement`
+
+**示例：**
+
+```typescript
+import { createCTElement, Box, Text, Row, Column, Circle } from 'canvas-table';
+
+{
+  key: 'status',
+  title: '状态',
+  width: 180,
+  type: 'custom',
+  render: () => ({
+    type: 'custom',
+    jsxRender: () =>
+      createCTElement(
+        Box,
+        { width: "100%", height: "100%", justify: "center", align: "center", overflow: "hidden" },
+        createCTElement(
+          Row,
+          { gap: 8, align: "center" },
+          createCTElement(Circle, { radius: 4, bgColor: '#52c41a' }),
+          createCTElement(Column, { gap: 2 },
+            createCTElement(Text, { text: '在线', fontWeight: 'bold' }),
+            createCTElement(Text, { text: '刚刚更新', fontSize: 12, color: '#8c8c8c' }),
+          ),
+        ),
+      ),
+  }),
+}
+```
+
+##### Box / Row / Column / Stack 属性
+
+Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，Stack 是 Box 的别名。
+
+**布局属性：**
+
+| 属性 | 别名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `display` | — | `"flex"` | `"flex"` | Flex 布局模式 |
+| `position` | — | `"relative"` | — | 定位模式，子元素用 x/y 定位 |
+| `flexDirection` | `direction` | `"row" \| "column" \| "row-reverse" \| "column-reverse"` | `"row"` | 排列方向 |
+| `justifyContent` | `justify` | `"flex-start" \| "flex-end" \| "center" \| "space-between" \| "space-around" \| "space-evenly"` | `"flex-start"` | 主轴对齐 |
+| `alignItems` | `align` | `"flex-start" \| "flex-end" \| "center" \| "stretch"` | `"flex-start"` | 交叉轴对齐 |
+| `alignSelf` | `selfAlign` | `"flex-start" \| "flex-end" \| "center" \| "stretch"` | — | 单个子元素交叉轴对齐覆盖 |
+| `gap` | — | `number` | `0` | 子元素间距 |
+| `padding` | — | `number \| { top?, right?, bottom?, left? }` | `0` | 内边距 |
+| `margin` | `mg` | `number \| { top?, right?, bottom?, left? }` | `0` | 外边距 |
+
+**尺寸属性：**
+
+| 属性 | 别名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `width` | — | `number \| string` | `"100%"`（根元素） | 宽度，支持百分比 `"100%"` |
+| `height` | — | `number \| string` | `"100%"`（根元素） | 高度，支持百分比 `"100%"` |
+| `minWidth` | `minW` | `number \| string` | — | 最小宽度 |
+| `maxWidth` | `maxW` | `number \| string` | — | 最大宽度 |
+| `minHeight` | `minH` | `number \| string` | — | 最小高度 |
+| `maxHeight` | `maxH` | `number \| string` | — | 最大高度 |
+
+**定位属性：**
+
+| 属性 | 类型 | 说明 |
+| --- | --- | --- |
+| `x` | `number` | 相对父容器水平偏移（仅 `position: "relative"` 模式） |
+| `y` | `number` | 相对父容器垂直偏移 |
+| `zIndex` | `number` | 绘制顺序 |
+
+**视觉属性：**
+
+| 属性 | 别名 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `backgroundColor` | `bgColor` | `string` | — | 背景颜色 |
+| `backgroundGradient` | `gradient` | `{ type: "linear", angle: number, colors: string[] } \| { type: "radial", colors: string[] }` | — | 渐变背景 |
+| `borderRadius` | `radius` | `number` | `0` | 统一圆角半径 |
+| `borderTopLeftRadius` | `borderTLR` | `number` | — | 左上圆角 |
+| `borderTopRightRadius` | `borderTRR` | `number` | — | 右上圆角 |
+| `borderBottomLeftRadius` | `borderBLR` | `number` | — | 左下圆角 |
+| `borderBottomRightRadius` | `borderBRR` | `number` | — | 右下圆角 |
+| `borderWidth` | — | `number` | — | 统一边框宽度 |
+| `borderColor` | — | `string` | — | 统一边框颜色 |
+| `border` | — | `string \| { width?: number, color?: string }` | — | 边框快捷方式 |
+| `borderTop / borderRight / borderBottom / borderLeft` | — | `{ width?: number, color?: string } \| string` | — | 单侧边框 |
+| `opacity` | — | `number` | — | 不透明度 (0-1) |
+| `overflow` | — | `"hidden" \| "clip" \| "visible"` | — | 内容溢出裁剪 |
+| `clip` | — | `boolean` | — | `clip: true` = `overflow: "hidden"` |
+| `boxShadow` | `shadow` | `{ offsetX, offsetY, blur, spread?, color } \| string` | — | 盒阴影，字符串格式 `"offsetX offsetY blur color"` |
+
+##### Text 属性
+
+| 属性 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `text` | `string` | — | 文本内容 |
+| `fontSize` | `number` | 主题 `font.size` | 字体大小 |
+| `fontFamily` | `string` | 主题 `font.family` | 字体 |
+| `fontWeight` | `"normal" \| "bold"` | `"normal"` | 字重 |
+| `fontStyle` | `"normal" \| "italic"` | `"normal"` | 字体样式 |
+| `color` | `string` | 主题 `cellText` | 文字颜色 |
+| `lineHeight` | `number` | `fontSize` | 行高 |
+| `maxWidth` | `number` | — | 最大文本宽度 |
+| `textAlign` | `"left" \| "center" \| "right"` | `"left"` | 水平对齐 |
+| `textDecoration` | `"underline" \| "line-through" \| "none"` | `"none"` | 文字装饰线 |
+| `letterSpacing` | `number` | `0` | 字符间距 |
+
+##### Circle 属性
+
+| 属性 | 别名 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `radius` | — | `number` | 圆半径 |
+| `backgroundColor` | `bgColor` | `string` | 填充颜色 |
+| `borderColor` | — | `string` | 边框颜色 |
+| `borderWidth` | — | `number` | 边框宽度 |
+| `startAngle` | — | `number` | 起始角度（弧度） |
+| `endAngle` | — | `number` | 结束角度（弧度） |
+
+##### Image 属性
+
+| 属性 | 类型 | 说明 |
+| --- | --- | --- |
+| `src` | `string` | 图片地址 |
+| `width` | `number` | 图片宽度 |
+| `height` | `number` | 图片高度 |
+| `borderRadius` | `number` | 圆角 |
+| `objectFit` | `"fill" \| "contain" \| "cover"` | 缩放模式 |
+
+##### Line 属性
+
+| 属性 | 类型 | 说明 |
+| --- | --- | --- |
+| `points` | `Array<{ x: number, y: number }>` | 线条点坐标 |
+| `strokeWidth` | `number` | 线宽 |
+| `strokeColor` | `string` | 线条颜色 |
+| `strokeLinecap` | `"butt" \| "round" \| "square"` | 端点形状 |
+
 #### 编辑校验
 
 列可以通过 `validate` 限制提交值。校验失败时不会写入 `row.data`，单元格会显示错误边框，悬浮错误单元格会显示错误信息，并触发 `onValidationError`。

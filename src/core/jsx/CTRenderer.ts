@@ -1,5 +1,13 @@
 // src/core/jsx/CTRenderer.ts
-import type { CTElement, CTLayoutInfo } from "./types";
+import type {
+  CTElement,
+  CTLayoutInfo,
+  CTLayoutNode,
+  CTBoxProps,
+  CTBoxShadow,
+  CTBorderSide,
+  CTBackgroundGradient,
+} from "./types";
 import type { TableTheme } from "../../types/index";
 import { LayoutEngine } from "./LayoutEngine";
 
@@ -13,9 +21,6 @@ import { LayoutEngine } from "./LayoutEngine";
  *   - CTCircle: y 是圆顶部，圆心在 y + radius
  *
  * - 定位模式 (position='relative')：子元素的 x, y 是相对于父容器的位置
- *   - textAlign/verticalAlign 改变锚点含义
- *   - textAlign='center' + verticalAlign='middle' → x,y 是文字中心锚点
- *   - CTRect/CTCircle: x,y 仍是左上角
  */
 export class CTRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -29,13 +34,16 @@ export class CTRenderer {
     this.theme = theme;
   }
 
-  /**
-   * Render element tree
-   */
-  render(root: CTElement, x: number, y: number): void {
-    this.layouts = this.layoutEngine.layout(root, x, y);
+  render(
+    root: CTElement,
+    x: number,
+    y: number,
+    parentSize?: { width: number; height: number },
+  ): void {
+    const layoutTree = this.layoutEngine.layoutTree(root, x, y, parentSize);
+    this.layouts = this.flattenLayoutTree(layoutTree);
     this.ctx.save();
-    this.renderElement(root, x, y);
+    this.renderLayoutNode(layoutTree);
     this.ctx.restore();
   }
 
@@ -43,153 +51,269 @@ export class CTRenderer {
     return this.layouts;
   }
 
-  private renderElement(element: CTElement, x: number, y: number): void {
-    switch (element.type) {
-      case "CTGroup":
-        this.renderGroup(element, x, y);
-        break;
-      case "CTRect":
-        this.renderRect(element, x, y);
+  private flattenLayoutTree(node: CTLayoutNode): CTLayoutInfo[] {
+    const result: CTLayoutInfo[] = [
+      {
+        x: node.x,
+        y: node.y,
+        width: node.width,
+        height: node.height,
+        zIndex: node.zIndex,
+        margin: node.margin,
+      },
+    ];
+    for (const child of node.children) {
+      result.push(...this.flattenLayoutTree(child));
+    }
+    return result;
+  }
+
+  private renderLayoutNode(node: CTLayoutNode): void {
+    switch (node.element.type) {
+      case "CTBox":
+        this.renderBoxNode(node);
         break;
       case "CTCircle":
-        this.renderCircle(element, x, y);
+        this.renderCircle(node.element, node.x, node.y);
         break;
       case "CTText":
-        this.renderText(element, x, y);
+        this.renderText(node.element, node.x, node.y, node.width);
         break;
       case "CTImage":
-        this.renderImage(element, x, y);
+        this.renderImage(node.element, node.x, node.y);
         break;
       case "CTLine":
-        this.renderLine(element, x, y);
+        this.renderLine(node.element, node.x, node.y);
         break;
     }
   }
 
-  private renderGroup(group: CTElement, x: number, y: number): void {
-    const props = group.props as {
-      backgroundColor?: string;
-      borderRadius?: number;
-      borderColor?: string;
-      borderWidth?: number;
-      width?: number;
-      height?: number;
-      display?: string;
-      position?: string;
-    };
+  private getBorderRadiusArray(
+    props: Record<string, unknown>,
+    defaultValue: number,
+  ): number | number[] {
+    const tl = (props.borderTopLeftRadius as number | undefined) ?? defaultValue;
+    const tr = (props.borderTopRightRadius as number | undefined) ?? defaultValue;
+    const br = (props.borderBottomRightRadius as number | undefined) ?? defaultValue;
+    const bl = (props.borderBottomLeftRadius as number | undefined) ?? defaultValue;
+    if (tl === tr && tr === br && br === bl) return tl;
+    return [tl, tr, br, bl];
+  }
 
-    // Draw background
-    if (props.backgroundColor) {
-      const groupLayout = this.calculateGroupBounds(
-        this.layoutEngine.layout(group, x, y),
-        x,
-        y,
-        props,
-      );
-
-      this.ctx.fillStyle = props.backgroundColor;
-      if (props.borderRadius) {
-        this.ctx.beginPath();
-        (this.ctx as any).roundRect(
-          x,
-          y,
-          groupLayout.width,
-          groupLayout.height,
-          props.borderRadius,
-        );
-        this.ctx.fill();
-      } else {
-        this.ctx.fillRect(x, y, groupLayout.width, groupLayout.height);
-      }
-
-      if (props.borderColor && props.borderWidth) {
-        this.ctx.strokeStyle = props.borderColor;
-        this.ctx.lineWidth = props.borderWidth;
-        if (props.borderRadius) {
-          this.ctx.beginPath();
-          (this.ctx as any).roundRect(
-            x,
-            y,
-            groupLayout.width,
-            groupLayout.height,
-            props.borderRadius,
-          );
-          this.ctx.stroke();
-        } else {
-          this.ctx.strokeRect(x, y, groupLayout.width, groupLayout.height);
-        }
-      }
-    }
-
-    const children = group.children || [];
-
-    if (props.position === "relative") {
-      // 定位模式：子元素用 x, y 定位，按 zIndex 顺序渲染
-      const sortedChildren = [...children].sort((a, b) => {
-        const aZ = (a.props.zIndex as number | undefined) ?? 0;
-        const bZ = (b.props.zIndex as number | undefined) ?? 0;
-        return aZ - bZ;
-      });
-
-      for (const child of sortedChildren) {
-        const childX = x + ((child.props.x as number | undefined) ?? 0);
-        const childY = y + ((child.props.y as number | undefined) ?? 0);
-        this.renderElement(child, childX, childY);
-      }
-    } else if (props.display === "flex") {
-      // Flex 模式：使用 LayoutEngine 计算的位置
-      const childLayouts = this.layoutEngine.layout(group, x, y);
-      for (let i = 0; i < children.length; i++) {
-        const childLayout = childLayouts[i];
-        if (childLayout) {
-          this.renderElement(children[i]!, childLayout.x, childLayout.y);
-        }
-      }
+  private drawRoundedRect(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    radii: number | number[],
+  ): void {
+    this.ctx.beginPath();
+    // Use simple rect when borderRadius is 0 (no per-corner variation)
+    if (typeof radii === "number" && radii === 0) {
+      this.ctx.rect(x, y, w, h);
+    } else {
+      (this.ctx as any).roundRect(x, y, w, h, radii);
     }
   }
 
-  private renderRect(element: CTElement, x: number, y: number): void {
-    const props = element.props as {
-      width: number;
-      height: number;
-      backgroundColor?: string;
-      borderRadius?: number;
-      borderColor?: string;
-      borderWidth?: number;
-      opacity?: number;
-    };
+  private createGradientFill(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    gradient: CTBackgroundGradient,
+  ): CanvasGradient {
+    if (gradient.type === "linear") {
+      const angle = gradient.angle;
+      // Convert angle to start/end points
+      const rad = ((angle - 90) * Math.PI) / 180; // CSS angle: 0=up, 90=right
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const len = Math.max(w, h);
+      const x0 = cx - (Math.cos(rad) * len) / 2;
+      const y0 = cy - (Math.sin(rad) * len) / 2;
+      const x1 = cx + (Math.cos(rad) * len) / 2;
+      const y1 = cy + (Math.sin(rad) * len) / 2;
 
-    this.ctx.save();
+      const grad = this.ctx.createLinearGradient(x0, y0, x1, y1);
+      gradient.colors.forEach((color, i) => {
+        grad.addColorStop(i / (gradient.colors.length - 1), color);
+      });
+      return grad;
+    } else {
+      // radial gradient
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const r = Math.max(w, h) / 2;
+      const grad = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      gradient.colors.forEach((color, i) => {
+        grad.addColorStop(i / (gradient.colors.length - 1), color);
+      });
+      return grad;
+    }
+  }
 
+  private normalizeBorderSide(
+    side: CTBorderSide | string | undefined,
+  ): { width: number; color: string } | undefined {
+    if (!side) return undefined;
+    if (typeof side === "string") return { width: 1, color: side };
+    if (side.width || side.color) return { width: side.width ?? 1, color: side.color ?? "#000" };
+    return undefined;
+  }
+
+  private renderBoxNode(node: CTLayoutNode): void {
+    const element = node.element;
+    const x = node.x;
+    const y = node.y;
+    const props = element.props as CTBoxProps & Record<string, unknown>;
+
+    const boxWidth = node.width;
+    const boxHeight = node.height;
+    const borderRadius = props.borderRadius ?? 0;
+    const borderRadiusArray = this.getBorderRadiusArray(props, borderRadius);
+
+    // opacity
     if (props.opacity !== undefined) {
+      this.ctx.save();
       this.ctx.globalAlpha = props.opacity;
     }
 
-    // x, y 是矩形左上角
-    if (props.backgroundColor) {
-      this.ctx.fillStyle = props.backgroundColor;
-      if (props.borderRadius) {
-        this.ctx.beginPath();
-        (this.ctx as any).roundRect(x, y, props.width, props.height, props.borderRadius);
-        this.ctx.fill();
+    // ─── Box Shadow ───
+    if (props.boxShadow) {
+      const shadow = this.normalizeShadow(props.boxShadow);
+      this.ctx.save();
+      this.ctx.shadowColor = shadow.color;
+      this.ctx.shadowBlur = shadow.blur;
+      this.ctx.shadowOffsetX = shadow.offsetX;
+      this.ctx.shadowOffsetY = shadow.offsetY;
+
+      // Draw a shape to trigger shadow (use background fill or a rect)
+      if (props.backgroundColor || props.backgroundGradient) {
+        // Shadow will be applied to the background fill below
       } else {
-        this.ctx.fillRect(x, y, props.width, props.height);
+        // No background: draw invisible rect to trigger shadow
+        this.drawRoundedRect(
+          x + (shadow.spread ?? 0),
+          y + (shadow.spread ?? 0),
+          boxWidth + (shadow.spread ?? 0) * 2,
+          boxHeight + (shadow.spread ?? 0) * 2,
+          borderRadiusArray,
+        );
+        this.ctx.fillStyle = shadow.color;
+        this.ctx.fill();
       }
+      // Shadow will carry over to background fill below
     }
 
+    // ─── Background ───
+    if (props.backgroundGradient) {
+      this.ctx.fillStyle = this.createGradientFill(
+        x,
+        y,
+        boxWidth,
+        boxHeight,
+        props.backgroundGradient,
+      );
+      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+      this.ctx.fill();
+    } else if (props.backgroundColor) {
+      this.ctx.fillStyle = props.backgroundColor;
+      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+      this.ctx.fill();
+    }
+
+    // ─── Clear shadow after background ───
+    if (props.boxShadow) {
+      this.ctx.restore(); // restore shadow state
+    }
+
+    // ─── Unified Border ───
     if (props.borderColor && props.borderWidth) {
       this.ctx.strokeStyle = props.borderColor;
       this.ctx.lineWidth = props.borderWidth;
-      if (props.borderRadius) {
+      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+      this.ctx.stroke();
+    }
+
+    // ─── Per-side Borders ───
+    const top = this.normalizeBorderSide(props.borderTop);
+    const right = this.normalizeBorderSide(props.borderRight);
+    const bottom = this.normalizeBorderSide(props.borderBottom);
+    const left = this.normalizeBorderSide(props.borderLeft);
+
+    if (top || right || bottom || left) {
+      // Draw individual borders as lines
+      if (top) {
+        this.ctx.strokeStyle = top.color;
+        this.ctx.lineWidth = top.width;
         this.ctx.beginPath();
-        (this.ctx as any).roundRect(x, y, props.width, props.height, props.borderRadius);
+        this.ctx.moveTo(x, y);
+        this.ctx.lineTo(x + boxWidth, y);
         this.ctx.stroke();
-      } else {
-        this.ctx.strokeRect(x, y, props.width, props.height);
+      }
+      if (bottom) {
+        this.ctx.strokeStyle = bottom.color;
+        this.ctx.lineWidth = bottom.width;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y + boxHeight);
+        this.ctx.lineTo(x + boxWidth, y + boxHeight);
+        this.ctx.stroke();
+      }
+      if (left) {
+        this.ctx.strokeStyle = left.color;
+        this.ctx.lineWidth = left.width;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y);
+        this.ctx.lineTo(x, y + boxHeight);
+        this.ctx.stroke();
+      }
+      if (right) {
+        this.ctx.strokeStyle = right.color;
+        this.ctx.lineWidth = right.width;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x + boxWidth, y);
+        this.ctx.lineTo(x + boxWidth, y + boxHeight);
+        this.ctx.stroke();
       }
     }
 
-    this.ctx.restore();
+    // ─── Overflow Clipping ───
+    if (props.overflow === "hidden" || props.overflow === "clip") {
+      this.ctx.save();
+      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+      this.ctx.clip();
+    }
+
+    // ─── Render Children ───
+    for (const childNode of node.children) {
+      this.renderLayoutNode(childNode);
+    }
+
+    // ─── Restore Clip ───
+    if (props.overflow === "hidden" || props.overflow === "clip") {
+      this.ctx.restore();
+    }
+
+    // ─── Restore Opacity ───
+    if (props.opacity !== undefined) {
+      this.ctx.restore();
+    }
+  }
+
+  private normalizeShadow(shadow: CTBoxShadow | string): CTBoxShadow & { spread?: number } {
+    if (typeof shadow === "string") {
+      // Parse "offsetX offsetY blur color" or "offsetX offsetY blur spread color"
+      const parts = shadow.trim().split(/\s+/);
+      const offsetX = Number(parts[0]) || 0;
+      const offsetY = Number(parts[1]) || 0;
+      const blur = Number(parts[2]) || 0;
+      const numericParts = parts.filter((p) => !isNaN(Number(p)));
+      const spread = numericParts.length > 3 ? Number(parts[3]) : 0;
+      const color = parts.slice(numericParts.length > 3 ? 4 : 3).join(" ") || "rgba(0,0,0,0.15)";
+      return { offsetX, offsetY, blur, spread, color };
+    }
+    return shadow;
   }
 
   private renderCircle(element: CTElement, x: number, y: number): void {
@@ -202,7 +326,6 @@ export class CTRenderer {
       endAngle?: number;
     };
 
-    // x, y 是圆形左上角，圆心在 (x + radius, y + radius)
     const centerX = x + props.radius;
     const centerY = y + props.radius;
     const startAngle = props.startAngle ?? 0;
@@ -223,7 +346,7 @@ export class CTRenderer {
     }
   }
 
-  private renderText(element: CTElement, x: number, y: number): void {
+  private renderText(element: CTElement, x: number, y: number, layoutWidth: number): void {
     const props = element.props as {
       text: string;
       fontSize?: number;
@@ -233,7 +356,9 @@ export class CTRenderer {
       color?: string;
       lineHeight?: number;
       maxWidth?: number;
-      // 定位属性（仅在父容器 position='relative' 时生效）
+      textAlign?: "left" | "center" | "right";
+      textDecoration?: "underline" | "line-through" | "none";
+      letterSpacing?: number;
       x?: number;
       y?: number;
       zIndex?: number;
@@ -245,26 +370,159 @@ export class CTRenderer {
     const fontStyle = props.fontStyle ?? "normal";
     const color = props.color ?? this.theme.colors.cellText;
     const lineHeight = props.lineHeight ?? fontSize;
+    const textAlign = props.textAlign ?? "left";
+    const textDecoration = props.textDecoration ?? "none";
+    const letterSpacing = props.letterSpacing ?? 0;
 
     this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
     this.ctx.fillStyle = color;
 
-    // 统一处理：x, y 是元素框左上角，文字在 lineHeight 框内垂直居中绘制
-    this.ctx.textAlign = "left";
+    // ─── Text Alignment ───
+    let textX = x;
+    if (textAlign === "center") {
+      textX = x + layoutWidth / 2;
+      this.ctx.textAlign = "center";
+    } else if (textAlign === "right") {
+      textX = x + layoutWidth;
+      this.ctx.textAlign = "right";
+    } else {
+      this.ctx.textAlign = "left";
+    }
     this.ctx.textBaseline = "middle";
-
-    const textX = x;
     const textY = y + lineHeight / 2;
 
-    if (props.maxWidth) {
-      this.ctx.fillText(props.text, textX, textY, props.maxWidth);
+    // ─── Letter Spacing ───
+    if (letterSpacing > 0) {
+      // Draw each character individually with spacing
+      this.ctx.textAlign = "left"; // Reset to left for individual positioning
+      let charX =
+        textAlign === "center"
+          ? x +
+            (layoutWidth -
+              this.getTextWidthWithSpacing(
+                props.text,
+                fontSize,
+                fontFamily,
+                fontWeight,
+                fontStyle,
+                letterSpacing,
+              )) /
+              2
+          : textAlign === "right"
+            ? x +
+              layoutWidth -
+              this.getTextWidthWithSpacing(
+                props.text,
+                fontSize,
+                fontFamily,
+                fontWeight,
+                fontStyle,
+                letterSpacing,
+              )
+            : x;
+
+      for (let i = 0; i < props.text.length; i++) {
+        const ch = props.text[i]!;
+        if (props.maxWidth) {
+          this.ctx.fillText(ch, charX, textY, props.maxWidth);
+        } else {
+          this.ctx.fillText(ch, charX, textY);
+        }
+        const charWidth = this.measureCharWidth(ch, fontSize, fontFamily, fontWeight, fontStyle);
+        charX += charWidth + letterSpacing;
+      }
     } else {
-      this.ctx.fillText(props.text, textX, textY);
+      if (props.maxWidth) {
+        this.ctx.fillText(props.text, textX, textY, props.maxWidth);
+      } else {
+        this.ctx.fillText(props.text, textX, textY);
+      }
+    }
+
+    // ─── Text Decoration ───
+    if (textDecoration === "underline") {
+      const textWidth =
+        letterSpacing > 0
+          ? this.getTextWidthWithSpacing(
+              props.text,
+              fontSize,
+              fontFamily,
+              fontWeight,
+              fontStyle,
+              letterSpacing,
+            )
+          : this.ctx.measureText(props.text).width;
+      const lineY = textY + fontSize / 2 + 1;
+      const lineX =
+        textAlign === "center"
+          ? textX - textWidth / 2
+          : textAlign === "right"
+            ? textX - textWidth
+            : textX;
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      this.ctx.moveTo(lineX, lineY);
+      this.ctx.lineTo(lineX + textWidth, lineY);
+      this.ctx.stroke();
+    } else if (textDecoration === "line-through") {
+      const textWidth =
+        letterSpacing > 0
+          ? this.getTextWidthWithSpacing(
+              props.text,
+              fontSize,
+              fontFamily,
+              fontWeight,
+              fontStyle,
+              letterSpacing,
+            )
+          : this.ctx.measureText(props.text).width;
+      const lineY = textY;
+      const lineX =
+        textAlign === "center"
+          ? textX - textWidth / 2
+          : textAlign === "right"
+            ? textX - textWidth
+            : textX;
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath();
+      this.ctx.moveTo(lineX, lineY);
+      this.ctx.lineTo(lineX + textWidth, lineY);
+      this.ctx.stroke();
     }
 
     // Reset
     this.ctx.textAlign = "left";
     this.ctx.textBaseline = "alphabetic";
+  }
+
+  private measureCharWidth(
+    ch: string,
+    fontSize: number,
+    fontFamily: string,
+    fontWeight: string,
+    fontStyle: string,
+  ): number {
+    this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+    return this.ctx.measureText(ch).width;
+  }
+
+  private getTextWidthWithSpacing(
+    text: string,
+    fontSize: number,
+    fontFamily: string,
+    fontWeight: string,
+    fontStyle: string,
+    letterSpacing: number,
+  ): number {
+    this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+    let total = 0;
+    for (let i = 0; i < text.length; i++) {
+      total += this.ctx.measureText(text[i]!).width;
+      if (i < text.length - 1) total += letterSpacing;
+    }
+    return total;
   }
 
   private renderImage(element: CTElement, x: number, y: number): void {
@@ -294,27 +552,5 @@ export class CTRenderer {
       this.ctx.lineTo(x + props.points[i]!.x, y + props.points[i]!.y);
     }
     this.ctx.stroke();
-  }
-
-  private calculateGroupBounds(
-    layouts: CTLayoutInfo[],
-    startX: number,
-    startY: number,
-    props?: { width?: number; height?: number },
-  ): CTLayoutInfo {
-    if (props?.width && props?.height) {
-      return { x: startX, y: startY, width: props.width, height: props.height };
-    }
-
-    if (layouts.length === 0) {
-      return { x: startX, y: startY, width: 0, height: 0 };
-    }
-
-    const minX = Math.min(...layouts.map((l) => l.x));
-    const maxX = Math.max(...layouts.map((l) => l.x + l.width));
-    const minY = Math.min(...layouts.map((l) => l.y));
-    const maxY = Math.max(...layouts.map((l) => l.y + l.height));
-
-    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
   }
 }

@@ -11,9 +11,6 @@ import { LayoutEngine } from "./LayoutEngine";
  *   - CTCircle: y 是圆顶部，圆心在 y + radius
  *
  * - 定位模式 (position='relative')：子元素的 x, y 是相对于父容器的位置
- *   - textAlign/verticalAlign 改变锚点含义
- *   - textAlign='center' + verticalAlign='middle' → x,y 是文字中心锚点
- *   - CTRect/CTCircle: x,y 仍是左上角
  */
 export declare class CTRenderer {
     private ctx;
@@ -21,18 +18,24 @@ export declare class CTRenderer {
     private theme;
     private layouts;
     constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme);
-    /**
-     * Render element tree
-     */
-    render(root: CTElement, x: number, y: number): void;
+    render(root: CTElement, x: number, y: number, parentSize?: {
+        width: number;
+        height: number;
+    }): void;
     getLayouts(): CTLayoutInfo[];
-    private renderElement;
-    private renderGroup;
-    private renderRect;
+    private flattenLayoutTree;
+    private renderLayoutNode;
+    private getBorderRadiusArray;
+    private drawRoundedRect;
+    private createGradientFill;
+    private normalizeBorderSide;
+    private renderBoxNode;
+    private normalizeShadow;
     private renderCircle;
     private renderText;
+    private measureCharWidth;
+    private getTextWidthWithSpacing;
     private renderImage;
     private renderLine;
-    private calculateGroupBounds;
 }
 //# sourceMappingURL=CTRenderer.d.ts.map

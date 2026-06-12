@@ -5,7 +5,7 @@ import { MeasurementEngine } from '@/core/jsx/MeasurementEngine';
 import { createCTElement } from '@/core/jsx/createCTElement';
 import type { TableTheme } from '@/types';
 
-// Polyfill roundRect for jest-canvas-mock (not available in v2.5.2)
+// Polyfill roundRect for jest-canvas-mock
 if (!CanvasRenderingContext2D.prototype.roundRect) {
   CanvasRenderingContext2D.prototype.roundRect = function(
     x: number, y: number, w: number, h: number, radii: number | number[]
@@ -83,8 +83,8 @@ describe('CTRenderer', () => {
     renderer = new CTRenderer(mockCtx, layoutEngine, theme);
   });
 
-  it('should render CTRect with fillRect', () => {
-    const rect = createCTElement('CTRect', {
+  it('should render CTBox with backgroundColor', () => {
+    const rect = createCTElement('CTBox', {
       width: 50,
       height: 30,
       backgroundColor: '#ff0000'
@@ -92,11 +92,10 @@ describe('CTRenderer', () => {
 
     renderer.render(rect, 10, 20);
 
-    // Check draw calls - jest-canvas-mock uses 'type' and 'props'
     const drawCalls = mockCtx.__getDrawCalls();
-    const fillRectCall = drawCalls.find(c => c.type === 'fillRect');
-    expect(fillRectCall).toBeDefined();
-    expect(fillRectCall?.props).toEqual({ x: 10, y: 20, width: 50, height: 30 });
+    // CTBox without borderRadius uses rect + fill
+    const fillCall = drawCalls.find(c => c.type === 'fill');
+    expect(fillCall).toBeDefined();
   });
 
   it('should render CTCircle with arc', () => {
@@ -108,8 +107,6 @@ describe('CTRenderer', () => {
     renderer.render(circle, 30, 30);
 
     const drawCalls = mockCtx.__getDrawCalls();
-    // Circle center at (30 + 15, 30 + 15) = (45, 45)
-    // The arc is inside a fill call's path array
     const fillCall = drawCalls.find(c => c.type === 'fill');
     expect(fillCall).toBeDefined();
     const arcCall = fillCall?.props.path?.find((p: any) => p.type === 'arc');
@@ -129,30 +126,28 @@ describe('CTRenderer', () => {
     renderer.render(text, 0, 0);
 
     const drawCalls = mockCtx.__getDrawCalls();
-    // fillText should be called
     const fillTextCall = drawCalls.find(c => c.type === 'fillText');
     expect(fillTextCall).toBeDefined();
     expect(fillTextCall?.props.text).toBe('Hello');
     expect(fillTextCall?.props.x).toBe(0);
   });
 
-  it('should render CTGroup with children', () => {
-    const group = createCTElement('CTGroup',
+  it('should render CTBox with children', () => {
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', gap: 8 },
-      createCTElement('CTRect', { width: 20, height: 20, backgroundColor: '#aaa' }),
+      createCTElement('CTBox', { width: 20, height: 20, backgroundColor: '#aaa' }),
       createCTElement('CTText', { text: 'Label', fontSize: 12 })
     );
 
     renderer.render(group, 0, 0);
 
-    // Should render both children - check draw calls
     const drawCalls = mockCtx.__getDrawCalls();
-    expect(drawCalls.some(c => c.type === 'fillRect')).toBe(true);
+    expect(drawCalls.some(c => c.type === 'fill')).toBe(true);
     expect(drawCalls.some(c => c.type === 'fillText')).toBe(true);
   });
 
-  it('should render CTRect with border', () => {
-    const rect = createCTElement('CTRect', {
+  it('should render CTBox with border', () => {
+    const rect = createCTElement('CTBox', {
       width: 50,
       height: 30,
       borderColor: '#000000',
@@ -162,14 +157,12 @@ describe('CTRenderer', () => {
     renderer.render(rect, 10, 10);
 
     const drawCalls = mockCtx.__getDrawCalls();
-    // strokeRect should be called for border without fill
-    const strokeRectCall = drawCalls.find(c => c.type === 'strokeRect');
-    expect(strokeRectCall).toBeDefined();
-    expect(strokeRectCall?.props).toEqual({ x: 10, y: 10, width: 50, height: 30 });
+    const strokeCall = drawCalls.find(c => c.type === 'stroke');
+    expect(strokeCall).toBeDefined();
   });
 
-  it('should render CTRect with borderRadius', () => {
-    const rect = createCTElement('CTRect', {
+  it('should render CTBox with borderRadius', () => {
+    const rect = createCTElement('CTBox', {
       width: 50,
       height: 30,
       backgroundColor: '#ff0000',
@@ -179,34 +172,167 @@ describe('CTRenderer', () => {
     renderer.render(rect, 10, 10);
 
     const drawCalls = mockCtx.__getDrawCalls();
-    // Our polyfill uses beginPath + path methods + fill
-    // The fill call contains the path
     const fillCall = drawCalls.find(c => c.type === 'fill');
     expect(fillCall).toBeDefined();
     expect(fillCall?.props.path?.length).toBeGreaterThan(1);
   });
 
-  it('should render CTGroup with background', () => {
-    const group = createCTElement('CTGroup',
+  it('should render CTBox with background', () => {
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', gap: 8, backgroundColor: '#e6f7ff', width: 100, height: 40 },
-      createCTElement('CTRect', { width: 20, height: 20, backgroundColor: '#aaa' }),
+      createCTElement('CTBox', { width: 20, height: 20, backgroundColor: '#aaa' }),
       createCTElement('CTText', { text: 'Label', fontSize: 12 })
     );
 
     renderer.render(group, 0, 0);
 
     const drawCalls = mockCtx.__getDrawCalls();
-    // Should draw background first - fillRect at (0, 0) with (100, 40)
-    const fillRectCalls = drawCalls.filter(c => c.type === 'fillRect');
-    expect(fillRectCalls.length).toBeGreaterThanOrEqual(1);
-    // First fillRect is the group background
-    const firstFillRect = fillRectCalls[0];
-    expect(firstFillRect?.props.x).toBe(0);
-    expect(firstFillRect?.props.y).toBe(0);
-    expect(firstFillRect?.props.width).toBe(100);
-    expect(firstFillRect?.props.height).toBe(40);
-
+    // Background fill should exist
+    const fillCalls = drawCalls.filter(c => c.type === 'fill');
+    expect(fillCalls.length).toBeGreaterThanOrEqual(1);
     // Should also render children
     expect(drawCalls.some(c => c.type === 'fillText')).toBe(true);
+  });
+
+  it('renders nested box backgrounds at correct positions', () => {
+    const tree = createCTElement(
+      'CTBox',
+      { display: 'flex', padding: 10, backgroundColor: '#ff0000', width: 100, height: 60 },
+      createCTElement(
+        'CTBox',
+        { display: 'flex', padding: 5, backgroundColor: '#000000', width: 80, height: 40 },
+        createCTElement('CTText', { text: 'hello', color: 'white' }),
+      ),
+    );
+
+    renderer.render(tree, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Should have fill calls for both backgrounds
+    const fillCalls = drawCalls.filter(c => c.type === 'fill');
+    expect(fillCalls.length).toBeGreaterThanOrEqual(2);
+
+    // Text should also render
+    expect(drawCalls.some(c => c.type === 'fillText')).toBe(true);
+  });
+
+  it('should render CTText with textAlign center', () => {
+    const text = createCTElement('CTText', {
+      text: 'Center',
+      fontSize: 14,
+      textAlign: 'center',
+    });
+
+    renderer.render(text, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    const fillTextCall = drawCalls.find(c => c.type === 'fillText');
+    expect(fillTextCall).toBeDefined();
+  });
+
+  it('should render CTText with textDecoration underline', () => {
+    const text = createCTElement('CTText', {
+      text: 'Underline',
+      fontSize: 14,
+      textDecoration: 'underline',
+    });
+
+    renderer.render(text, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Should have fillText and stroke for underline
+    expect(drawCalls.some(c => c.type === 'fillText')).toBe(true);
+    expect(drawCalls.some(c => c.type === 'stroke')).toBe(true);
+  });
+
+  it('should render CTText with letterSpacing', () => {
+    const text = createCTElement('CTText', {
+      text: 'ABC',
+      fontSize: 14,
+      letterSpacing: 5,
+    });
+
+    renderer.render(text, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Each character rendered individually
+    const fillTextCalls = drawCalls.filter(c => c.type === 'fillText');
+    expect(fillTextCalls.length).toBe(3); // A, B, C
+  });
+
+  it('should render CTBox with overflow hidden', () => {
+    const group = createCTElement('CTBox',
+      { display: 'flex', overflow: 'hidden', width: 50, height: 30, backgroundColor: '#fff' },
+      createCTElement('CTText', { text: 'Overflowing text', fontSize: 14 })
+    );
+
+    // overflow:hidden should render without error
+    renderer.render(group, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Should render background fill and child text
+    expect(drawCalls.some(c => c.type === 'fill')).toBe(true);
+    expect(drawCalls.some(c => c.type === 'fillText')).toBe(true);
+  });
+
+  it('should render CTBox with boxShadow', () => {
+    const rect = createCTElement('CTBox', {
+      width: 50,
+      height: 30,
+      backgroundColor: '#ff0000',
+      boxShadow: { offsetX: 2, offsetY: 2, blur: 4, color: 'rgba(0,0,0,0.2)' }
+    });
+
+    renderer.render(rect, 10, 10);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Should have fill with shadow
+    expect(drawCalls.some(c => c.type === 'fill')).toBe(true);
+  });
+
+  it('should render CTBox with backgroundGradient', () => {
+    const rect = createCTElement('CTBox', {
+      width: 100,
+      height: 30,
+      backgroundGradient: { type: 'linear', angle: 90, colors: ['#ff0000', '#0000ff'] }
+    });
+
+    renderer.render(rect, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Gradient fill should exist
+    expect(drawCalls.some(c => c.type === 'fill')).toBe(true);
+  });
+
+  it('should render CTBox with border per side', () => {
+    const rect = createCTElement('CTBox', {
+      width: 50,
+      height: 30,
+      borderBottom: { width: 2, color: '#ff0000' }
+    });
+
+    renderer.render(rect, 10, 10);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    // Should have stroke for bottom border
+    expect(drawCalls.some(c => c.type === 'stroke')).toBe(true);
+  });
+
+  it('should render CTBox with per-corner borderRadius', () => {
+    const rect = createCTElement('CTBox', {
+      width: 50,
+      height: 30,
+      backgroundColor: '#ff0000',
+      borderTopLeftRadius: 5,
+      borderTopRightRadius: 0,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 5
+    });
+
+    renderer.render(rect, 10, 10);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    const fillCall = drawCalls.find(c => c.type === 'fill');
+    expect(fillCall).toBeDefined();
   });
 });

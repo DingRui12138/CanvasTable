@@ -13,7 +13,7 @@
         background: #f5f5f5;
       }
       #container {
-        width: 800px;
+        width: 1100px;
         height: 500px;
         background: white;
         border-radius: 8px;
@@ -33,15 +33,37 @@
     <h1>JSX Custom Column Demo</h1>
     <div id="container"></div>
     <div class="info">
-      This demo shows JSX-style declarative rendering for custom columns.<br />
-      <strong>Columns:</strong> Name | Status (indicator + text) | Progress (bar
-      + percent) | Actions (buttons)
+      This demo shows JSX-style declarative rendering for custom columns with
+      new style support.<br />
+      <strong>New styles:</strong> margin, minWidth/maxWidth,
+      minHeight/maxHeight, alignSelf, overflow, boxShadow, borderRadius per
+      corner, border per side, textAlign, textDecoration, letterSpacing,
+      backgroundGradient<br />
+      <strong>Columns:</strong> Name | Status | Progress | Priority | Status
+      Card | Tag | Shadow Tag | Gradient
     </div>
     <script src="../dist/canvas-table.umd.cjs"></script>
     <script>
-      // UMD bundle exposes CanvasTable as namespace, use .default or .CanvasTable
       const CanvasTableClass = CanvasTable.default || CanvasTable.CanvasTable;
-      // Constructor signature: (container: HTMLElement | string, props: CanvasTableProps)
+      // JSX 公共组件从 UMD bundle 中获取
+      const {
+        createCTElement,
+        Box,
+        Text,
+        Row,
+        Column,
+        Circle,
+        Stack,
+        Image,
+        Line,
+      } = CanvasTable;
+
+      const statusColors = {
+        active: "#52c41a",
+        inactive: "#ff4d4f",
+        pending: "#faad14",
+      };
+
       const table = new CanvasTableClass(document.getElementById("container"), {
         rows: [
           {
@@ -51,6 +73,7 @@
               status: "active",
               progress: 85,
               priority: "high",
+              tag: "VIP",
             },
           },
           {
@@ -60,6 +83,7 @@
               status: "inactive",
               progress: 30,
               priority: "low",
+              tag: "New",
             },
           },
           {
@@ -69,6 +93,7 @@
               status: "pending",
               progress: 60,
               priority: "medium",
+              tag: "Trial",
             },
           },
           {
@@ -78,6 +103,7 @@
               status: "active",
               progress: 100,
               priority: "high",
+              tag: "VIP",
             },
           },
           {
@@ -87,36 +113,38 @@
               status: "inactive",
               progress: 0,
               priority: "low",
+              tag: "New",
             },
           },
         ],
         columns: [
-          { key: "name", title: "Name", width: 100 },
+          { key: "name", field: "name", title: "Name", width: 100 },
+
+          // 列1：使用底层 CTBox 图元（已从 CTGroup/CTRect 合并为 CTBox）
           {
             key: "status",
             title: "Status",
+            field: "status",
             width: 120,
             render: (value) => ({
               type: "custom",
               jsxRender: () => ({
-                type: "CTGroup",
+                type: "CTBox",
                 props: {
                   display: "flex",
                   flexDirection: "row",
-                  gap: 6,
+                  width: "100%",
+                  height: "100%",
+                  justifyContent: "center",
                   alignItems: "center",
+                  gap: 6,
                 },
                 children: [
                   {
                     type: "CTCircle",
                     props: {
                       radius: 6,
-                      backgroundColor:
-                        value === "active"
-                          ? "#52c41a"
-                          : value === "inactive"
-                            ? "#ff4d4f"
-                            : "#faad14",
+                      backgroundColor: statusColors[value] || "#999",
                     },
                     children: [],
                   },
@@ -133,9 +161,12 @@
               }),
             }),
           },
+
+          // 列2：进度条（CTBox 底层图元）
           {
             key: "progress",
             title: "Progress",
+            field: "progress",
             width: 180,
             render: (value) => ({
               type: "custom",
@@ -153,26 +184,28 @@
                         : "#ff4d4f";
 
                 return {
-                  type: "CTGroup",
+                  type: "CTBox",
                   props: {
                     display: "flex",
                     flexDirection: "row",
-                    gap: 8,
+                    width: "100%",
+                    height: "100%",
+                    justifyContent: "center",
                     alignItems: "center",
+                    gap: 8,
+                    overflow: "hidden",
                   },
                   children: [
-                    // Progress bar container (using position='relative' for overlapping)
                     {
-                      type: "CTGroup",
+                      type: "CTBox",
                       props: {
                         position: "relative",
                         width: barWidth,
                         height: barHeight,
                       },
                       children: [
-                        // Background bar
                         {
-                          type: "CTRect",
+                          type: "CTBox",
                           props: {
                             x: 0,
                             y: 0,
@@ -184,9 +217,8 @@
                           },
                           children: [],
                         },
-                        // Fill bar
                         {
-                          type: "CTRect",
+                          type: "CTBox",
                           props: {
                             x: 0,
                             y: 0,
@@ -200,7 +232,6 @@
                         },
                       ],
                     },
-                    // Percentage text
                     {
                       type: "CTText",
                       props: {
@@ -216,9 +247,12 @@
               },
             }),
           },
+
+          // 列3：优先级标签（CTBox 底层图元）
           {
             key: "priority",
             title: "Priority",
+            field: "priority",
             width: 100,
             render: (value) => ({
               type: "custom",
@@ -229,25 +263,22 @@
                   low: { bg: "#52c41a", text: "#ffffff" },
                 };
                 const c = colors[value] || colors.medium;
-
                 return {
-                  type: "CTGroup",
+                  type: "CTBox",
                   props: {
                     display: "flex",
-                    flexDirection: "row",
+                    width: "100%",
+                    height: "100%",
                     justifyContent: "center",
                     alignItems: "center",
-                    height: 24,
                   },
                   children: [
-                    // Label container with positioned children
                     {
-                      type: "CTGroup",
+                      type: "CTBox",
                       props: { position: "relative", width: 70, height: 24 },
                       children: [
-                        // Background rect
                         {
-                          type: "CTRect",
+                          type: "CTBox",
                           props: {
                             x: 0,
                             y: 0,
@@ -259,9 +290,8 @@
                           },
                           children: [],
                         },
-                        // Text container - 使用 flex 居中
                         {
-                          type: "CTGroup",
+                          type: "CTBox",
                           props: {
                             display: "flex",
                             justifyContent: "center",
@@ -290,6 +320,159 @@
                   ],
                 };
               },
+            }),
+          },
+
+          // 列4：使用 JSX 公共组件（Row, Column, Circle, Text）
+          {
+            key: "status2",
+            field: "status",
+            title: "Status Card",
+            width: 180,
+            render: (value) => ({
+              type: "custom",
+              jsxRender: () =>
+                createCTElement(
+                  Box,
+                  {
+                    width: "100%",
+                    height: "100%",
+                    justify: "center",
+                    align: "center",
+                    overflow: "hidden",
+                  },
+                  createCTElement(
+                    Row,
+                    { gap: 8, align: "center", padding: 0 },
+                    createCTElement(Circle, {
+                      radius: 5,
+                      bgColor: statusColors[value] || "#999",
+                    }),
+                    createCTElement(
+                      Column,
+                      { gap: 2 },
+                      createCTElement(Text, {
+                        text: String(value),
+                        fontWeight: "bold",
+                        fontSize: 13,
+                      }),
+                      createCTElement(Text, {
+                        text:
+                          value === "active"
+                            ? "在线运行"
+                            : value === "inactive"
+                              ? "已下线"
+                              : "等待审核",
+                        fontSize: 11,
+                        color: "#8c8c8c",
+                      }),
+                    ),
+                  ),
+                ),
+            }),
+          },
+
+          // 列5：使用 JSX 公共组件（Box）做标签 — 带 boxShadow
+          {
+            key: "tag",
+            field: "tag",
+            title: "Tag",
+            width: 80,
+            render: (value) => ({
+              type: "custom",
+              jsxRender: () => {
+                const tagColors = {
+                  VIP: { bg: "#1890ff", text: "#ffffff" },
+                  New: { bg: "#52c41a", text: "#ffffff" },
+                  Trial: { bg: "#faad14", text: "#ffffff" },
+                };
+                const c = tagColors[value] || { bg: "#f0f0f0", text: "#333" };
+                return createCTElement(
+                  Box,
+                  {
+                    width: "100%",
+                    height: "100%",
+                    justify: "center",
+                    align: "center",
+                  },
+                  createCTElement(
+                    Box,
+                    {
+                      bgColor: c.bg,
+                      radius: 4,
+                      padding: 0,
+                      align: "center",
+                      justify: "center",
+                      width: 60,
+                      height: 24,
+                      boxShadow: {
+                        offsetX: 1,
+                        offsetY: 2,
+                        blur: 4,
+                        color: "rgba(0,0,0,0.15)",
+                      },
+                    },
+                    createCTElement(Text, {
+                      text: String(value),
+                      fontSize: 11,
+                      fontWeight: "bold",
+                      color: c.text,
+                    }),
+                  ),
+                );
+              },
+            }),
+          },
+
+          // 列6：渐变背景卡片 + textAlign + textDecoration
+          {
+            key: "gradient",
+            field: "name",
+            title: "Gradient",
+            width: 120,
+            render: (value) => ({
+              type: "custom",
+              jsxRender: () =>
+                createCTElement(
+                  Box,
+                  {
+                    width: "100%",
+                    height: "100%",
+                    justify: "center",
+                    align: "center",
+                    backgroundGradient: {
+                      type: "linear",
+                      angle: 90,
+                      colors: ["#1890ff", "#36cfc9"],
+                    },
+                    overflow: "hidden",
+                  },
+                  createCTElement(
+                    Box,
+                    {
+                      width: 110,
+                      height: 28,
+                      radius: {
+                        topLeft: 14,
+                        bottomLeft: 14,
+                        topRight: 0,
+                        bottomRight: 0,
+                      },
+                      align: "center",
+                      justify: "center",
+                      overflow: "hidden",
+                    },
+                    createCTElement(Text, {
+                      text: String(value),
+                      fontSize: 12,
+                      fontWeight: "bold",
+                      color: "#ffffff",
+                      textAlign: "center",
+                      textDecoration: "underline",
+                      letterSpacing: 1,
+                    }),
+                  ),
+                ),
             }),
           },
         ],

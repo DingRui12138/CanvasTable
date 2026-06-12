@@ -7,10 +7,10 @@ import type { CTElement, CTLayoutInfo } from "./types";
 export declare class MeasurementEngine {
     private ctx;
     constructor(ctx: CanvasRenderingContext2D);
-    measureTextWidth(text: string, fontSize: number, fontFamily: string): number;
+    measureTextWidth(text: string, fontSize: number, fontFamily: string, fontWeight?: string, fontStyle?: string): number;
     measureElement(element: CTElement): CTLayoutInfo;
     private measureText;
-    private measureRect;
+    private measureBox;
     private measureCircle;
     private measureImage;
     private measureLine;

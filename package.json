@@ -12,6 +12,11 @@
       "import": "./dist/canvas-table.js",
       "require": "./dist/canvas-table.umd.cjs",
       "types": "./dist/src/index.d.ts"
+    },
+    "./jsx": {
+      "import": "./dist/canvas-table.js",
+      "require": "./dist/canvas-table.umd.cjs",
+      "types": "./dist/src/core/jsx/index.d.ts"
     }
   },
   "files": [

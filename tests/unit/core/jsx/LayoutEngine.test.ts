@@ -15,7 +15,7 @@ describe('LayoutEngine', () => {
   });
 
   it('should layout single element at origin', () => {
-    const rect = createCTElement('CTRect', { width: 50, height: 30 });
+    const rect = createCTElement('CTBox', { width: 50, height: 30 });
     const layouts = engine.layout(rect, 0, 0);
 
     expect(layouts[0]!.x).toBe(0);
@@ -25,10 +25,10 @@ describe('LayoutEngine', () => {
   });
 
   it('should layout row direction with gap', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', gap: 8 },
-      createCTElement('CTRect', { width: 20, height: 20 }),
-      createCTElement('CTRect', { width: 30, height: 20 })
+      createCTElement('CTBox', { width: 20, height: 20 }),
+      createCTElement('CTBox', { width: 30, height: 20 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -43,10 +43,10 @@ describe('LayoutEngine', () => {
   });
 
   it('should layout column direction', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'column', gap: 4 },
-      createCTElement('CTRect', { width: 20, height: 15 }),
-      createCTElement('CTRect', { width: 20, height: 15 })
+      createCTElement('CTBox', { width: 20, height: 15 }),
+      createCTElement('CTBox', { width: 20, height: 15 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -58,9 +58,9 @@ describe('LayoutEngine', () => {
   });
 
   it('should handle justifyContent center', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', justifyContent: 'center', width: 100 },
-      createCTElement('CTRect', { width: 30, height: 20 })
+      createCTElement('CTBox', { width: 30, height: 20 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -70,9 +70,9 @@ describe('LayoutEngine', () => {
   });
 
   it('should handle alignItems center', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', alignItems: 'center', height: 40 },
-      createCTElement('CTRect', { width: 20, height: 20 })
+      createCTElement('CTBox', { width: 20, height: 20 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -82,10 +82,10 @@ describe('LayoutEngine', () => {
   });
 
   it('should handle justifyContent space-between', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', justifyContent: 'space-between', width: 100 },
-      createCTElement('CTRect', { width: 20, height: 20 }),
-      createCTElement('CTRect', { width: 20, height: 20 })
+      createCTElement('CTBox', { width: 20, height: 20 }),
+      createCTElement('CTBox', { width: 20, height: 20 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -96,9 +96,9 @@ describe('LayoutEngine', () => {
   });
 
   it('should handle padding', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', padding: 10 },
-      createCTElement('CTRect', { width: 20, height: 20 })
+      createCTElement('CTBox', { width: 20, height: 20 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -109,9 +109,9 @@ describe('LayoutEngine', () => {
   });
 
   it('should handle asymmetric padding', () => {
-    const group = createCTElement('CTGroup',
+    const group = createCTElement('CTBox',
       { display: 'flex', padding: { top: 5, left: 10, right: 5, bottom: 8 } },
-      createCTElement('CTRect', { width: 20, height: 20 })
+      createCTElement('CTBox', { width: 20, height: 20 })
     );
 
     const layouts = engine.layout(group, 0, 0);
@@ -121,15 +121,15 @@ describe('LayoutEngine', () => {
   });
 
   it('should handle nested groups', () => {
-    const inner = createCTElement('CTGroup',
+    const inner = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'column', gap: 4 },
-      createCTElement('CTRect', { width: 20, height: 10 }),
-      createCTElement('CTRect', { width: 20, height: 10 })
+      createCTElement('CTBox', { width: 20, height: 10 }),
+      createCTElement('CTBox', { width: 20, height: 10 })
     );
-    const outer = createCTElement('CTGroup',
+    const outer = createCTElement('CTBox',
       { display: 'flex', flexDirection: 'row', gap: 8 },
       inner,
-      createCTElement('CTRect', { width: 20, height: 24 })
+      createCTElement('CTBox', { width: 20, height: 24 })
     );
 
     const layouts = engine.layout(outer, 0, 0);
@@ -140,8 +140,133 @@ describe('LayoutEngine', () => {
     // Inner group second child at (0, 14)
     expect(layouts[1]!.x).toBe(0);
     expect(layouts[1]!.y).toBe(14);
+    // Inner group layout (width=20, height=24)
+    expect(layouts[2]!.x).toBe(0);
+    expect(layouts[2]!.width).toBe(20);
+    expect(layouts[2]!.height).toBe(24);
     // Outer rect at (20 + 8 = 28, 0)
-    expect(layouts[2]!.x).toBe(28);
-    expect(layouts[2]!.y).toBe(0);
+    expect(layouts[3]!.x).toBe(28);
+    expect(layouts[3]!.y).toBe(0);
+  });
+
+  // ─── New style tests ───
+
+  it('should handle margin on child items', () => {
+    const group = createCTElement('CTBox',
+      { display: 'flex', flexDirection: 'row', alignItems: 'center', height: 40 },
+      createCTElement('CTBox', { width: 20, height: 20, margin: { top: 5, left: 10 } })
+    );
+
+    const layouts = engine.layout(group, 0, 0);
+
+    // Child position: (0 + 10 margin.left, 0 + (40-20)/2 center + 5 margin.top)
+    // Without margin, child would be at y=10 (center in 40). With margin.top=5, child is at y=10+5=15
+    // Wait - margin is included in size for flex spacing, then offset from that
+    // The child size including margin: (20+10, 20+5) = (30, 25)
+    // center offset = (40-25)/2 = 7.5
+    // child x = 0 + 0 + 10 = 10, child y = 0 + 7.5 + 5 = 12.5
+    expect(layouts[0]!.x).toBe(10);
+  });
+
+  it('should handle minWidth/maxWidth size constraints', () => {
+    const rect = createCTElement('CTBox', { width: 50, height: 30, minWidth: 60 });
+    const layouts = engine.layout(rect, 0, 0);
+
+    // Width should be clamped to minWidth: max(60, 50) = 60
+    expect(layouts[0]!.width).toBe(60);
+  });
+
+  it('should handle maxWidth size constraints', () => {
+    const rect = createCTElement('CTBox', { width: 100, height: 30, maxWidth: 80 });
+    const layouts = engine.layout(rect, 0, 0);
+
+    // Width should be clamped to maxWidth: min(80, 100) = 80
+    expect(layouts[0]!.width).toBe(80);
+  });
+
+  it('should handle alignSelf override', () => {
+    const group = createCTElement('CTBox',
+      { display: 'flex', flexDirection: 'row', alignItems: 'flex-start', height: 40 },
+      createCTElement('CTBox', { width: 20, height: 20, alignSelf: 'center' })
+    );
+
+    const layouts = engine.layout(group, 0, 0);
+
+    // alignItems is flex-start, but child has alignSelf=center → (40-20)/2 = 10
+    expect(layouts[0]!.y).toBe(10);
+  });
+
+  it('should handle justifyContent space-around', () => {
+    const group = createCTElement('CTBox',
+      { display: 'flex', flexDirection: 'row', justifyContent: 'space-around', width: 100 },
+      createCTElement('CTBox', { width: 20, height: 20 }),
+      createCTElement('CTBox', { width: 20, height: 20 })
+    );
+
+    const tree = engine.layoutTree(group, 0, 0);
+
+    // Total child width = 40, available = 100, space per child = 60/2 = 30
+    // First child: offset = 30/2 = 15, x = 15
+    // Second child: offset = 15 + 20 + 30 = 65
+    expect(tree.children[0]!.x).toBe(15);
+    expect(tree.children[1]!.x).toBe(65);
+  });
+
+  it('should handle justifyContent space-evenly', () => {
+    const group = createCTElement('CTBox',
+      { display: 'flex', flexDirection: 'row', justifyContent: 'space-evenly', width: 100 },
+      createCTElement('CTBox', { width: 20, height: 20 }),
+      createCTElement('CTBox', { width: 20, height: 20 })
+    );
+
+    const tree = engine.layoutTree(group, 0, 0);
+
+    // Total child width = 40, available = 100, space = 60/3 = 20
+    // First child: x = 20, second child: x = 20 + 20 + 20 = 60
+    expect(tree.children[0]!.x).toBe(20);
+    expect(tree.children[1]!.x).toBe(60);
+  });
+
+  describe('layoutTree', () => {
+    it('returns tree structure with correct nested positions', () => {
+      const tree = createCTElement(
+        'CTBox',
+        { display: 'flex', padding: 10, width: 100, height: 60 },
+        createCTElement(
+          'CTBox',
+          { display: 'flex', padding: 5, width: 80, height: 40 },
+          createCTElement('CTText', { text: 'hello' }),
+        ),
+      );
+
+      const root = engine.layoutTree(tree, 0, 0);
+
+      expect(root.x).toBe(0);
+      expect(root.y).toBe(0);
+      expect(root.width).toBe(100);
+      expect(root.height).toBe(60);
+      expect(root.children).toHaveLength(1);
+
+      const innerBox = root.children[0]!;
+      expect(innerBox.x).toBe(10);
+      expect(innerBox.y).toBe(10);
+      expect(innerBox.width).toBe(80);
+      expect(innerBox.height).toBe(40);
+      expect(innerBox.children).toHaveLength(1);
+
+      const innerText = innerBox.children[0]!;
+      expect(innerText.x).toBe(15);
+      expect(innerText.y).toBe(15);
+    });
+
+    it('handles leaf elements without children', () => {
+      const text = createCTElement('CTText', { text: 'hello' });
+      const node = engine.layoutTree(text, 50, 30);
+
+      expect(node.element.type).toBe('CTText');
+      expect(node.x).toBe(50);
+      expect(node.y).toBe(30);
+      expect(node.children).toHaveLength(0);
+    });
   });
 });

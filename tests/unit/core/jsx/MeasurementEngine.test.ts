@@ -42,9 +42,9 @@ describe('MeasurementEngine', () => {
     expect(size.height).toBe(18);
   });
 
-  it('should return fixed size for CTRect', () => {
+  it('should return fixed size for CTBox', () => {
     const rectElement: CTElement = {
-      type: 'CTRect',
+      type: 'CTBox',
       props: { width: 50, height: 30 },
       children: [],
     };

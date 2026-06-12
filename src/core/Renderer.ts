@@ -2507,6 +2507,9 @@ export class Renderer {
       }
 
       // JSX render handling - before customRender
+      // 自定义渲染将完整的单元格交给用户控制，从左上角 (x, y) 开始绘制，
+      // 不应用内置 padding 或居中，样式（颜色、间距等）完全由用户决定。
+      // 传入单元格尺寸给 LayoutEngine，允许根元素使用 "100%" 撑满单元格。
       if (type === CellTypes.CUSTOM && renderResult.jsxRender) {
         this.measureRender("jsx", () => {
           const elementTree = renderResult.jsxRender!();
@@ -2514,35 +2517,7 @@ export class Renderer {
           const layoutEngine = new LayoutEngine(measurementEngine);
           const ctRenderer = new CTRenderer(this.ctx, layoutEngine, this.theme);
 
-          // 计算元素树尺寸，以便在单元格内垂直居中
-          const treeLayouts = layoutEngine.layout(elementTree, 0, 0);
-          let treeHeight = 0;
-          for (const layout of treeLayouts) {
-            const bottom = layout.y + layout.height;
-            if (bottom > treeHeight) treeHeight = bottom;
-          }
-
-          // 计算垂直居中偏移
-          // 如果内容高度小于可用空间（height - padding*2），则使用 padding + 居中偏移
-          // 如果内容高度大于可用空间，则忽略 padding，直接居中于整个单元格
-          const availableHeight = height - padding * 2;
-          let yOffset: number;
-          let startX: number;
-          let startY: number;
-
-          if (treeHeight <= availableHeight) {
-            // 内容在 padding 区域内居中
-            yOffset = (availableHeight - treeHeight) / 2;
-            startX = x + padding;
-            startY = y + padding + yOffset;
-          } else {
-            // 内容超出 padding 区域，居中于整个单元格
-            yOffset = (height - treeHeight) / 2;
-            startX = x + padding;
-            startY = y + yOffset;
-          }
-
-          ctRenderer.render(elementTree, startX, startY);
+          ctRenderer.render(elementTree, x, y, { width, height });
         });
         return;
       }
