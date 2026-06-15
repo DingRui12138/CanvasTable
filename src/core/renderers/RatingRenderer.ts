@@ -16,8 +16,11 @@ export class RatingRenderer extends BaseCellRenderer {
     const config = value as RatingConfig;
     const ratingValue = config.value ?? 0;
     const max = config.max ?? 5;
-    const starSize = config.starSize ?? 16;
+    const configuredStarSize = config.starSize ?? 16;
     const allowHalf = config.allowHalf ?? false;
+
+    // 当 cell 宽度不足以容纳所有星星时，按 cell 宽度等比缩小，避免越界绘制到相邻列
+    const starSize = Math.min(configuredStarSize, Math.floor(width / max));
 
     // Default colors
     const activeColor = config.color ?? "#FFD700";

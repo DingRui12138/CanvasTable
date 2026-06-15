@@ -43,8 +43,11 @@ export class CTRenderer {
     const layoutTree = this.layoutEngine.layoutTree(root, x, y, parentSize);
     this.layouts = this.flattenLayoutTree(layoutTree);
     this.ctx.save();
-    this.renderLayoutNode(layoutTree);
-    this.ctx.restore();
+    try {
+      this.renderLayoutNode(layoutTree);
+    } finally {
+      this.ctx.restore();
+    }
   }
 
   getLayouts(): CTLayoutInfo[] {
@@ -174,130 +177,139 @@ export class CTRenderer {
     const borderRadiusArray = this.getBorderRadiusArray(props, borderRadius);
 
     // opacity
-    if (props.opacity !== undefined) {
+    const hasOpacity = props.opacity !== undefined;
+    if (hasOpacity) {
       this.ctx.save();
-      this.ctx.globalAlpha = props.opacity;
+      this.ctx.globalAlpha = props.opacity!;
     }
 
-    // ─── Box Shadow ───
-    if (props.boxShadow) {
-      const shadow = this.normalizeShadow(props.boxShadow);
-      this.ctx.save();
-      this.ctx.shadowColor = shadow.color;
-      this.ctx.shadowBlur = shadow.blur;
-      this.ctx.shadowOffsetX = shadow.offsetX;
-      this.ctx.shadowOffsetY = shadow.offsetY;
+    try {
+      // ─── Box Shadow ───
+      const hasShadow = !!props.boxShadow;
+      if (hasShadow) {
+        const shadow = this.normalizeShadow(props.boxShadow!);
+        this.ctx.save();
+        this.ctx.shadowColor = shadow.color;
+        this.ctx.shadowBlur = shadow.blur;
+        this.ctx.shadowOffsetX = shadow.offsetX;
+        this.ctx.shadowOffsetY = shadow.offsetY;
 
-      // Draw a shape to trigger shadow (use background fill or a rect)
-      if (props.backgroundColor || props.backgroundGradient) {
-        // Shadow will be applied to the background fill below
-      } else {
-        // No background: draw invisible rect to trigger shadow
-        this.drawRoundedRect(
-          x + (shadow.spread ?? 0),
-          y + (shadow.spread ?? 0),
-          boxWidth + (shadow.spread ?? 0) * 2,
-          boxHeight + (shadow.spread ?? 0) * 2,
-          borderRadiusArray,
-        );
-        this.ctx.fillStyle = shadow.color;
-        this.ctx.fill();
+        // Draw a shape to trigger shadow (use background fill or a rect)
+        if (props.backgroundColor || props.backgroundGradient) {
+          // Shadow will be applied to the background fill below
+        } else {
+          // No background: draw invisible rect to trigger shadow
+          this.drawRoundedRect(
+            x + (shadow.spread ?? 0),
+            y + (shadow.spread ?? 0),
+            boxWidth + (shadow.spread ?? 0) * 2,
+            boxHeight + (shadow.spread ?? 0) * 2,
+            borderRadiusArray,
+          );
+          this.ctx.fillStyle = shadow.color;
+          this.ctx.fill();
+        }
+        // Shadow will carry over to background fill below
       }
-      // Shadow will carry over to background fill below
-    }
 
-    // ─── Background ───
-    if (props.backgroundGradient) {
-      this.ctx.fillStyle = this.createGradientFill(
-        x,
-        y,
-        boxWidth,
-        boxHeight,
-        props.backgroundGradient,
-      );
-      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
-      this.ctx.fill();
-    } else if (props.backgroundColor) {
-      this.ctx.fillStyle = props.backgroundColor;
-      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
-      this.ctx.fill();
-    }
+      try {
+        // ─── Background ───
+        if (props.backgroundGradient) {
+          this.ctx.fillStyle = this.createGradientFill(
+            x,
+            y,
+            boxWidth,
+            boxHeight,
+            props.backgroundGradient,
+          );
+          this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+          this.ctx.fill();
+        } else if (props.backgroundColor) {
+          this.ctx.fillStyle = props.backgroundColor;
+          this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+          this.ctx.fill();
+        }
+      } finally {
+        // ─── Clear shadow after background ───
+        if (hasShadow) {
+          this.ctx.restore(); // restore shadow state
+        }
+      }
 
-    // ─── Clear shadow after background ───
-    if (props.boxShadow) {
-      this.ctx.restore(); // restore shadow state
-    }
-
-    // ─── Unified Border ───
-    if (props.borderColor && props.borderWidth) {
-      this.ctx.strokeStyle = props.borderColor;
-      this.ctx.lineWidth = props.borderWidth;
-      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
-      this.ctx.stroke();
-    }
-
-    // ─── Per-side Borders ───
-    const top = this.normalizeBorderSide(props.borderTop);
-    const right = this.normalizeBorderSide(props.borderRight);
-    const bottom = this.normalizeBorderSide(props.borderBottom);
-    const left = this.normalizeBorderSide(props.borderLeft);
-
-    if (top || right || bottom || left) {
-      // Draw individual borders as lines
-      if (top) {
-        this.ctx.strokeStyle = top.color;
-        this.ctx.lineWidth = top.width;
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, y);
-        this.ctx.lineTo(x + boxWidth, y);
+      // ─── Unified Border ───
+      if (props.borderColor && props.borderWidth) {
+        this.ctx.strokeStyle = props.borderColor;
+        this.ctx.lineWidth = props.borderWidth;
+        this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
         this.ctx.stroke();
       }
-      if (bottom) {
-        this.ctx.strokeStyle = bottom.color;
-        this.ctx.lineWidth = bottom.width;
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, y + boxHeight);
-        this.ctx.lineTo(x + boxWidth, y + boxHeight);
-        this.ctx.stroke();
+
+      // ─── Per-side Borders ───
+      const top = this.normalizeBorderSide(props.borderTop);
+      const right = this.normalizeBorderSide(props.borderRight);
+      const bottom = this.normalizeBorderSide(props.borderBottom);
+      const left = this.normalizeBorderSide(props.borderLeft);
+
+      if (top || right || bottom || left) {
+        // Draw individual borders as lines
+        if (top) {
+          this.ctx.strokeStyle = top.color;
+          this.ctx.lineWidth = top.width;
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, y);
+          this.ctx.lineTo(x + boxWidth, y);
+          this.ctx.stroke();
+        }
+        if (bottom) {
+          this.ctx.strokeStyle = bottom.color;
+          this.ctx.lineWidth = bottom.width;
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, y + boxHeight);
+          this.ctx.lineTo(x + boxWidth, y + boxHeight);
+          this.ctx.stroke();
+        }
+        if (left) {
+          this.ctx.strokeStyle = left.color;
+          this.ctx.lineWidth = left.width;
+          this.ctx.beginPath();
+          this.ctx.moveTo(x, y);
+          this.ctx.lineTo(x, y + boxHeight);
+          this.ctx.stroke();
+        }
+        if (right) {
+          this.ctx.strokeStyle = right.color;
+          this.ctx.lineWidth = right.width;
+          this.ctx.beginPath();
+          this.ctx.moveTo(x + boxWidth, y);
+          this.ctx.lineTo(x + boxWidth, y + boxHeight);
+          this.ctx.stroke();
+        }
       }
-      if (left) {
-        this.ctx.strokeStyle = left.color;
-        this.ctx.lineWidth = left.width;
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, y);
-        this.ctx.lineTo(x, y + boxHeight);
-        this.ctx.stroke();
+
+      // ─── Overflow Clipping ───
+      const hasOverflow = props.overflow === "hidden" || props.overflow === "clip";
+      if (hasOverflow) {
+        this.ctx.save();
+        this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+        this.ctx.clip();
       }
-      if (right) {
-        this.ctx.strokeStyle = right.color;
-        this.ctx.lineWidth = right.width;
-        this.ctx.beginPath();
-        this.ctx.moveTo(x + boxWidth, y);
-        this.ctx.lineTo(x + boxWidth, y + boxHeight);
-        this.ctx.stroke();
+
+      // ─── Render Children ───
+      try {
+        for (const childNode of node.children) {
+          this.renderLayoutNode(childNode);
+        }
+      } finally {
+        // ─── Restore Clip ───
+        if (hasOverflow) {
+          this.ctx.restore();
+        }
       }
-    }
-
-    // ─── Overflow Clipping ───
-    if (props.overflow === "hidden" || props.overflow === "clip") {
-      this.ctx.save();
-      this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
-      this.ctx.clip();
-    }
-
-    // ─── Render Children ───
-    for (const childNode of node.children) {
-      this.renderLayoutNode(childNode);
-    }
-
-    // ─── Restore Clip ───
-    if (props.overflow === "hidden" || props.overflow === "clip") {
-      this.ctx.restore();
-    }
-
-    // ─── Restore Opacity ───
-    if (props.opacity !== undefined) {
-      this.ctx.restore();
+    } finally {
+      // ─── Restore Opacity ───
+      if (hasOpacity) {
+        this.ctx.restore();
+      }
     }
   }
 

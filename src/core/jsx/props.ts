@@ -137,7 +137,7 @@ export function normalizeBoxProps(props: BoxProps): CTBoxProps {
   return {
     id: props.id as string | undefined,
     styles: props.styles as CTBoxProps["styles"],
-    display: "flex",
+    display: props.position === "relative" ? undefined : "flex",
     position: props.position,
     x: props.x,
     y: props.y,

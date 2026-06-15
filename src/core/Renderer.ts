@@ -2510,30 +2510,44 @@ export class Renderer {
       // 自定义渲染将完整的单元格交给用户控制，从左上角 (x, y) 开始绘制，
       // 不应用内置 padding 或居中，样式（颜色、间距等）完全由用户决定。
       // 传入单元格尺寸给 LayoutEngine，允许根元素使用 "100%" 撑满单元格。
-      if (type === CellTypes.CUSTOM && renderResult.jsxRender) {
-        this.measureRender("jsx", () => {
-          const elementTree = renderResult.jsxRender!();
-          const measurementEngine = new MeasurementEngine(this.ctx);
-          const layoutEngine = new LayoutEngine(measurementEngine);
-          const ctRenderer = new CTRenderer(this.ctx, layoutEngine, this.theme);
+      // 渲染出错时仅跳过本单元格，不影响其它列的渲染。
 
-          ctRenderer.render(elementTree, x, y, { width, height });
+      if (renderResult.type === "custom" && renderResult.jsxRender) {
+        this.measureRender("jsx", () => {
+          // 强制保存完整 Canvas 状态，JSX 渲染完全隔离
+          this.ctx.save();
+          try {
+            const elementTree = renderResult.jsxRender!();
+            const measurementEngine = new MeasurementEngine(this.ctx);
+            const layoutEngine = new LayoutEngine(measurementEngine);
+            const ctRenderer = new CTRenderer(this.ctx, layoutEngine, this.theme);
+            ctRenderer.render(elementTree, x, y, { width, height });
+          } catch (e) {
+            console.error(`[Renderer] JSX render error at row ${rowIndex}, col ${colIndex}:`, e);
+          } finally {
+            // 强制恢复 Canvas 状态，不管 JSX 内部发生了什么
+            this.ctx.restore();
+          }
         });
         return;
       }
 
-      if (type === CellTypes.CUSTOM && renderResult.customRender) {
+      if (renderResult.type === "custom" && renderResult.customRender) {
         this.measureRender("custom", () => {
-          renderResult.customRender!({
-            ctx: this.ctx,
-            x,
-            y,
-            width,
-            height,
-            padding,
-            theme: this.theme,
-            dpr: this.dpr,
-          });
+          try {
+            renderResult.customRender!({
+              ctx: this.ctx,
+              x,
+              y,
+              width,
+              height,
+              padding,
+              theme: this.theme,
+              dpr: this.dpr,
+            });
+          } catch (e) {
+            console.error(`[Renderer] customRender error at row ${rowIndex}, col ${colIndex}:`, e);
+          }
         });
         return;
       }

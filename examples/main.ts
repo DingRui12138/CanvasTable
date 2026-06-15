@@ -8,6 +8,14 @@ import type {
   CustomRenderContext,
   LocalePreset,
 } from "../src/types";
+import { createCTElement } from "../src/core/jsx/createCTElement";
+import {
+  Box as CTBox,
+  Row as CTRow,
+  Column as CTColumn,
+  Text as CTText,
+  Circle as CTCircle,
+} from "../src/core/jsx/components";
 import { getFPSMonitor } from "./FPSMonitor";
 
 type ExampleWindow = typeof window & {
@@ -1297,6 +1305,127 @@ const columns: Column[] = [
         },
       };
     },
+  },
+
+  // {
+  //   key: "gradient",
+  //   field: "name",
+  //   title: "Gradient(JsxRender)",
+  //   fixed: "right",
+  //   width: 120,
+  //   render: (_value, _row, _col, rowIndex) => ({
+  //     type: "custom" as const,
+  //     jsxRender: () => {
+  //       return createCTElement(
+  //         CTBox,
+  //         {
+  //           width: "100%",
+  //           height: "100%",
+  //           justify: "center",
+  //           align: "center",
+  //           // backgroundColor: "#1890ff",
+  //           backgroundGradient: {
+  //             type: "linear",
+  //             angle: 90,
+  //             colors: ["#1890ff", "#36cfc9"],
+  //           },
+  //         },
+  //         createCTElement(CTText, {
+  //           text: `Row ${rowIndex}`,
+  //           fontSize: 12,
+  //           fontWeight: "bold",
+  //           color: "#ffffff",
+  //         }),
+  //       );
+  //     },
+  //   }),
+  // },
+
+  // JSX 自定义渲染列 — 状态卡片（性能测试）
+  {
+    key: "jsxStatus",
+    field: "status",
+    title: "状态卡片(JsxRender)",
+    fixed: "right",
+    width: 180,
+    render: (_value, row) => ({
+      type: "custom" as CellType,
+      jsxRender: () => {
+        const statusColors: Record<string, string> = {
+          active: "#52c41a",
+          inactive: "#ff4d4f",
+          pending: "#faad14",
+        };
+        const statusLabels: Record<string, string> = {
+          active: "在职",
+          inactive: "离职",
+          pending: "待定",
+        };
+        const s = String(row.data.status);
+        const color = statusColors[s] || "#8c8c8c";
+        const label = statusLabels[s] || s;
+        const progress = row.data.progress as number;
+
+        return createCTElement(
+          CTBox,
+          {
+            width: "100%",
+            height: "100%",
+            justify: "center",
+            align: "center",
+            overflow: "hidden",
+            backgroundGradient: {
+              type: "linear",
+              angle: 90,
+              colors: ["#1890ff", "#36cfc9"],
+            },
+          },
+          createCTElement(
+            CTRow,
+            { gap: 8, align: "center" },
+            createCTElement(CTCircle, { radius: 5, bgColor: color }),
+            createCTElement(
+              CTColumn,
+              { gap: 2 },
+              createCTElement(CTText, {
+                text: label,
+                fontWeight: "bold",
+                fontSize: 13,
+              }),
+              createCTElement(
+                CTRow,
+                { gap: 4, align: "center" },
+                createCTElement(
+                  CTBox,
+                  {
+                    position: "relative",
+                    width: 60,
+                    height: 8,
+                    bgColor: "#f0f0f0",
+                    radius: 4,
+                    overflow: "hidden",
+                  },
+                  createCTElement(CTBox, {
+                    x: 0,
+                    y: 0,
+                    width: Math.max(1, (60 * progress) / 100),
+                    height: 8,
+                    bgColor: color,
+                    radius: 4,
+                    zIndex: 1,
+                  }),
+                ),
+                createCTElement(CTText, {
+                  text: `${progress}%`,
+                  fontSize: 10,
+                  color: "#8c8c8c",
+                }),
+              ),
+            ),
+          ),
+        );
+      },
+    }),
   },
   {
     key: "score",
