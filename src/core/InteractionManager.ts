@@ -1418,9 +1418,14 @@ export class InteractionManager {
     const relativeX = mouseX - cellViewportX;
     const relativeY = mouseY - cellViewportY;
 
-    // 与 Renderer 保持一致的计算逻辑
+    // 与 Renderer 保持一致的计算逻辑（含 scaleWithRowHeight 处理）
     const padding = 4;
-    const maxImgSize = Math.min(cellPos.width, cellPos.height) - padding * 2;
+    const STANDARD_ROW_HEIGHT = 32;
+    const effectiveCellHeight =
+      config.scaleWithRowHeight === false
+        ? Math.min(cellPos.height, STANDARD_ROW_HEIGHT)
+        : cellPos.height;
+    const maxImgSize = Math.max(0, Math.min(cellPos.width, effectiveCellHeight) - padding * 2);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     const imgWidth = Math.min(configWidth, maxImgSize);
@@ -1442,67 +1447,66 @@ export class InteractionManager {
       return;
     }
 
-    // 根据单元格宽度计算能显示的图片数量
+    // 根据单元格宽度计算能显示的图片数量（多行布局，需与 ImageRenderer.renderMultipleImages 保持一致）
     const availableWidth = cellPos.width - padding * 2;
+    const availableHeight = cellPos.height - padding * 2;
     const showMoreCount = config.showMoreCount !== false;
     const userMaxVisible = config.maxVisible;
 
-    let calculatedMaxVisible: number;
-    if (images.length === 1) {
-      calculatedMaxVisible = 1;
-    } else {
-      const maxByWidth = Math.floor((availableWidth + gap) / (imgWidth + gap));
-      const reservedForMore = showMoreCount ? 1 : 0;
-      calculatedMaxVisible = Math.max(1, maxByWidth - reservedForMore);
-    }
-
-    const maxVisible =
-      userMaxVisible !== undefined
-        ? Math.min(userMaxVisible, calculatedMaxVisible)
-        : calculatedMaxVisible;
+    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
+    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
+    const slotCapacity = imagesPerRow * maxRows;
+    const requestedMaxVisible = userMaxVisible ?? slotCapacity;
+    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
+    const maxVisibleCapacity = needsMoreCount ? Math.max(0, slotCapacity - 1) : slotCapacity;
+    const maxVisible = Math.min(requestedMaxVisible, maxVisibleCapacity);
 
     const hasMore = images.length > maxVisible;
     const displayCount = hasMore ? maxVisible : images.length;
 
-    // 计算内容宽度
-    let contentWidth: number;
-    if (hasMore && showMoreCount) {
-      contentWidth = displayCount * imgWidth + displayCount * gap + imgWidth;
-    } else {
-      contentWidth = displayCount * imgWidth + Math.max(0, displayCount - 1) * gap;
-    }
+    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
+    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
+    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
+    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
+    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
 
-    let startX = cellViewportX + (cellPos.width - contentWidth) / 2;
-    startX = Math.max(cellViewportX + padding, startX);
-    const imgY = cellViewportY + (cellPos.height - imgHeight) / 2;
+    let startX = (cellPos.width - contentWidth) / 2;
+    startX = Math.max(padding, startX);
+    const startY = (cellPos.height - contentHeight) / 2;
 
-    const relX = mouseX - startX;
-    const relY = mouseY - imgY;
+    const relX = relativeX - startX;
+    const relY = relativeY - startY;
 
-    // 检查是否在图片Y范围内
-    if (relY < 0 || relY > imgHeight) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-
-    // 检查鼠标在哪个图片上
+    // 命中图片
     for (let i = 0; i < displayCount; i++) {
-      const imgStartX = i * (imgWidth + gap);
-      const imgEndX = imgStartX + imgWidth;
-
-      if (relX >= imgStartX && relX < imgEndX) {
+      const row = Math.floor(i / imagesPerRow);
+      const col = i % imagesPerRow;
+      const imgStartX = col * (imgWidth + gap);
+      const imgStartY = row * (imgHeight + gap);
+      if (
+        relX >= imgStartX &&
+        relX < imgStartX + imgWidth &&
+        relY >= imgStartY &&
+        relY < imgStartY + imgHeight
+      ) {
         this.state.hoveredImageIndex = config.hoverable !== false ? i : -1;
         return;
       }
     }
 
-    // 检查是否在 +N 块上
+    // 命中 +N 块
     if (hasMore && showMoreCount) {
-      const moreStartX = displayCount * (imgWidth + gap);
-      const moreEndX = moreStartX + imgWidth;
-
-      if (relX >= moreStartX && relX < moreEndX) {
-        this.state.hoveredImageIndex = config.hoverable !== false ? displayCount : -1; // displayCount 表示 +N 块
+      const moreRow = Math.floor(displayCount / imagesPerRow);
+      const moreCol = displayCount % imagesPerRow;
+      const moreStartX = moreCol * (imgWidth + gap);
+      const moreStartY = moreRow * (imgHeight + gap);
+      if (
+        relX >= moreStartX &&
+        relX < moreStartX + imgWidth &&
+        relY >= moreStartY &&
+        relY < moreStartY + imgHeight
+      ) {
+        this.state.hoveredImageIndex = config.hoverable !== false ? displayCount : -1;
         return;
       }
     }

@@ -7,6 +7,27 @@
 import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, ButtonsConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, ColorPickerConfig, SwitchAnimationState, ButtonHoverState, CanvasTableLocale } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 /**
+ * Runtime hooks required by ImageRenderer to integrate with the host's
+ * image load queue, lazy-load gating, and per-frame visibility tracking.
+ *
+ * Renderer (host) is the owner of these resources; ImageRenderer is
+ * stateless and reads/writes them through this contract.
+ */
+export interface ImageRuntime {
+    /** Read cached image (already pre-scaled to targetSize when available). */
+    get(src: string, targetSize?: number): HTMLImageElement | HTMLCanvasElement | null;
+    /** Whether the image is currently being loaded. */
+    isLoading(src: string): boolean;
+    /** Whether the image previously failed to load. */
+    isFailed(src: string): boolean;
+    /** Request a load; the host triggers a redraw via its callback when ready. */
+    load(src: string, targetSize?: number): void;
+    /** Mark src as visible this frame so it isn't cancelled by cancelInvisible. */
+    collectVisible(src: string): void;
+    /** Whether the row is within the lazy-load extended viewport. */
+    isInLazyLoadRange(rowIndex: number, threshold: number): boolean;
+}
+/**
  * Context provided to each cell renderer
  */
 export interface CellRendererContext {
@@ -54,6 +75,8 @@ export interface CellRendererContext {
     hoveredImageIndex?: number;
     /** Hovered button index (for buttons cells) */
     hoveredButtonIndex?: number;
+    /** Required when rendering image cells; provides host runtime hooks. */
+    imageRuntime?: ImageRuntime;
 }
 /**
  * Render result returned by cell renderers

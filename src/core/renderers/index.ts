@@ -7,7 +7,12 @@
 
 import { CanvasTableLocale, CellType, Column, Row, TableTheme } from "../../types";
 import { LayoutManager } from "../LayoutManager";
-import { CellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
+import {
+  CellRenderer,
+  CellRendererContext,
+  CellRenderResult,
+  type ImageRuntime,
+} from "./CellRenderer";
 import { TextRenderer } from "./TextRenderer";
 import { NumberRenderer } from "./NumberRenderer";
 import { CheckboxRenderer } from "./CheckboxRenderer";
@@ -27,7 +32,12 @@ import { zhCN } from "../../locale";
 
 // Re-export all types and base classes
 export { BaseCellRenderer } from "./CellRenderer";
-export type { CellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
+export type {
+  CellRenderer,
+  CellRendererContext,
+  CellRenderResult,
+  ImageRuntime,
+} from "./CellRenderer";
 
 // Re-export all renderers
 export { TextRenderer } from "./TextRenderer";
@@ -182,6 +192,7 @@ export class CellRendererRegistry {
     multipleSelectSeparator?: string;
     hoveredImageIndex?: number;
     hoveredButtonIndex?: number;
+    imageRuntime?: ImageRuntime;
   }): CellRendererContext {
     return { ...params, locale: params.locale ?? this.locale };
   }

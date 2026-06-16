@@ -776,46 +776,6 @@ describe('Renderer', () => {
   });
 
   describe('image cache', () => {
-    it('keeps image size fixed when row-height scaling is disabled', () => {
-      const baseContext = canvas.getContext('2d');
-      expect(baseContext).not.toBeNull();
-      const inspectableContext = createInspectableContext(baseContext!);
-      jest.spyOn(canvas, 'getContext').mockReturnValue(inspectableContext);
-
-      renderer = new Renderer(canvas, mockTheme, layoutManager);
-
-      (
-        renderer as unknown as {
-          renderImage: (
-            x: number,
-            y: number,
-            cellWidth: number,
-            cellHeight: number,
-            config: {
-              src: string;
-              width: number;
-              height: number;
-              scaleWithRowHeight: false;
-              lazy: false;
-            },
-          ) => void;
-        }
-      ).renderImage(0, 0, 96, 104, {
-        src: 'image.png',
-        width: 64,
-        height: 64,
-        scaleWithRowHeight: false,
-        lazy: false,
-      });
-
-      const rectCalls = (inspectableContext.rect as jest.Mock).mock.calls as Array<
-        [number, number, number, number]
-      >;
-
-      expect(rectCalls.some(([, , width, height]) => width === 24 && height === 24)).toBe(true);
-      expect(rectCalls.some(([, , width, height]) => width === 64 || height === 64)).toBe(false);
-    });
-
     it('should check if image is loaded', () => {
       expect(renderer.isImageLoaded('non-existent')).toBe(false);
     });

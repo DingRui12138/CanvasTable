@@ -6,10 +6,10 @@
  */
 import { CanvasTableLocale, CellType, Column, Row, TableTheme } from "../../types";
 import { LayoutManager } from "../LayoutManager";
-import { CellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
+import { CellRenderer, CellRendererContext, CellRenderResult, type ImageRuntime } from "./CellRenderer";
 import { RendererPerformanceMonitor } from "./PerformanceMonitor";
 export { BaseCellRenderer } from "./CellRenderer";
-export type { CellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
+export type { CellRenderer, CellRendererContext, CellRenderResult, ImageRuntime, } from "./CellRenderer";
 export { TextRenderer } from "./TextRenderer";
 export { NumberRenderer } from "./NumberRenderer";
 export { CheckboxRenderer } from "./CheckboxRenderer";
@@ -98,6 +98,7 @@ export declare class CellRendererRegistry {
         multipleSelectSeparator?: string;
         hoveredImageIndex?: number;
         hoveredButtonIndex?: number;
+        imageRuntime?: ImageRuntime;
     }): CellRendererContext;
 }
 //# sourceMappingURL=index.d.ts.map

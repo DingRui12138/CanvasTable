@@ -27,7 +27,6 @@ import {
   DateDropdownState,
   ContextMenuState,
   HeaderContextMenuState,
-  ImageConfig,
   ColorPickerDropdownState,
   ImageLoadConfig,
   RowBand,
@@ -46,6 +45,7 @@ import {
   CellRendererRegistry,
   type CellRenderResult as StrategyCellRenderResult,
 } from "./renderers";
+import type { CellRenderer, CellRendererContext, ImageRuntime } from "./renderers/CellRenderer";
 import {
   truncateText,
   getDevicePixelRatio,
@@ -56,8 +56,6 @@ import {
 } from "../utils";
 import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
 import { zhCN } from "../locale";
-
-const STANDARD_ROW_HEIGHT = 32;
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -88,6 +86,20 @@ export class Renderer {
 
   // 图片加载队列（延迟加载 + 请求取消）
   private imageLoadQueue: ImageLoadQueue;
+
+  // 图片渲染器使用的运行时桥接
+  private imageRuntime!: ImageRuntime;
+
+  // 图片单元格的快路径：缓存渲染器与可复用 context，
+  // 避免在滚动热路径上每个单元格都分配 options/context 对象。
+  private imageRenderer!: CellRenderer;
+  private imageRenderContext!: CellRendererContext;
+  private static readonly SHARED_PLACEHOLDER_COLUMN = {
+    key: "image",
+    title: "image",
+    type: "image" as CellType,
+  } as Column;
+  private static readonly SHARED_PLACEHOLDER_ROW = { id: "", data: {} } as Row;
 
   /** 当前帧收集的可见图片 URL */
   private frameVisibleUrls: Set<string> = new Set();
@@ -191,6 +203,40 @@ export class Renderer {
 
     // 初始化图片加载队列（使用默认配置）
     this.imageLoadQueue = new ImageLoadQueue();
+
+    // 图片渲染器使用的运行时桥接
+    this.imageRuntime = {
+      get: (src, targetSize) => this.imageLoadQueue.get(src, targetSize),
+      isLoading: (src) => this.imageLoadQueue.isLoading(src),
+      isFailed: (src) => this.imageLoadQueue.isFailed(src),
+      load: (src, targetSize) => this.loadImage(src, targetSize),
+      collectVisible: (src) => this.collectVisibleImage(src),
+      isInLazyLoadRange: (rowIndex, threshold) => this.isInLazyLoadRange(rowIndex, threshold),
+    };
+
+    // 缓存图片渲染器与可复用 context，避免滚动热路径上反复分配
+    this.imageRenderer = this.cellRendererRegistry.get("image")!;
+    this.imageRenderContext = {
+      ctx: this.ctx,
+      theme: this.theme,
+      locale: this.locale,
+      layoutManager: this.layoutManager,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      column: Renderer.SHARED_PLACEHOLDER_COLUMN,
+      row: Renderer.SHARED_PLACEHOLDER_ROW,
+      rowIndex: -1,
+      colIndex: -1,
+      value: undefined,
+      isDisabled: false,
+      isHovered: false,
+      isSelected: false,
+      dpr: this.dpr,
+      hoveredImageIndex: -1,
+      imageRuntime: this.imageRuntime,
+    };
   }
 
   private getContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -2249,7 +2295,9 @@ export class Renderer {
       buttonHoverState?: ButtonHoverState;
       multipleSelectSeparator?: string;
       hoveredButtonIndex?: number;
+      hoveredImageIndex?: number;
       isHovered?: boolean;
+      imageRuntime?: ImageRuntime;
     } = {},
   ): StrategyCellRenderResult | null {
     const renderer = this.cellRendererRegistry.get(type);
@@ -2280,6 +2328,8 @@ export class Renderer {
         buttonHoverState: options.buttonHoverState,
         multipleSelectSeparator: options.multipleSelectSeparator,
         hoveredButtonIndex: options.hoveredButtonIndex,
+        hoveredImageIndex: options.hoveredImageIndex,
+        imageRuntime: options.imageRuntime,
       }),
     );
   }
@@ -2442,9 +2492,39 @@ export class Renderer {
           colIndex !== undefined &&
           this.currentHoveredCell?.rowIndex === rowIndex &&
           this.currentHoveredCell?.columnIndex === colIndex;
-        this.measureRender("image", () =>
-          this.renderImage(x, y, width, height, renderResult.image!, rowIndex, isHovered),
-        );
+
+        // Hot path: mutate the reusable context instead of allocating per cell.
+        // ImageRenderer is stateless and reads context fields synchronously, so
+        // sharing one object across cells is safe and avoids GC pressure during
+        // scroll on dense image grids.
+        const imageCtx = this.imageRenderContext;
+        imageCtx.ctx = this.ctx;
+        imageCtx.theme = this.theme;
+        imageCtx.locale = this.locale;
+        imageCtx.layoutManager = this.layoutManager;
+        imageCtx.dpr = this.dpr;
+        imageCtx.x = x;
+        imageCtx.y = y;
+        imageCtx.width = width;
+        imageCtx.height = height;
+        imageCtx.value = renderResult.image;
+        imageCtx.rowIndex = rowIndex ?? -1;
+        imageCtx.colIndex = colIndex ?? -1;
+        imageCtx.isDisabled = isDisabled ?? false;
+        imageCtx.isHovered = !!isHovered;
+        imageCtx.hoveredImageIndex = this.currentHoveredImageIndex;
+
+        if (this.performanceEnabled) {
+          const start = performance.now();
+          this.imageRenderer.render(imageCtx);
+          const duration = performance.now() - start;
+          const frameStats = this.currentFrameStats.get("image") || { totalTime: 0, count: 0 };
+          frameStats.totalTime += duration;
+          frameStats.count++;
+          this.currentFrameStats.set("image", frameStats);
+        } else {
+          this.imageRenderer.render(imageCtx);
+        }
         return;
       }
 
@@ -2751,625 +2831,6 @@ export class Renderer {
 
   renderColorDropdown(dropdown: ColorPickerDropdownState): void {
     this.overlayRenderer.renderColorDropdown(dropdown);
-  }
-
-  private renderImage(
-    x: number,
-    y: number,
-    cellWidth: number,
-    cellHeight: number,
-    config: ImageConfig,
-    rowIndex?: number,
-    isHovered?: boolean,
-  ): void {
-    // 多图模式
-    if (config.images && config.images.length > 0) {
-      this.renderMultipleImages(x, y, cellWidth, cellHeight, config, rowIndex, isHovered);
-      return;
-    }
-
-    // 单图模式 - 如果没有图片源则不渲染
-    if (!config.src) {
-      return;
-    }
-
-    const padding = 4; // 单元格内边距
-    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
-    const configWidth = config.width ?? 32;
-    const configHeight = config.height ?? 32;
-    // 限制图片大小不超过单元格可用空间
-    const imgWidth = Math.min(configWidth, maxImgSize);
-    const imgHeight = Math.min(configHeight, maxImgSize);
-    const borderRadius = config.circle
-      ? Math.min(imgWidth, imgHeight) / 2
-      : (config.borderRadius ?? 0);
-
-    // 计算图片居中位置
-    const imgX = x + (cellWidth - imgWidth) / 2;
-    const imgY = y + (cellHeight - imgHeight) / 2;
-
-    // 绘制占位背景
-    this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
-    this.ctx.beginPath();
-    if (borderRadius > 0) {
-      this.ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
-    } else {
-      this.ctx.rect(imgX, imgY, imgWidth, imgHeight);
-    }
-    this.ctx.fill();
-
-    // 如果有图片源
-    if (config.src) {
-      // 检查是否在懒加载范围内
-      const lazyEnabled = config.lazy !== false; // 默认开启懒加载
-      const threshold = config.lazyThreshold ?? 200;
-
-      if (lazyEnabled && rowIndex !== undefined && this.currentVisibleRange) {
-        const inLazyRange = this.isInLazyLoadRange(rowIndex, threshold);
-        if (!inLazyRange) {
-          // 不在懒加载范围内，只显示占位图
-          this.renderImagePlaceholder(
-            imgX,
-            imgY,
-            imgWidth,
-            imgHeight,
-            borderRadius,
-            config.placeholder,
-          );
-          // Hover 效果
-          if (isHovered && config.hoverable !== false) {
-            this.renderImageHover(imgX, imgY, imgWidth, imgHeight, borderRadius);
-          }
-          return;
-        }
-      }
-
-      // 检查是否加载失败
-      if (this.imageLoadQueue.isFailed(config.src)) {
-        // 加载失败，显示错误图片
-        this.renderImageError(imgX, imgY, imgWidth, imgHeight, borderRadius, config.errorImage);
-        return;
-      }
-
-      const cachedImage = this.imageLoadQueue.get(config.src, Math.max(imgWidth, imgHeight));
-
-      if (cachedImage) {
-        // 图片已加载，绘制图片
-        this.ctx.save();
-
-        // 创建裁剪路径
-        this.ctx.beginPath();
-        if (borderRadius > 0) {
-          this.ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
-        } else {
-          this.ctx.rect(imgX, imgY, imgWidth, imgHeight);
-        }
-        this.ctx.clip();
-
-        // 根据fit模式绘制图片
-        this.drawImageWithFit(cachedImage, imgX, imgY, imgWidth, imgHeight, config.fit ?? "cover");
-
-        this.ctx.restore();
-
-        // 收集可见图片
-        this.collectVisibleImage(config.src);
-      } else if (!this.imageLoadQueue.isLoading(config.src)) {
-        this.collectVisibleImage(config.src);
-        // 图片未加载，开始加载（传递渲染尺寸用于预缩放）
-        this.loadImage(config.src, Math.max(imgWidth, imgHeight));
-        // 显示占位图
-        this.renderImagePlaceholder(
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-        );
-      } else {
-        // 图片正在加载中，显示占位图
-        // 注意：仍然需要收集可见图片，防止被 cancelInvisible 取消
-        this.collectVisibleImage(config.src);
-        this.renderImagePlaceholder(
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-        );
-      }
-    } else {
-      // 没有图片源，显示占位图
-      this.renderImagePlaceholder(
-        imgX,
-        imgY,
-        imgWidth,
-        imgHeight,
-        borderRadius,
-        config.placeholder,
-      );
-    }
-
-    // Hover 效果
-    if (isHovered && config.hoverable !== false) {
-      this.renderImageHover(imgX, imgY, imgWidth, imgHeight, borderRadius);
-    }
-  }
-
-  private getMaxImageSize(
-    cellWidth: number,
-    cellHeight: number,
-    padding: number,
-    config: ImageConfig,
-  ): number {
-    const maxHeight =
-      config.scaleWithRowHeight === false ? Math.min(cellHeight, STANDARD_ROW_HEIGHT) : cellHeight;
-
-    return Math.max(0, Math.min(cellWidth, maxHeight) - padding * 2);
-  }
-
-  private renderMultipleImages(
-    x: number,
-    y: number,
-    cellWidth: number,
-    cellHeight: number,
-    config: ImageConfig,
-    rowIndex?: number,
-    isHovered?: boolean,
-  ): void {
-    const images = config.images!;
-    const padding = 4; // 单元格内边距
-    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
-    const configWidth = config.width ?? 32;
-    const configHeight = config.height ?? 32;
-    // 限制图片大小不超过单元格可用空间
-    const imgWidth = Math.min(configWidth, maxImgSize);
-    const imgHeight = Math.min(configHeight, maxImgSize);
-    const gap = config.gap ?? 4;
-    const borderRadius = config.circle
-      ? Math.min(imgWidth, imgHeight) / 2
-      : (config.borderRadius ?? 0);
-    const showMoreCount = config.showMoreCount !== false;
-
-    // 根据单元格宽度和高度计算能显示的图片数量（支持多行）
-    const availableWidth = cellWidth - padding * 2;
-    const availableHeight = cellHeight - padding * 2;
-
-    // 每行能显示几个图片
-    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
-    // 能显示几行
-    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
-
-    const slotCapacity = imagesPerRow * maxRows;
-    const requestedMaxVisible = config.maxVisible ?? slotCapacity;
-    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
-    const maxVisibleCapacity = needsMoreCount ? Math.max(1, slotCapacity - 1) : slotCapacity;
-    const maxVisible = Math.max(1, Math.min(requestedMaxVisible, maxVisibleCapacity));
-
-    // 检查是否在懒加载范围内
-    const lazyEnabled = config.lazy !== false;
-    const threshold = config.lazyThreshold ?? 200;
-    let inLazyRange = true;
-    if (lazyEnabled && rowIndex !== undefined && this.currentVisibleRange) {
-      inLazyRange = this.isInLazyLoadRange(rowIndex, threshold);
-    }
-
-    // 计算需要显示的图片
-    const hasMore = images.length > maxVisible;
-    const displayCount = hasMore ? maxVisible : images.length;
-    const displayImages = images.slice(0, displayCount);
-    const moreCount = hasMore ? images.length - maxVisible : 0;
-
-    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
-    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
-    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
-    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
-    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
-
-    // 居中定位
-    let startX = x + (cellWidth - contentWidth) / 2;
-    startX = Math.max(x + padding, startX);
-    const startY = y + (cellHeight - contentHeight) / 2;
-
-    // 渲染每张图片（多行布局）
-    for (let i = 0; i < displayImages.length; i++) {
-      const src = displayImages[i]!;
-      const row = Math.floor(i / imagesPerRow);
-      const col = i % imagesPerRow;
-      const imgX = startX + col * (imgWidth + gap);
-      const imgY = startY + row * (imgHeight + gap);
-      const isCurrentHovered =
-        isHovered && config.hoverable !== false && this.currentHoveredImageIndex === i;
-
-      // 绘制占位背景
-      this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
-      this.ctx.beginPath();
-      if (borderRadius > 0) {
-        this.ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
-      } else {
-        this.ctx.rect(imgX, imgY, imgWidth, imgHeight);
-      }
-      this.ctx.fill();
-
-      if (!inLazyRange) {
-        this.renderImagePlaceholder(
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-        );
-        if (isCurrentHovered) {
-          this.renderImageHover(imgX, imgY, imgWidth, imgHeight, borderRadius);
-        }
-        continue;
-      }
-
-      // 检查是否加载失败
-      if (this.imageLoadQueue.isFailed(src)) {
-        this.renderImageError(imgX, imgY, imgWidth, imgHeight, borderRadius, config.errorImage);
-        if (isCurrentHovered) {
-          this.renderImageHover(imgX, imgY, imgWidth, imgHeight, borderRadius);
-        }
-        continue;
-      }
-
-      const cachedImage = this.imageLoadQueue.get(src, Math.max(imgWidth, imgHeight));
-      if (cachedImage) {
-        // 图片已加载，绘制
-        this.ctx.save();
-        this.ctx.beginPath();
-        if (borderRadius > 0) {
-          this.ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
-        } else {
-          this.ctx.rect(imgX, imgY, imgWidth, imgHeight);
-        }
-        this.ctx.clip();
-        this.drawImageWithFit(cachedImage, imgX, imgY, imgWidth, imgHeight, config.fit ?? "cover");
-        this.ctx.restore();
-
-        // 收集可见图片
-        this.collectVisibleImage(src);
-      } else if (!this.imageLoadQueue.isLoading(src)) {
-        this.collectVisibleImage(src);
-        this.loadImage(src, Math.max(imgWidth, imgHeight));
-        this.renderImagePlaceholder(
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-        );
-      } else {
-        // 图片正在加载中，显示占位图
-        // 注意：仍然需要收集可见图片，防止被 cancelInvisible 取消
-        this.collectVisibleImage(src);
-        this.renderImagePlaceholder(
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-        );
-      }
-
-      // 单个图片的 hover 效果
-      if (isCurrentHovered) {
-        this.renderImageHover(imgX, imgY, imgWidth, imgHeight, borderRadius);
-      }
-    }
-
-    // 渲染 +N 计数（替换最后一张图片或追加）
-    if (hasMore && showMoreCount) {
-      // 计算最后一个位置的行和列
-      const lastRow = Math.floor(displayCount / imagesPerRow);
-      const lastCol = displayCount % imagesPerRow;
-      const countX = startX + lastCol * (imgWidth + gap);
-      const countY = startY + lastRow * (imgHeight + gap);
-      const isMoreHovered =
-        isHovered && config.hoverable !== false && this.currentHoveredImageIndex === displayCount;
-      this.renderMoreCount(
-        countX,
-        countY,
-        imgWidth,
-        imgHeight,
-        borderRadius,
-        moreCount,
-        isMoreHovered,
-      );
-    }
-  }
-
-  private renderMoreCount(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    borderRadius: number,
-    count: number,
-    isHovered?: boolean,
-  ): void {
-    // 绘制半透明背景
-    this.ctx.fillStyle = isHovered
-      ? this.theme.colors.image.hoverBorder
-      : this.theme.colors.moreCount.background;
-    this.ctx.beginPath();
-    if (borderRadius > 0) {
-      this.ctx.roundRect(x, y, width, height, borderRadius);
-    } else {
-      this.ctx.rect(x, y, width, height);
-    }
-    this.ctx.fill();
-
-    // 绘制 +N 文字
-    const text = `+${count}`;
-    this.ctx.fillStyle = this.theme.colors.moreCount.text;
-    this.ctx.font = `bold ${Math.min(width, height) * 0.4}px ${this.theme.font.family}`;
-
-    // 保存当前对齐设置
-    const prevAlign = this.ctx.textAlign;
-    const prevBaseline = this.ctx.textBaseline;
-
-    this.ctx.textAlign = "center";
-    this.ctx.textBaseline = "middle";
-    this.ctx.fillText(text, x + width / 2, y + height / 2);
-
-    // 恢复对齐设置
-    this.ctx.textAlign = prevAlign;
-    this.ctx.textBaseline = prevBaseline;
-  }
-
-  private renderImageHover(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    borderRadius: number,
-  ): void {
-    const hoverBorderColor = this.theme.colors.image.hoverBorder;
-
-    // 保存当前状态
-    const prevStrokeStyle = this.ctx.strokeStyle;
-    const prevLineWidth = this.ctx.lineWidth;
-
-    // 绘制 hover 边框
-    this.ctx.strokeStyle = hoverBorderColor;
-    this.ctx.lineWidth = 2;
-    this.ctx.beginPath();
-    if (borderRadius > 0) {
-      this.ctx.roundRect(x, y, width, height, borderRadius);
-    } else {
-      this.ctx.rect(x, y, width, height);
-    }
-    this.ctx.stroke();
-
-    // 绘制 hover 阴影效果（外发光）
-    this.ctx.save();
-    this.ctx.shadowColor = this.theme.colors.image.hoverShadow;
-    this.ctx.shadowBlur = 4;
-    this.ctx.shadowOffsetX = 0;
-    this.ctx.shadowOffsetY = 0;
-    this.ctx.strokeStyle = hoverBorderColor;
-    this.ctx.lineWidth = 1;
-    this.ctx.beginPath();
-    if (borderRadius > 0) {
-      this.ctx.roundRect(x, y, width, height, borderRadius);
-    } else {
-      this.ctx.rect(x, y, width, height);
-    }
-    this.ctx.stroke();
-    this.ctx.restore();
-
-    // 恢复状态
-    this.ctx.strokeStyle = prevStrokeStyle;
-    this.ctx.lineWidth = prevLineWidth;
-  }
-
-  private renderImagePlaceholder(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    borderRadius: number,
-    placeholder?: string,
-  ): void {
-    if (placeholder) {
-      // 如果有占位图配置，尝试加载
-      const cachedPlaceholder = this.imageLoadQueue.get(placeholder, Math.max(width, height));
-      if (cachedPlaceholder) {
-        this.ctx.save();
-        this.ctx.beginPath();
-        if (borderRadius > 0) {
-          this.ctx.roundRect(x, y, width, height, borderRadius);
-        } else {
-          this.ctx.rect(x, y, width, height);
-        }
-        this.ctx.clip();
-        this.drawImageWithFit(cachedPlaceholder, x, y, width, height, "cover");
-        this.ctx.restore();
-        return;
-      } else if (!this.imageLoadQueue.isLoading(placeholder)) {
-        this.loadImage(placeholder, Math.max(width, height));
-      }
-    }
-
-    // 显示默认图标背景
-    this.ctx.fillStyle = this.theme.colors.image.placeholderBg;
-    this.ctx.beginPath();
-    if (borderRadius > 0) {
-      this.ctx.roundRect(x, y, width, height, borderRadius);
-    } else {
-      this.ctx.rect(x, y, width, height);
-    }
-    this.ctx.fill();
-
-    // 绘制图片图标
-    const iconSize = Math.min(width, height) * 0.4;
-    const iconX = x + width / 2;
-    const iconY = y + height / 2;
-
-    // 保存当前状态
-    const prevStrokeStyle = this.ctx.strokeStyle;
-    const prevLineWidth = this.ctx.lineWidth;
-
-    this.ctx.strokeStyle = this.theme.colors.placeholderText;
-    this.ctx.lineWidth = 1.5;
-
-    // 简单的图片图标
-    this.ctx.beginPath();
-    this.ctx.rect(iconX - iconSize / 2, iconY - iconSize / 2, iconSize, iconSize);
-    this.ctx.stroke();
-
-    // 山形
-    this.ctx.beginPath();
-    this.ctx.moveTo(iconX - iconSize / 2, iconY + iconSize / 4);
-    this.ctx.lineTo(iconX - iconSize / 4, iconY);
-    this.ctx.lineTo(iconX, iconY + iconSize / 4);
-    this.ctx.lineTo(iconX + iconSize / 4, iconY - iconSize / 4);
-    this.ctx.lineTo(iconX + iconSize / 2, iconY + iconSize / 4);
-    this.ctx.stroke();
-
-    // 恢复状态
-    this.ctx.strokeStyle = prevStrokeStyle;
-    this.ctx.lineWidth = prevLineWidth;
-  }
-
-  private renderImageError(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    borderRadius: number,
-    errorImage?: string,
-  ): void {
-    // 如果有错误图片配置，尝试显示
-    if (errorImage) {
-      const cachedErrorImage = this.imageLoadQueue.get(errorImage, Math.max(width, height));
-      if (cachedErrorImage) {
-        this.ctx.save();
-        this.ctx.beginPath();
-        if (borderRadius > 0) {
-          this.ctx.roundRect(x, y, width, height, borderRadius);
-        } else {
-          this.ctx.rect(x, y, width, height);
-        }
-        this.ctx.clip();
-        this.drawImageWithFit(cachedErrorImage, x, y, width, height, "cover");
-        this.ctx.restore();
-        return;
-      } else if (
-        !this.imageLoadQueue.isLoading(errorImage) &&
-        !this.imageLoadQueue.isFailed(errorImage)
-      ) {
-        this.loadImage(errorImage, Math.max(width, height));
-      }
-    }
-
-    // 显示错误背景
-    this.ctx.fillStyle = this.theme.colors.image.errorBg;
-    this.ctx.beginPath();
-    if (borderRadius > 0) {
-      this.ctx.roundRect(x, y, width, height, borderRadius);
-    } else {
-      this.ctx.rect(x, y, width, height);
-    }
-    this.ctx.fill();
-
-    // 绘制错误图标（破损图片 + X）
-    const iconSize = Math.min(width, height) * 0.4;
-    const iconX = x + width / 2;
-    const iconY = y + height / 2;
-
-    // 保存当前状态
-    const prevStrokeStyle = this.ctx.strokeStyle;
-    const prevLineWidth = this.ctx.lineWidth;
-
-    // 破损图片轮廓
-    this.ctx.strokeStyle = this.theme.colors.image.errorBorder;
-    this.ctx.lineWidth = 1.5;
-    this.ctx.beginPath();
-    this.ctx.rect(iconX - iconSize / 2, iconY - iconSize / 2, iconSize, iconSize);
-    this.ctx.stroke();
-
-    // X 标记
-    this.ctx.beginPath();
-    this.ctx.moveTo(iconX - iconSize / 4, iconY - iconSize / 4);
-    this.ctx.lineTo(iconX + iconSize / 4, iconY + iconSize / 4);
-    this.ctx.moveTo(iconX + iconSize / 4, iconY - iconSize / 4);
-    this.ctx.lineTo(iconX - iconSize / 4, iconY + iconSize / 4);
-    this.ctx.stroke();
-
-    // 恢复状态
-    this.ctx.strokeStyle = prevStrokeStyle;
-    this.ctx.lineWidth = prevLineWidth;
-  }
-
-  private drawImageWithFit(
-    img: HTMLImageElement | HTMLCanvasElement,
-    x: number,
-    y: number,
-    containerWidth: number,
-    containerHeight: number,
-    fit: "fill" | "contain" | "cover" | "none",
-  ): void {
-    const imgRatio = img.width / img.height;
-    const containerRatio = containerWidth / containerHeight;
-
-    let drawWidth: number;
-    let drawHeight: number;
-    let drawX: number;
-    let drawY: number;
-
-    switch (fit) {
-      case "fill":
-        // 拉伸填充
-        drawWidth = containerWidth;
-        drawHeight = containerHeight;
-        drawX = x;
-        drawY = y;
-        break;
-
-      case "contain":
-        // 包含，保持比例
-        if (imgRatio > containerRatio) {
-          drawWidth = containerWidth;
-          drawHeight = containerWidth / imgRatio;
-        } else {
-          drawHeight = containerHeight;
-          drawWidth = containerHeight * imgRatio;
-        }
-        drawX = x + (containerWidth - drawWidth) / 2;
-        drawY = y + (containerHeight - drawHeight) / 2;
-        break;
-
-      case "cover":
-        // 覆盖，保持比例
-        if (imgRatio > containerRatio) {
-          drawHeight = containerHeight;
-          drawWidth = containerHeight * imgRatio;
-        } else {
-          drawWidth = containerWidth;
-          drawHeight = containerWidth / imgRatio;
-        }
-        drawX = x + (containerWidth - drawWidth) / 2;
-        drawY = y + (containerHeight - drawHeight) / 2;
-        break;
-
-      case "none":
-      default:
-        // 原始尺寸
-        drawWidth = img.width;
-        drawHeight = img.height;
-        drawX = x + (containerWidth - drawWidth) / 2;
-        drawY = y + (containerHeight - drawHeight) / 2;
-        break;
-    }
-
-    this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
   }
 
   /**

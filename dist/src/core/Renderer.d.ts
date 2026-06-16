@@ -24,6 +24,11 @@ export declare class Renderer {
     private isDestroyed;
     private multipleSelectSeparator;
     private imageLoadQueue;
+    private imageRuntime;
+    private imageRenderer;
+    private imageRenderContext;
+    private static readonly SHARED_PLACEHOLDER_COLUMN;
+    private static readonly SHARED_PLACEHOLDER_ROW;
     /** 当前帧收集的可见图片 URL */
     private frameVisibleUrls;
     private textWidthCache;
@@ -162,14 +167,6 @@ export declare class Renderer {
      */
     private measureTextWidth;
     renderColorDropdown(dropdown: ColorPickerDropdownState): void;
-    private renderImage;
-    private getMaxImageSize;
-    private renderMultipleImages;
-    private renderMoreCount;
-    private renderImageHover;
-    private renderImagePlaceholder;
-    private renderImageError;
-    private drawImageWithFit;
     /**
      * 检查行是否在懒加载范围内
      */

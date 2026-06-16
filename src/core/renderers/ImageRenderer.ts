@@ -1,53 +1,66 @@
 /**
- * ImageRenderer - Renders image cells
+ * ImageRenderer - Renders image cells (single & multi-image grid).
  *
- * Note: Image rendering requires access to image cache and loading state.
- * The actual image loading is handled by the main Renderer class.
- * This renderer focuses on the rendering logic for loaded images.
+ * The renderer is stateless: all runtime concerns (image load queue,
+ * lazy-load gating, per-frame visibility tracking) live on the host
+ * Renderer and are exposed via {@link ImageRuntime} on the context.
  */
 
-import { ImageConfig, CellType } from "../../types";
-import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
+import { ImageConfig, CellType, TableTheme } from "../../types";
+import {
+  BaseCellRenderer,
+  CellRendererContext,
+  CellRenderResult,
+  ImageRuntime,
+} from "./CellRenderer";
 
 const STANDARD_ROW_HEIGHT = 32;
 
 export class ImageRenderer extends BaseCellRenderer {
   readonly type: CellType = "image";
 
-  /**
-   * Image cache reference - set by Renderer during initialization
-   */
-  static imageCache: Map<string, HTMLImageElement> = new Map();
-  static loadingImages: Set<string> = new Set();
-  static failedImages: Set<string> = new Set();
-
   render(context: CellRendererContext): CellRenderResult {
-    const { ctx, theme, x, y, width, height, value, isHovered, hoveredImageIndex } = context;
+    const {
+      ctx,
+      theme,
+      x,
+      y,
+      width: cellWidth,
+      height: cellHeight,
+      value,
+      isHovered,
+      hoveredImageIndex,
+      rowIndex,
+      imageRuntime,
+    } = context;
 
     const config = value as ImageConfig;
 
     // Multi-image mode
     if (config.images && config.images.length > 0) {
-      return this.renderMultipleImages(
+      this.renderMultipleImages(
         ctx,
         theme,
         x,
         y,
-        width,
-        height,
+        cellWidth,
+        cellHeight,
         config,
+        rowIndex,
         isHovered,
         hoveredImageIndex,
+        imageRuntime,
       );
+      return { type: "image", config };
     }
 
-    // Single image mode
+    // Single-image mode
     if (!config.src) {
       return { type: "image", config };
     }
 
     const padding = 4;
-    const maxImgSize = this.getMaxImageSize(width, height, padding, config);
+    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     const imgWidth = Math.min(configWidth, maxImgSize);
@@ -56,10 +69,10 @@ export class ImageRenderer extends BaseCellRenderer {
       ? Math.min(imgWidth, imgHeight) / 2
       : (config.borderRadius ?? 0);
 
-    const imgX = x + (width - imgWidth) / 2;
-    const imgY = y + (height - imgHeight) / 2;
+    const imgX = x + (cellWidth - imgWidth) / 2;
+    const imgY = y + (cellHeight - imgHeight) / 2;
 
-    // Draw placeholder background
+    // Placeholder background
     ctx.fillStyle = theme.colors.image.placeholderBg;
     ctx.beginPath();
     if (borderRadius > 0) {
@@ -69,8 +82,34 @@ export class ImageRenderer extends BaseCellRenderer {
     }
     ctx.fill();
 
-    // Check if image is loaded
-    if (ImageRenderer.failedImages.has(config.src)) {
+    // Lazy load gating
+    const lazyEnabled = config.lazy !== false;
+    const threshold = config.lazyThreshold ?? 200;
+    if (
+      lazyEnabled &&
+      rowIndex !== undefined &&
+      rowIndex >= 0 &&
+      imageRuntime &&
+      !imageRuntime.isInLazyLoadRange(rowIndex, threshold)
+    ) {
+      this.renderImagePlaceholder(
+        ctx,
+        theme,
+        imgX,
+        imgY,
+        imgWidth,
+        imgHeight,
+        borderRadius,
+        config.placeholder,
+        imageRuntime,
+      );
+      if (isHovered && config.hoverable !== false) {
+        this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
+      }
+      return { type: "image", config };
+    }
+
+    if (imageRuntime?.isFailed(config.src)) {
       this.renderImageError(
         ctx,
         theme,
@@ -80,15 +119,15 @@ export class ImageRenderer extends BaseCellRenderer {
         imgHeight,
         borderRadius,
         config.errorImage,
+        imageRuntime,
       );
       return { type: "image", config };
     }
 
-    const cachedImage = ImageRenderer.imageCache.get(config.src);
+    const cachedImage = imageRuntime?.get(config.src, Math.max(imgWidth, imgHeight)) ?? null;
 
     if (cachedImage) {
       ctx.save();
-
       ctx.beginPath();
       if (borderRadius > 0) {
         ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
@@ -96,7 +135,6 @@ export class ImageRenderer extends BaseCellRenderer {
         ctx.rect(imgX, imgY, imgWidth, imgHeight);
       }
       ctx.clip();
-
       this.drawImageWithFit(
         ctx,
         cachedImage,
@@ -106,11 +144,11 @@ export class ImageRenderer extends BaseCellRenderer {
         imgHeight,
         config.fit ?? "cover",
       );
-
       ctx.restore();
-    } else if (!ImageRenderer.loadingImages.has(config.src)) {
-      // Signal that this image needs to be loaded
-      // The main Renderer will handle actual loading
+      imageRuntime?.collectVisible(config.src);
+    } else if (imageRuntime && !imageRuntime.isLoading(config.src)) {
+      imageRuntime.collectVisible(config.src);
+      imageRuntime.load(config.src, Math.max(imgWidth, imgHeight));
       this.renderImagePlaceholder(
         ctx,
         theme,
@@ -120,8 +158,11 @@ export class ImageRenderer extends BaseCellRenderer {
         imgHeight,
         borderRadius,
         config.placeholder,
+        imageRuntime,
       );
     } else {
+      // Loading in progress — keep marking visible so it isn't cancelled
+      imageRuntime?.collectVisible(config.src);
       this.renderImagePlaceholder(
         ctx,
         theme,
@@ -131,10 +172,10 @@ export class ImageRenderer extends BaseCellRenderer {
         imgHeight,
         borderRadius,
         config.placeholder,
+        imageRuntime,
       );
     }
 
-    // Hover effect
     if (isHovered && config.hoverable !== false) {
       this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
     }
@@ -144,15 +185,17 @@ export class ImageRenderer extends BaseCellRenderer {
 
   private renderMultipleImages(
     ctx: CanvasRenderingContext2D,
-    theme: import("../../types").TableTheme,
+    theme: TableTheme,
     x: number,
     y: number,
     cellWidth: number,
     cellHeight: number,
     config: ImageConfig,
-    isHovered?: boolean,
-    hoveredImageIndex?: number,
-  ): CellRenderResult {
+    rowIndex: number | undefined,
+    isHovered: boolean | undefined,
+    hoveredImageIndex: number | undefined,
+    imageRuntime: ImageRuntime | undefined,
+  ): void {
     const images = config.images!;
     const padding = 4;
     const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
@@ -170,11 +213,20 @@ export class ImageRenderer extends BaseCellRenderer {
     const availableHeight = cellHeight - padding * 2;
     const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
     const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
+
     const slotCapacity = imagesPerRow * maxRows;
     const requestedMaxVisible = config.maxVisible ?? slotCapacity;
     const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
-    const maxVisibleCapacity = needsMoreCount ? Math.max(1, slotCapacity - 1) : slotCapacity;
-    const maxVisible = Math.max(1, Math.min(requestedMaxVisible, maxVisibleCapacity));
+    // 当总槽位仅够放下 +N 角标时，让出图片位，仅显示 +N
+    const maxVisibleCapacity = needsMoreCount ? Math.max(0, slotCapacity - 1) : slotCapacity;
+    const maxVisible = Math.min(requestedMaxVisible, maxVisibleCapacity);
+
+    const lazyEnabled = config.lazy !== false;
+    const threshold = config.lazyThreshold ?? 200;
+    let inLazyRange = true;
+    if (lazyEnabled && rowIndex !== undefined && rowIndex >= 0 && imageRuntime) {
+      inLazyRange = imageRuntime.isInLazyLoadRange(rowIndex, threshold);
+    }
 
     const hasMore = images.length > maxVisible;
     const displayCount = hasMore ? maxVisible : images.length;
@@ -197,7 +249,7 @@ export class ImageRenderer extends BaseCellRenderer {
       const col = i % imagesPerRow;
       const imgX = startX + col * (imgWidth + gap);
       const imgY = startY + row * (imgHeight + gap);
-      const isCurrentHovered = isHovered && config.hoverable !== false && hoveredImageIndex === i;
+      const isCurrentHovered = !!isHovered && config.hoverable !== false && hoveredImageIndex === i;
 
       ctx.fillStyle = theme.colors.image.placeholderBg;
       ctx.beginPath();
@@ -208,7 +260,25 @@ export class ImageRenderer extends BaseCellRenderer {
       }
       ctx.fill();
 
-      if (ImageRenderer.failedImages.has(src)) {
+      if (!inLazyRange) {
+        this.renderImagePlaceholder(
+          ctx,
+          theme,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          borderRadius,
+          config.placeholder,
+          imageRuntime,
+        );
+        if (isCurrentHovered) {
+          this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
+        }
+        continue;
+      }
+
+      if (imageRuntime?.isFailed(src)) {
         this.renderImageError(
           ctx,
           theme,
@@ -218,6 +288,7 @@ export class ImageRenderer extends BaseCellRenderer {
           imgHeight,
           borderRadius,
           config.errorImage,
+          imageRuntime,
         );
         if (isCurrentHovered) {
           this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
@@ -225,7 +296,7 @@ export class ImageRenderer extends BaseCellRenderer {
         continue;
       }
 
-      const cachedImage = ImageRenderer.imageCache.get(src);
+      const cachedImage = imageRuntime?.get(src, Math.max(imgWidth, imgHeight)) ?? null;
       if (cachedImage) {
         ctx.save();
         ctx.beginPath();
@@ -245,7 +316,10 @@ export class ImageRenderer extends BaseCellRenderer {
           config.fit ?? "cover",
         );
         ctx.restore();
-      } else {
+        imageRuntime?.collectVisible(src);
+      } else if (imageRuntime && !imageRuntime.isLoading(src)) {
+        imageRuntime.collectVisible(src);
+        imageRuntime.load(src, Math.max(imgWidth, imgHeight));
         this.renderImagePlaceholder(
           ctx,
           theme,
@@ -255,6 +329,20 @@ export class ImageRenderer extends BaseCellRenderer {
           imgHeight,
           borderRadius,
           config.placeholder,
+          imageRuntime,
+        );
+      } else {
+        imageRuntime?.collectVisible(src);
+        this.renderImagePlaceholder(
+          ctx,
+          theme,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          borderRadius,
+          config.placeholder,
+          imageRuntime,
         );
       }
 
@@ -263,14 +351,13 @@ export class ImageRenderer extends BaseCellRenderer {
       }
     }
 
-    // Render +N count
     if (hasMore && showMoreCount) {
-      const countRow = Math.floor(displayCount / imagesPerRow);
-      const countCol = displayCount % imagesPerRow;
-      const countX = startX + countCol * (imgWidth + gap);
-      const countY = startY + countRow * (imgHeight + gap);
+      const lastRow = Math.floor(displayCount / imagesPerRow);
+      const lastCol = displayCount % imagesPerRow;
+      const countX = startX + lastCol * (imgWidth + gap);
+      const countY = startY + lastRow * (imgHeight + gap);
       const isMoreHovered =
-        isHovered && config.hoverable !== false && hoveredImageIndex === displayCount;
+        !!isHovered && config.hoverable !== false && hoveredImageIndex === displayCount;
       this.renderMoreCount(
         ctx,
         theme,
@@ -283,38 +370,6 @@ export class ImageRenderer extends BaseCellRenderer {
         isMoreHovered,
       );
     }
-
-    return { type: "image", config };
-  }
-
-  private renderImagePlaceholder(
-    ctx: CanvasRenderingContext2D,
-    theme: import("../../types").TableTheme,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    borderRadius: number,
-    placeholder?: string,
-  ): void {
-    ctx.fillStyle = theme.colors.image.placeholderBg;
-    ctx.beginPath();
-    if (borderRadius > 0) {
-      ctx.roundRect(x, y, width, height, borderRadius);
-    } else {
-      ctx.rect(x, y, width, height);
-    }
-    ctx.fill();
-
-    // Draw placeholder icon or text
-    if (placeholder) {
-      ctx.fillStyle = theme.colors.placeholderText;
-      ctx.font = `${Math.min(12, width / 4)}px ${theme.font.family}`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(placeholder, x + width / 2, y + height / 2);
-      ctx.textAlign = "left";
-    }
   }
 
   private getMaxImageSize(
@@ -325,21 +380,40 @@ export class ImageRenderer extends BaseCellRenderer {
   ): number {
     const maxHeight =
       config.scaleWithRowHeight === false ? Math.min(cellHeight, STANDARD_ROW_HEIGHT) : cellHeight;
-
     return Math.max(0, Math.min(cellWidth, maxHeight) - padding * 2);
   }
 
-  private renderImageError(
+  private renderImagePlaceholder(
     ctx: CanvasRenderingContext2D,
-    theme: import("../../types").TableTheme,
+    theme: TableTheme,
     x: number,
     y: number,
     width: number,
     height: number,
     borderRadius: number,
-    errorImage?: string,
+    placeholder: string | undefined,
+    imageRuntime: ImageRuntime | undefined,
   ): void {
-    ctx.fillStyle = theme.colors.image.errorBg ?? "#f0f0f0";
+    if (placeholder && imageRuntime) {
+      const cachedPlaceholder = imageRuntime.get(placeholder, Math.max(width, height));
+      if (cachedPlaceholder) {
+        ctx.save();
+        ctx.beginPath();
+        if (borderRadius > 0) {
+          ctx.roundRect(x, y, width, height, borderRadius);
+        } else {
+          ctx.rect(x, y, width, height);
+        }
+        ctx.clip();
+        this.drawImageWithFit(ctx, cachedPlaceholder, x, y, width, height, "cover");
+        ctx.restore();
+        return;
+      } else if (!imageRuntime.isLoading(placeholder)) {
+        imageRuntime.load(placeholder, Math.max(width, height));
+      }
+    }
+
+    ctx.fillStyle = theme.colors.image.placeholderBg;
     ctx.beginPath();
     if (borderRadius > 0) {
       ctx.roundRect(x, y, width, height, borderRadius);
@@ -348,8 +422,45 @@ export class ImageRenderer extends BaseCellRenderer {
     }
     ctx.fill();
 
-    if (errorImage) {
-      const cachedErrorImage = ImageRenderer.imageCache.get(errorImage);
+    const iconSize = Math.min(width, height) * 0.4;
+    const iconX = x + width / 2;
+    const iconY = y + height / 2;
+
+    const prevStrokeStyle = ctx.strokeStyle;
+    const prevLineWidth = ctx.lineWidth;
+
+    ctx.strokeStyle = theme.colors.placeholderText;
+    ctx.lineWidth = 1.5;
+
+    ctx.beginPath();
+    ctx.rect(iconX - iconSize / 2, iconY - iconSize / 2, iconSize, iconSize);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(iconX - iconSize / 2, iconY + iconSize / 4);
+    ctx.lineTo(iconX - iconSize / 4, iconY);
+    ctx.lineTo(iconX, iconY + iconSize / 4);
+    ctx.lineTo(iconX + iconSize / 4, iconY - iconSize / 4);
+    ctx.lineTo(iconX + iconSize / 2, iconY + iconSize / 4);
+    ctx.stroke();
+
+    ctx.strokeStyle = prevStrokeStyle;
+    ctx.lineWidth = prevLineWidth;
+  }
+
+  private renderImageError(
+    ctx: CanvasRenderingContext2D,
+    theme: TableTheme,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    borderRadius: number,
+    errorImage: string | undefined,
+    imageRuntime: ImageRuntime | undefined,
+  ): void {
+    if (errorImage && imageRuntime) {
+      const cachedErrorImage = imageRuntime.get(errorImage, Math.max(width, height));
       if (cachedErrorImage) {
         ctx.save();
         ctx.beginPath();
@@ -362,28 +473,59 @@ export class ImageRenderer extends BaseCellRenderer {
         this.drawImageWithFit(ctx, cachedErrorImage, x, y, width, height, "cover");
         ctx.restore();
         return;
+      } else if (!imageRuntime.isLoading(errorImage) && !imageRuntime.isFailed(errorImage)) {
+        imageRuntime.load(errorImage, Math.max(width, height));
       }
     }
 
-    // Draw error icon
-    ctx.fillStyle = theme.colors.placeholderText;
-    ctx.font = `bold ${Math.min(16, width / 2)}px ${theme.font.family}`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("!", x + width / 2, y + height / 2);
-    ctx.textAlign = "left";
+    ctx.fillStyle = theme.colors.image.errorBg;
+    ctx.beginPath();
+    if (borderRadius > 0) {
+      ctx.roundRect(x, y, width, height, borderRadius);
+    } else {
+      ctx.rect(x, y, width, height);
+    }
+    ctx.fill();
+
+    const iconSize = Math.min(width, height) * 0.4;
+    const iconX = x + width / 2;
+    const iconY = y + height / 2;
+
+    const prevStrokeStyle = ctx.strokeStyle;
+    const prevLineWidth = ctx.lineWidth;
+
+    ctx.strokeStyle = theme.colors.image.errorBorder;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.rect(iconX - iconSize / 2, iconY - iconSize / 2, iconSize, iconSize);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(iconX - iconSize / 4, iconY - iconSize / 4);
+    ctx.lineTo(iconX + iconSize / 4, iconY + iconSize / 4);
+    ctx.moveTo(iconX + iconSize / 4, iconY - iconSize / 4);
+    ctx.lineTo(iconX - iconSize / 4, iconY + iconSize / 4);
+    ctx.stroke();
+
+    ctx.strokeStyle = prevStrokeStyle;
+    ctx.lineWidth = prevLineWidth;
   }
 
   private renderImageHover(
     ctx: CanvasRenderingContext2D,
-    theme: import("../../types").TableTheme,
+    theme: TableTheme,
     x: number,
     y: number,
     width: number,
     height: number,
     borderRadius: number,
   ): void {
-    ctx.strokeStyle = theme.colors.image.hoverBorder;
+    const hoverBorderColor = theme.colors.image.hoverBorder;
+
+    const prevStrokeStyle = ctx.strokeStyle;
+    const prevLineWidth = ctx.lineWidth;
+
+    ctx.strokeStyle = hoverBorderColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
     if (borderRadius > 0) {
@@ -392,18 +534,37 @@ export class ImageRenderer extends BaseCellRenderer {
       ctx.rect(x, y, width, height);
     }
     ctx.stroke();
+
+    ctx.save();
+    ctx.shadowColor = theme.colors.image.hoverShadow;
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.strokeStyle = hoverBorderColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (borderRadius > 0) {
+      ctx.roundRect(x, y, width, height, borderRadius);
+    } else {
+      ctx.rect(x, y, width, height);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.strokeStyle = prevStrokeStyle;
+    ctx.lineWidth = prevLineWidth;
   }
 
   private renderMoreCount(
     ctx: CanvasRenderingContext2D,
-    theme: import("../../types").TableTheme,
+    theme: TableTheme,
     x: number,
     y: number,
     width: number,
     height: number,
     borderRadius: number,
     count: number,
-    isHovered?: boolean,
+    isHovered: boolean,
   ): void {
     ctx.fillStyle = isHovered ? theme.colors.image.hoverBorder : theme.colors.moreCount.background;
     ctx.beginPath();
@@ -416,29 +577,30 @@ export class ImageRenderer extends BaseCellRenderer {
 
     const text = `+${count}`;
     ctx.fillStyle = theme.colors.moreCount.text;
-    ctx.font = `bold ${theme.font.size}px ${theme.font.family}`;
+    ctx.font = `bold ${Math.min(width, height) * 0.4}px ${theme.font.family}`;
+
+    const prevAlign = ctx.textAlign;
+    const prevBaseline = ctx.textBaseline;
+
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(text, x + width / 2, y + height / 2);
-    ctx.textAlign = "left";
+
+    ctx.textAlign = prevAlign;
+    ctx.textBaseline = prevBaseline;
   }
 
   private drawImageWithFit(
     ctx: CanvasRenderingContext2D,
-    image: HTMLImageElement,
+    img: HTMLImageElement | HTMLCanvasElement,
     x: number,
     y: number,
-    width: number,
-    height: number,
-    fit: "cover" | "contain" | "fill" | "none",
+    containerWidth: number,
+    containerHeight: number,
+    fit: "fill" | "contain" | "cover" | "none",
   ): void {
-    if (fit === "none") {
-      ctx.drawImage(image, x, y, width, height);
-      return;
-    }
-
-    const imgRatio = image.width / image.height;
-    const containerRatio = width / height;
+    const imgRatio = img.width / img.height;
+    const containerRatio = containerWidth / containerHeight;
 
     let drawWidth: number;
     let drawHeight: number;
@@ -446,49 +608,46 @@ export class ImageRenderer extends BaseCellRenderer {
     let drawY: number;
 
     switch (fit) {
-      case "cover":
-        if (imgRatio > containerRatio) {
-          drawHeight = height;
-          drawWidth = height * imgRatio;
-          drawX = x - (drawWidth - width) / 2;
-          drawY = y;
-        } else {
-          drawWidth = width;
-          drawHeight = width / imgRatio;
-          drawX = x;
-          drawY = y - (drawHeight - height) / 2;
-        }
-        break;
-      case "contain":
-        if (imgRatio > containerRatio) {
-          drawWidth = width;
-          drawHeight = width / imgRatio;
-          drawX = x;
-          drawY = y + (height - drawHeight) / 2;
-        } else {
-          drawHeight = height;
-          drawWidth = height * imgRatio;
-          drawX = x + (width - drawWidth) / 2;
-          drawY = y;
-        }
-        break;
       case "fill":
-      default:
+        drawWidth = containerWidth;
+        drawHeight = containerHeight;
         drawX = x;
         drawY = y;
-        drawWidth = width;
-        drawHeight = height;
+        break;
+
+      case "contain":
+        if (imgRatio > containerRatio) {
+          drawWidth = containerWidth;
+          drawHeight = containerWidth / imgRatio;
+        } else {
+          drawHeight = containerHeight;
+          drawWidth = containerHeight * imgRatio;
+        }
+        drawX = x + (containerWidth - drawWidth) / 2;
+        drawY = y + (containerHeight - drawHeight) / 2;
+        break;
+
+      case "cover":
+        if (imgRatio > containerRatio) {
+          drawHeight = containerHeight;
+          drawWidth = containerHeight * imgRatio;
+        } else {
+          drawWidth = containerWidth;
+          drawHeight = containerWidth / imgRatio;
+        }
+        drawX = x + (containerWidth - drawWidth) / 2;
+        drawY = y + (containerHeight - drawHeight) / 2;
+        break;
+
+      case "none":
+      default:
+        drawWidth = img.width;
+        drawHeight = img.height;
+        drawX = x + (containerWidth - drawWidth) / 2;
+        drawY = y + (containerHeight - drawHeight) / 2;
+        break;
     }
 
-    ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
-  }
-
-  /**
-   * Clear all static caches to prevent memory leaks
-   */
-  static clearCache(): void {
-    ImageRenderer.imageCache.clear();
-    ImageRenderer.loadingImages.clear();
-    ImageRenderer.failedImages.clear();
+    ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
   }
 }

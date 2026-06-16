@@ -33,7 +33,6 @@ import { EditorManager } from "./core/EditorManager";
 import { FilterInputManager } from "./core/FilterInputManager";
 import { EventEmitter } from "./core/EventEmitter";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./core/RenderCache";
-import { ImageRenderer } from "./core/renderers";
 import { DEFAULT_THEME, DARK_THEME } from "./theme";
 import {
   arrayToCsv,
@@ -1546,7 +1545,6 @@ export class CanvasTable implements CanvasTableAPI {
         this.editorManager.destroy();
         // 清理图片缓存，防止内存泄漏
         this.renderer.clearImageCache();
-        ImageRenderer.clearCache();
         // 重置渲染缓存
         this.renderer.resetRowIds();
         this.renderCache.clear();
@@ -2530,8 +2528,6 @@ export class CanvasTable implements CanvasTableAPI {
     this.filterInputManager.destroy();
     this.loadingOverlay.destroy();
     this.dataManager.destroy();
-    // 清理静态图片缓存，防止内存泄漏
-    ImageRenderer.clearCache();
 
     if (this.wrapper.parentNode) {
       this.wrapper.parentNode.removeChild(this.wrapper);

@@ -49,10 +49,6 @@ describe('ImageRenderer', () => {
     };
   }
 
-  beforeEach(() => {
-    ImageRenderer.clearCache();
-  });
-
   it('uses taller cells to render multiple image rows', () => {
     const renderer = new ImageRenderer();
     const context = createContext();
