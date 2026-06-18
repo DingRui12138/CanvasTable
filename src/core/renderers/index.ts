@@ -5,7 +5,16 @@
  * for managing and accessing renderers by cell type.
  */
 
-import { CanvasTableLocale, CellType, Column, Row, TableTheme } from "../../types";
+import {
+  CanvasTableLocale,
+  CellType,
+  Column,
+  Row,
+  TableTheme,
+  SwitchAnimationState,
+  ButtonHoverState,
+  ButtonsOptions,
+} from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import {
   CellRenderer,
@@ -56,8 +65,12 @@ export { RatingRenderer } from "./RatingRenderer";
 export { ColorRenderer } from "./ColorRenderer";
 
 // Re-export performance monitor
-export { RendererPerformanceMonitor, getPerformanceMonitor } from "./PerformanceMonitor";
-export type { PerformanceStats, FrameStats } from "./PerformanceMonitor";
+export {
+  type PerformanceStats,
+  type FrameStats,
+  type RendererPerformanceMonitor,
+  getPerformanceMonitor,
+} from "./PerformanceMonitor";
 
 /**
  * Registry for managing cell renderers
@@ -75,9 +88,7 @@ export class CellRendererRegistry {
     this.register(new NumberRenderer());
     this.register(new CheckboxRenderer());
     this.register(new RadioRenderer());
-    const buttonRenderer = new ButtonRenderer();
-    this.register(buttonRenderer);
-    this.renderers.set("buttons", buttonRenderer);
+    this.register(new ButtonRenderer());
     this.register(new SwitchRenderer());
     this.register(new ProgressRenderer());
     this.register(new ImageRenderer());
@@ -187,11 +198,12 @@ export class CellRendererRegistry {
     isHovered: boolean;
     isSelected: boolean;
     dpr: number;
-    switchAnimation?: import("../../types").SwitchAnimationState;
-    buttonHoverState?: import("../../types").ButtonHoverState;
+    switchAnimation?: SwitchAnimationState;
+    buttonHoverState?: ButtonHoverState;
     multipleSelectSeparator?: string;
     hoveredImageIndex?: number;
     hoveredButtonIndex?: number;
+    buttonOptions?: ButtonsOptions;
     imageRuntime?: ImageRuntime;
   }): CellRendererContext {
     return { ...params, locale: params.locale ?? this.locale };

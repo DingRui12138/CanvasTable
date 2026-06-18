@@ -1278,11 +1278,13 @@ export class InteractionManager {
     if (
       renderResult.type !== CellTypes.BUTTON ||
       !renderResult.button ||
+      Array.isArray(renderResult.button) ||
       !this.editorRegistry.getStrategy(column).canEdit(cell, row, column)
     ) {
       this.startButtonHoverAnimationLoop();
       return;
     }
+    const buttonConfig = renderResult.button;
 
     const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
     const cellViewportX = this.getCellViewportX(cellPos, column);
@@ -1292,11 +1294,11 @@ export class InteractionManager {
     const relativeY = mouseY - cellViewportY;
 
     const buttonHeight =
-      renderResult.button.size === "small" ? 24 : renderResult.button.size === "large" ? 40 : 32;
+      buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
     const buttonY = (cellPos.height - buttonHeight) / 2;
 
     // 计算按钮宽度：与 Renderer 保持一致
-    const text = renderResult.button.text ?? this.locale.cell.buttonText;
+    const text = buttonConfig.text ?? this.locale.cell.buttonText;
     // 使用默认字体大小计算
     const fontSize = 13;
     this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
@@ -1535,8 +1537,12 @@ export class InteractionManager {
 
     const renderResult = getRenderResult(column, row, cell.rowIndex);
 
-    // 检查是否是 buttons 类型
-    if (renderResult.type !== CellTypes.BUTTONS || !renderResult.buttons) {
+    // 检查是否是按钮组（数组形式）
+    if (
+      renderResult.type !== CellTypes.BUTTON ||
+      !renderResult.button ||
+      !Array.isArray(renderResult.button)
+    ) {
       this.state.hoveredButtonIndex = -1;
       return;
     }
@@ -1546,10 +1552,11 @@ export class InteractionManager {
       return;
     }
 
-    const config = renderResult.buttons;
-    const visibleButtons = config.buttons.filter((btn) => btn.visible !== false);
-    const maxVisible = config.maxVisible ?? 3;
-    const gap = config.gap ?? 4;
+    const buttons = renderResult.button;
+    const options = renderResult.buttonOptions ?? {};
+    const visibleButtons = buttons.filter((btn) => btn.visible !== false);
+    const maxVisible = options.maxVisible ?? 3;
+    const gap = options.gap ?? 4;
     const padding = 8;
     const buttonHeight = 24;
 
@@ -1592,7 +1599,7 @@ export class InteractionManager {
 
     // 检查"更多"按钮
     if (moreButtons.length > 0) {
-      const moreText = config.moreButtonText ?? "···";
+      const moreText = options.moreButtonText ?? "···";
       const textWidth = this.ctx.measureText(moreText).width;
       const buttonWidth = Math.max(textWidth + 16, 32);
 
@@ -1719,8 +1726,58 @@ export class InteractionManager {
 
     if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
       if (isDisabled) return false;
-      const buttonHeight =
-        renderResult.button.size === "small" ? 24 : renderResult.button.size === "large" ? 40 : 32;
+      const button = renderResult.button;
+
+      if (Array.isArray(button)) {
+        const options = renderResult.buttonOptions ?? {};
+        const padding = 8;
+        const gap = options.gap ?? 4;
+        const maxVisible = options.maxVisible ?? 3;
+        const buttonHeight = 24;
+        const buttonY = (cellPos.height - buttonHeight) / 2;
+
+        const visibleButtons = button.filter((btn) => btn.visible !== false);
+        const displayButtons = visibleButtons.slice(0, maxVisible);
+
+        let currentX = padding;
+        for (const btn of displayButtons) {
+          const text = btn.text ?? this.locale.cell.buttonText;
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth = this.ctx.measureText(text).width;
+          const buttonWidth = Math.max(textWidth + 16, 40);
+
+          if (
+            relativeY >= buttonY &&
+            relativeY <= buttonY + buttonHeight &&
+            relativeX >= currentX &&
+            relativeX <= currentX + buttonWidth
+          ) {
+            return true;
+          }
+
+          currentX += buttonWidth + gap;
+        }
+
+        if (visibleButtons.length > maxVisible) {
+          const moreText = options.moreButtonText ?? "···";
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth = this.ctx.measureText(moreText).width;
+          const buttonWidth = Math.max(textWidth + 16, 32);
+
+          if (
+            relativeY >= buttonY &&
+            relativeY <= buttonY + buttonHeight &&
+            relativeX >= currentX &&
+            relativeX <= currentX + buttonWidth
+          ) {
+            return true;
+          }
+        }
+
+        return false;
+      }
+
+      const buttonHeight = button.size === "small" ? 24 : button.size === "large" ? 40 : 32;
       const buttonY = (cellPos.height - buttonHeight) / 2;
       const padding = 8;
       return (
@@ -1729,55 +1786,6 @@ export class InteractionManager {
         relativeX >= padding &&
         relativeX <= cellPos.width - padding
       );
-    }
-
-    if (renderResult.type === CellTypes.BUTTONS && renderResult.buttons) {
-      if (isDisabled) return false;
-      const padding = 8;
-      const gap = renderResult.buttons.gap ?? 4;
-      const maxVisible = renderResult.buttons.maxVisible ?? 3;
-      const buttonHeight = 24;
-      const buttonY = (cellPos.height - buttonHeight) / 2;
-
-      const visibleButtons = renderResult.buttons.buttons.filter((btn) => btn.visible !== false);
-      const displayButtons = visibleButtons.slice(0, maxVisible);
-
-      let currentX = padding;
-      for (const btn of displayButtons) {
-        const text = btn.text ?? this.locale.cell.buttonText;
-        this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        const textWidth = this.ctx.measureText(text).width;
-        const buttonWidth = Math.max(textWidth + 16, 40);
-
-        if (
-          relativeY >= buttonY &&
-          relativeY <= buttonY + buttonHeight &&
-          relativeX >= currentX &&
-          relativeX <= currentX + buttonWidth
-        ) {
-          return true;
-        }
-
-        currentX += buttonWidth + gap;
-      }
-
-      if (visibleButtons.length > maxVisible) {
-        const moreText = renderResult.buttons.moreButtonText ?? "···";
-        this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        const textWidth = this.ctx.measureText(moreText).width;
-        const buttonWidth = Math.max(textWidth + 16, 32);
-
-        if (
-          relativeY >= buttonY &&
-          relativeY <= buttonY + buttonHeight &&
-          relativeX >= currentX &&
-          relativeX <= currentX + buttonWidth
-        ) {
-          return true;
-        }
-      }
-
-      return false;
     }
 
     if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
@@ -2209,7 +2217,6 @@ export class InteractionManager {
       CellTypes.CHECKBOX,
       CellTypes.RADIO,
       CellTypes.BUTTON,
-      CellTypes.BUTTONS,
       CellTypes.SWITCH,
       CellTypes.RATING,
     ];
@@ -2391,6 +2398,8 @@ export class InteractionManager {
     if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
       if (isDisabled) return false;
 
+      const buttonConfig = renderResult.button;
+
       const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
       const rect = this.canvas.getBoundingClientRect();
       const viewportX = e.clientX - rect.left;
@@ -2402,12 +2411,93 @@ export class InteractionManager {
       const relativeX = viewportX - cellViewportX;
       const relativeY = viewportY - cellViewportY;
 
+      if (Array.isArray(buttonConfig)) {
+        const options = renderResult.buttonOptions ?? {};
+        const padding = 8;
+        const gap = options.gap ?? 4;
+        const maxVisible = options.maxVisible ?? 3;
+        const buttonHeight = 24;
+        const buttonY = (cellPos.height - buttonHeight) / 2;
+
+        const visibleButtons = buttonConfig.filter((btn) => btn.visible !== false);
+        const displayButtons = visibleButtons.slice(0, maxVisible);
+        const moreButtons = visibleButtons.slice(maxVisible);
+
+        let currentX = padding;
+        for (let i = 0; i < displayButtons.length; i++) {
+          const btn = displayButtons[i]!;
+          const text = btn.text ?? this.locale.cell.buttonText;
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth = this.ctx.measureText(text).width;
+          const buttonWidth = Math.max(textWidth + 16, 40);
+
+          if (
+            relativeY >= buttonY &&
+            relativeY <= buttonY + buttonHeight &&
+            relativeX >= currentX &&
+            relativeX <= currentX + buttonWidth
+          ) {
+            this.eventEmitter.emit(
+              TableEvents.BUTTON_CLICK,
+              this.getCellInfo(cell)!,
+              btn.actionKey,
+            );
+            return true;
+          }
+
+          currentX += buttonWidth + gap;
+        }
+
+        if (moreButtons.length > 0) {
+          const moreText = options.moreButtonText ?? "···";
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth = this.ctx.measureText(moreText).width;
+          const buttonWidth = Math.max(textWidth + 16, 32);
+
+          if (
+            relativeY >= buttonY &&
+            relativeY <= buttonY + buttonHeight &&
+            relativeX >= currentX &&
+            relativeX <= currentX + buttonWidth
+          ) {
+            const dropdownX = cellViewportX + currentX;
+            const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
+            const dropdownHeight = moreButtons.length * itemHeight;
+            const canvasRect = this.canvas.getBoundingClientRect();
+
+            let dropdownY = cellViewportY + buttonY + buttonHeight + 4;
+            let showAbove = false;
+
+            if (dropdownY + dropdownHeight > canvasRect.height) {
+              dropdownY = cellViewportY + buttonY - dropdownHeight - 4;
+              showAbove = true;
+            }
+
+            this.state.buttonsDropdown = {
+              cell,
+              x: dropdownX,
+              y: dropdownY,
+              buttons: moreButtons,
+              hoveredIndex: -1,
+              buttonRelativeX: currentX,
+              buttonY: buttonY,
+              buttonHeight: buttonHeight,
+              showAbove,
+            };
+            this.eventEmitter.emit(TableEvents.DROPDOWN_OPEN);
+            return true;
+          }
+        }
+
+        return false;
+      }
+
       const buttonHeight =
-        renderResult.button.size === "small" ? 24 : renderResult.button.size === "large" ? 40 : 32;
+        buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
       const buttonY = (cellPos.height - buttonHeight) / 2;
 
       // 计算按钮宽度：与 Renderer 保持一致
-      const text = renderResult.button.text ?? this.locale.cell.buttonText;
+      const text = buttonConfig.text ?? this.locale.cell.buttonText;
       const fontSize = 13;
       this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
       const textWidth = this.ctx.measureText(text).width;
@@ -2430,98 +2520,9 @@ export class InteractionManager {
       this.eventEmitter.emit(
         TableEvents.BUTTON_CLICK,
         this.getCellInfo(cell)!,
-        renderResult.button.actionKey,
+        buttonConfig.actionKey,
       );
       return true;
-    }
-
-    if (renderResult.type === CellTypes.BUTTONS && renderResult.buttons) {
-      if (isDisabled) return false;
-
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-
-      const padding = 8;
-      const gap = renderResult.buttons.gap ?? 4;
-      const maxVisible = renderResult.buttons.maxVisible ?? 3;
-      const buttonHeight = 24;
-      const buttonY = (cellPos.height - buttonHeight) / 2;
-
-      const visibleButtons = renderResult.buttons.buttons.filter((btn) => btn.visible !== false);
-      const displayButtons = visibleButtons.slice(0, maxVisible);
-      const moreButtons = visibleButtons.slice(maxVisible);
-
-      let currentX = padding;
-      for (let i = 0; i < displayButtons.length; i++) {
-        const btn = displayButtons[i]!;
-        const text = btn.text ?? this.locale.cell.buttonText;
-        this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        const textWidth = this.ctx.measureText(text).width;
-        const buttonWidth = Math.max(textWidth + 16, 40);
-
-        if (
-          relativeY >= buttonY &&
-          relativeY <= buttonY + buttonHeight &&
-          relativeX >= currentX &&
-          relativeX <= currentX + buttonWidth
-        ) {
-          this.eventEmitter.emit(TableEvents.BUTTON_CLICK, this.getCellInfo(cell)!, btn.actionKey);
-          return true;
-        }
-
-        currentX += buttonWidth + gap;
-      }
-
-      if (moreButtons.length > 0) {
-        const moreText = renderResult.buttons.moreButtonText ?? "···";
-        this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        const textWidth = this.ctx.measureText(moreText).width;
-        const buttonWidth = Math.max(textWidth + 16, 32);
-
-        if (
-          relativeY >= buttonY &&
-          relativeY <= buttonY + buttonHeight &&
-          relativeX >= currentX &&
-          relativeX <= currentX + buttonWidth
-        ) {
-          const dropdownX = cellViewportX + currentX;
-          const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-          const dropdownHeight = moreButtons.length * itemHeight;
-          const canvasRect = this.canvas.getBoundingClientRect();
-
-          let dropdownY = cellViewportY + buttonY + buttonHeight + 4;
-          let showAbove = false;
-
-          if (dropdownY + dropdownHeight > canvasRect.height) {
-            dropdownY = cellViewportY + buttonY - dropdownHeight - 4;
-            showAbove = true;
-          }
-
-          this.state.buttonsDropdown = {
-            cell,
-            x: dropdownX,
-            y: dropdownY,
-            buttons: moreButtons,
-            hoveredIndex: -1,
-            buttonRelativeX: currentX,
-            buttonY: buttonY,
-            buttonHeight: buttonHeight,
-            showAbove,
-          };
-          this.eventEmitter.emit(TableEvents.DROPDOWN_OPEN);
-          return true;
-        }
-      }
-
-      return false;
     }
 
     if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
@@ -3396,7 +3397,6 @@ export class InteractionManager {
           CellTypes.CHECKBOX,
           CellTypes.RADIO,
           CellTypes.BUTTON,
-          CellTypes.BUTTONS,
           CellTypes.SWITCH,
           CellTypes.RATING,
           CellTypes.PROGRESS,
@@ -3513,7 +3513,6 @@ export class InteractionManager {
           result.type &&
           result.type !== CellTypes.CUSTOM &&
           result.type !== CellTypes.BUTTON &&
-          result.type !== CellTypes.BUTTONS &&
           result.type !== CellTypes.IMAGE &&
           result.type !== CellTypes.PROGRESS &&
           result.type !== CellTypes.LINK

@@ -77,7 +77,6 @@ export class EditingHandler extends BaseHandler {
           result.type &&
           result.type !== CellTypes.CUSTOM &&
           result.type !== CellTypes.BUTTON &&
-          result.type !== CellTypes.BUTTONS &&
           result.type !== CellTypes.IMAGE &&
           result.type !== CellTypes.PROGRESS &&
           result.type !== CellTypes.LINK

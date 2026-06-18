@@ -11,7 +11,6 @@ export type CellType =
   | "checkbox"
   | "radio"
   | "button"
-  | "buttons"
   | "input"
   | "select"
   | "switch"
@@ -31,7 +30,6 @@ export const CellTypes = {
   CHECKBOX: "checkbox" as CellType,
   RADIO: "radio" as CellType,
   BUTTON: "button" as CellType,
-  BUTTONS: "buttons" as CellType,
   INPUT: "input" as CellType,
   SELECT: "select" as CellType,
   SWITCH: "switch" as CellType,
@@ -157,8 +155,9 @@ export interface RenderResult {
   placeholder?: string;
   checkbox?: CheckboxConfig;
   radio?: RadioConfig;
-  button?: ButtonConfig;
-  buttons?: ButtonsConfig;
+  button?: ButtonConfig | ButtonConfig[];
+  /** 多按钮容器配置（仅当 button 为数组时生效） */
+  buttonOptions?: ButtonsOptions;
   input?: InputConfig;
   select?: SelectConfig;
   tags?: TagsConfig;
@@ -238,8 +237,8 @@ export interface ButtonConfig {
   visible?: boolean;
 }
 
-export interface ButtonsConfig {
-  buttons: ButtonConfig[];
+/** 多按钮容器配置（仅当 button 为数组时生效，挂在 RenderResult 上） */
+export interface ButtonsOptions {
   maxVisible?: number;
   moreButtonText?: string;
   gap?: number;

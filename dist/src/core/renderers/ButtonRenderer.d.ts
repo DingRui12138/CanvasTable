@@ -6,7 +6,6 @@ import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellR
 export declare class ButtonRenderer extends BaseCellRenderer {
     readonly type: CellType;
     render(context: CellRendererContext): CellRenderResult;
-    private isButtonsConfig;
     private renderSingleButton;
     private renderButtons;
     private hexToRgb;

@@ -590,7 +590,11 @@ export function getCellDisplayText(column: Column, row: Row, rowIndex: number): 
     return selectedOption?.label || String(renderResult.radio.value ?? "");
   }
   if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
-    return renderResult.button.text || "";
+    const buttonConfig = renderResult.button;
+    if (Array.isArray(buttonConfig)) {
+      return buttonConfig.map((btn) => btn.text ?? "").join(", ");
+    }
+    return buttonConfig.text || "";
   }
   if (renderResult.tags) {
     return (renderResult.tags.tags as TagItem[]).map((tag) => tag.text).join(", ");
@@ -745,7 +749,7 @@ const COLUMN_TYPE_FILTER_MODE_MAP: Record<string, FilterMode> = {
 };
 
 /** 不支持筛选的列类型 */
-const UNSUPPORTED_FILTER_TYPES = ["button", "buttons", "image"];
+const UNSUPPORTED_FILTER_TYPES = ["button", "image"];
 
 /**
  * 根据列类型获取默认筛选模式

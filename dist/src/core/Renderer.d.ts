@@ -230,7 +230,11 @@ export declare class Renderer {
      */
     private measureRender;
     /**
-     * 获取性能统计
+     * 记录单次渲染耗时（用于内联性能采样的场景，如 image 热路径）
+     */
+    private recordRenderTiming;
+    /**
+     * 获取性能统计（按类型聚合，丢失列粒度，仅供向后兼容）
      */
     getPerformanceStats(): Map<string, {
         totalTime: number;

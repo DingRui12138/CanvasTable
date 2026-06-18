@@ -2,27 +2,24 @@
  * ButtonRenderer - Renders button cells
  */
 
-import { ButtonConfig, ButtonsConfig, CellType } from "../../types";
+import { ButtonConfig, ButtonsOptions, CellType } from "../../types";
 import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
 
 export class ButtonRenderer extends BaseCellRenderer {
   readonly type: CellType = "button";
 
   render(context: CellRendererContext): CellRenderResult {
-    const { value, buttonHoverState } = context;
+    const { value, buttonHoverState, buttonOptions } = context;
 
-    const config = value as ButtonConfig | ButtonsConfig;
+    const config = value as ButtonConfig | ButtonConfig[];
 
-    // Handle ButtonsConfig (multiple buttons)
-    if (this.isButtonsConfig(config)) {
-      return this.renderButtons(context, config);
+    // Multi-button cells: value is an array; container options come from the
+    // RenderResult (forwarded into context by Renderer's dispatch).
+    if (Array.isArray(config)) {
+      return this.renderButtons(context, config, buttonOptions ?? {});
     }
 
     return this.renderSingleButton(context, config, buttonHoverState?.progress);
-  }
-
-  private isButtonsConfig(config: ButtonConfig | ButtonsConfig): config is ButtonsConfig {
-    return "buttons" in config;
   }
 
   private renderSingleButton(
@@ -128,16 +125,20 @@ export class ButtonRenderer extends BaseCellRenderer {
     return { type: "button", config };
   }
 
-  private renderButtons(context: CellRendererContext, config: ButtonsConfig): CellRenderResult {
+  private renderButtons(
+    context: CellRendererContext,
+    buttons: ButtonConfig[],
+    options: ButtonsOptions,
+  ): CellRenderResult {
     const { ctx, theme, locale, x, y, height, isDisabled, hoveredButtonIndex } = context;
 
     const padding = 8;
-    const gap = config.gap ?? 4;
-    const maxVisible = config.maxVisible ?? 3;
+    const gap = options.gap ?? 4;
+    const maxVisible = options.maxVisible ?? 3;
     const buttonHeight = 24;
     const buttonY = y + (height - buttonHeight) / 2;
 
-    const visibleButtons = config.buttons.filter((btn) => btn.visible !== false);
+    const visibleButtons = buttons.filter((btn) => btn.visible !== false);
 
     const displayButtons = visibleButtons.slice(0, maxVisible);
     const moreButtons = visibleButtons.slice(maxVisible);
@@ -203,7 +204,7 @@ export class ButtonRenderer extends BaseCellRenderer {
     }
 
     if (moreButtons.length > 0) {
-      const moreText = config.moreButtonText ?? "···";
+      const moreText = options.moreButtonText ?? "···";
       const textWidth = ctx.measureText(moreText).width;
       const moreWidth = Math.max(textWidth + 16, 32);
       const isMoreDisabled = isDisabled ?? false;
@@ -233,7 +234,7 @@ export class ButtonRenderer extends BaseCellRenderer {
 
     ctx.textAlign = "left";
 
-    return { type: "buttons", config };
+    return { type: "button", config: buttons };
   }
 
   private hexToRgb(hex: string): { r: number; g: number; b: number } {

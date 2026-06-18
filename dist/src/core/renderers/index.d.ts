@@ -4,7 +4,7 @@
  * This module exports all cell renderers and provides a registry
  * for managing and accessing renderers by cell type.
  */
-import { CanvasTableLocale, CellType, Column, Row, TableTheme } from "../../types";
+import { CanvasTableLocale, CellType, Column, Row, TableTheme, SwitchAnimationState, ButtonHoverState, ButtonsOptions } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 import { CellRenderer, CellRendererContext, CellRenderResult, type ImageRuntime } from "./CellRenderer";
 import { RendererPerformanceMonitor } from "./PerformanceMonitor";
@@ -24,8 +24,7 @@ export { SelectRenderer } from "./SelectRenderer";
 export { InputRenderer } from "./InputRenderer";
 export { RatingRenderer } from "./RatingRenderer";
 export { ColorRenderer } from "./ColorRenderer";
-export { RendererPerformanceMonitor, getPerformanceMonitor } from "./PerformanceMonitor";
-export type { PerformanceStats, FrameStats } from "./PerformanceMonitor";
+export { type PerformanceStats, type FrameStats, type RendererPerformanceMonitor, getPerformanceMonitor, } from "./PerformanceMonitor";
 /**
  * Registry for managing cell renderers
  */
@@ -93,11 +92,12 @@ export declare class CellRendererRegistry {
         isHovered: boolean;
         isSelected: boolean;
         dpr: number;
-        switchAnimation?: import("../../types").SwitchAnimationState;
-        buttonHoverState?: import("../../types").ButtonHoverState;
+        switchAnimation?: SwitchAnimationState;
+        buttonHoverState?: ButtonHoverState;
         multipleSelectSeparator?: string;
         hoveredImageIndex?: number;
         hoveredButtonIndex?: number;
+        buttonOptions?: ButtonsOptions;
         imageRuntime?: ImageRuntime;
     }): CellRendererContext;
 }

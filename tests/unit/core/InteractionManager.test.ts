@@ -1370,18 +1370,16 @@ describe('InteractionManager', () => {
         {
           key: 'actions',
           title: 'Actions',
-          type: 'buttons',
+          type: 'button',
           width: 220,
           disabled: true,
           render: () => ({
-            type: 'buttons',
-            buttons: {
-              maxVisible: 1,
-              buttons: [
-                { text: 'A', actionKey: 'a' },
-                { text: 'B', actionKey: 'b' },
-              ],
-            },
+            type: 'button',
+            button: [
+              { text: 'A', actionKey: 'a' },
+              { text: 'B', actionKey: 'b' },
+            ],
+            buttonOptions: { maxVisible: 1 },
           }),
         },
       ];
@@ -1407,7 +1405,7 @@ describe('InteractionManager', () => {
         {
           key: 'actions',
           title: 'Actions',
-          type: 'buttons',
+          type: 'button',
           width: 220,
           disabled: true,
         },
@@ -1490,6 +1488,10 @@ describe('InteractionManager', () => {
 
     it('should block mousedown cell interaction when shouldBlockEditingClose returns true', async () => {
       interactionManager.setShouldBlockEditingClose(async () => true);
+
+      // The mousedown gate only fires when an editing cell is currently open;
+      // simulate that precondition before dispatching the event.
+      interactionManager['state'].editingCell = { rowIndex: 0, columnIndex: 1 };
 
       // Simulate a mousedown on a cell - should be blocked
       const cell = { rowIndex: 0, columnIndex: 0 };

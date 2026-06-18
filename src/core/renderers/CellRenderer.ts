@@ -13,7 +13,6 @@ import {
   CheckboxConfig,
   RadioConfig,
   ButtonConfig,
-  ButtonsConfig,
   InputConfig,
   SelectConfig,
   TagsConfig,
@@ -25,6 +24,7 @@ import {
   ColorPickerConfig,
   SwitchAnimationState,
   ButtonHoverState,
+  ButtonsOptions,
   CanvasTableLocale,
 } from "../../types";
 import { LayoutManager } from "../LayoutManager";
@@ -121,6 +121,9 @@ export interface CellRendererContext {
   /** Hovered button index (for buttons cells) */
   hoveredButtonIndex?: number;
 
+  /** Container-level options for multi-button cells (button is an array) */
+  buttonOptions?: ButtonsOptions;
+
   /** Required when rendering image cells; provides host runtime hooks. */
   imageRuntime?: ImageRuntime;
 }
@@ -137,7 +140,7 @@ export interface CellRenderResult {
     | CheckboxConfig
     | RadioConfig
     | ButtonConfig
-    | ButtonsConfig
+    | ButtonConfig[]
     | InputConfig
     | SelectConfig
     | TagsConfig

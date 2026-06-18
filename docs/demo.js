@@ -251,11 +251,11 @@ function initDemo() {
     { key: 'level', title: '级别(单选)', width: 120, type: 'select', align: 'left', filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'select', select: { value: value, options: [{ label: '初级', value: 'junior' }, { label: '中级', value: 'middle' }, { label: '高级', value: 'senior' }, { label: '专家', value: 'expert' }], placeholder: '请选择级别' } }; } },
     { key: 'roles', title: '角色(多选)', width: 160, type: 'select', align: 'left', filterable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'select', select: { value: row.data.roles, multiple: true, options: [{ label: '管理员', value: 'admin' }, { label: '编辑者', value: 'editor' }, { label: '查看者', value: 'viewer' }, { label: '开发者', value: 'developer' }], placeholder: '请选择角色' } }; } },
     { key: 'enabled', title: '启用', width: 80, type: 'switch', align: 'center', filterable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'switch', switch: { checked: row.data.enabled } }; } },
-    { key: 'actions', title: '操作', width: 200, type: 'buttons', align: 'center', fixed: 'right', disabled: isRowDisabled, render: function(value, row) {
+    { key: 'actions', title: '操作', width: 200, type: 'button', align: 'center', fixed: 'right', disabled: isRowDisabled, render: function(value, row) {
       var rowIndex = parseInt(row.id.replace('row-', ''));
       var isEven = rowIndex % 2 === 0;
       var buttons = [{ text: '查看', variant: 'default', actionKey: 'view', visible: true }, { text: '编辑', variant: 'primary', actionKey: 'edit', visible: true }, { text: '删除', variant: 'danger', actionKey: 'delete', visible: isEven }, { text: '导出', variant: 'link', actionKey: 'export', visible: rowIndex < 15 }];
-      return { type: 'buttons', buttons: { buttons: buttons, maxVisible: 2, moreButtonText: '更多', gap: 4 } };
+      return { type: 'button', button: buttons, buttonOptions: { maxVisible: 2, moreButtonText: '更多', gap: 4 } };
     }},
     { key: 'score', title: '评分', width: 60, type: 'number', sortable: true, align: 'center', fixed: 'right', render: function(value) {
       var color = '#52c41a';

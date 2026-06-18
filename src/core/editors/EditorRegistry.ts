@@ -59,7 +59,6 @@ const INTERACTIVE_TYPES = new Set([
   CellTypes.RATING,
   CellTypes.PROGRESS,
   CellTypes.BUTTON,
-  CellTypes.BUTTONS,
 ]);
 
 // ─── DOM 类型列表 ───

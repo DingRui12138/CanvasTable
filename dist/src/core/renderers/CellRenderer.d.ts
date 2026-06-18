@@ -4,7 +4,7 @@
  * This module defines the interface that all cell renderers must implement,
  * enabling a strategy pattern for rendering different cell types.
  */
-import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, ButtonsConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, ColorPickerConfig, SwitchAnimationState, ButtonHoverState, CanvasTableLocale } from "../../types";
+import { Column, Row, TableTheme, CellType, CheckboxConfig, RadioConfig, ButtonConfig, InputConfig, SelectConfig, TagsConfig, DateConfig, SwitchConfig, ImageConfig, ProgressConfig, RatingConfig, ColorPickerConfig, SwitchAnimationState, ButtonHoverState, ButtonsOptions, CanvasTableLocale } from "../../types";
 import { LayoutManager } from "../LayoutManager";
 /**
  * Runtime hooks required by ImageRenderer to integrate with the host's
@@ -75,6 +75,8 @@ export interface CellRendererContext {
     hoveredImageIndex?: number;
     /** Hovered button index (for buttons cells) */
     hoveredButtonIndex?: number;
+    /** Container-level options for multi-button cells (button is an array) */
+    buttonOptions?: ButtonsOptions;
     /** Required when rendering image cells; provides host runtime hooks. */
     imageRuntime?: ImageRuntime;
 }
@@ -85,7 +87,7 @@ export interface CellRenderResult {
     /** The type of cell that was rendered */
     type: CellType;
     /** Optional config that was used for rendering */
-    config?: CheckboxConfig | RadioConfig | ButtonConfig | ButtonsConfig | InputConfig | SelectConfig | TagsConfig | DateConfig | SwitchConfig | ImageConfig | ProgressConfig | RatingConfig | ColorPickerConfig;
+    config?: CheckboxConfig | RadioConfig | ButtonConfig | ButtonConfig[] | InputConfig | SelectConfig | TagsConfig | DateConfig | SwitchConfig | ImageConfig | ProgressConfig | RatingConfig | ColorPickerConfig;
     /** Whether the cell handled its own background */
     customBackground?: boolean;
     /** Star bounds for rating click detection */

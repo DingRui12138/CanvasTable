@@ -1253,7 +1253,7 @@ const columns: Column[] = [
     key: "actions",
     title: "操作",
     width: 200,
-    type: "buttons",
+    type: "button",
     align: "center",
     fixed: "right",
     disabled: isRowDisabled,
@@ -1296,9 +1296,9 @@ const columns: Column[] = [
       ];
 
       return {
-        type: "buttons" as CellType,
-        buttons: {
-          buttons,
+        type: "button" as CellType,
+        button: buttons,
+        buttonOptions: {
           maxVisible: 2,
           moreButtonText: "更多",
           gap: 4,
@@ -2148,11 +2148,11 @@ perfButton.addEventListener("click", () => {
     perfMonitoringEnabled = true;
     table.setPerformanceMonitoring(true);
     table.resetPerformanceStats();
-    perfButton.textContent = "结束性能检测";
-    perfButton.style.background = "#fff1f0";
+    perfButton.textContent = "End Perf Monitor";
+    perfButton.style.background = "#ff4d4f";
     perfButton.style.borderColor = "#ff4d4f";
-    perfButton.style.color = "#ff4d4f";
-    console.log("性能检测已开始，滚动表格数据进行测试...");
+    perfButton.style.color = "white";
+    console.log("Performance monitoring started. Scroll the table data to test it...");
   } else {
     // 先打印报告，再禁用监控
     perfMonitoringEnabled = false;
@@ -2161,10 +2161,8 @@ perfButton.addEventListener("click", () => {
     console.log("\n==================================\n");
     // 打印完报告后再禁用
     table.setPerformanceMonitoring(false);
-    perfButton.textContent = "开始性能检测";
-    perfButton.style.background = "#e6f7ff";
-    perfButton.style.borderColor = "#1890ff";
-    perfButton.style.color = "#1890ff";
+    perfButton.textContent = "Start Perf Monitor";
+    perfButton.style = "";
   }
 });
 

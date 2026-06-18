@@ -1,5 +1,5 @@
 import type { CTElement } from "../core/jsx/types";
-export type CellType = "text" | "number" | "boolean" | "link" | "tag" | "date" | "custom" | "checkbox" | "radio" | "button" | "buttons" | "input" | "select" | "switch" | "image" | "progress" | "rating" | "color";
+export type CellType = "text" | "number" | "boolean" | "link" | "tag" | "date" | "custom" | "checkbox" | "radio" | "button" | "input" | "select" | "switch" | "image" | "progress" | "rating" | "color";
 export declare const CellTypes: {
     TEXT: CellType;
     NUMBER: CellType;
@@ -11,7 +11,6 @@ export declare const CellTypes: {
     CHECKBOX: CellType;
     RADIO: CellType;
     BUTTON: CellType;
-    BUTTONS: CellType;
     INPUT: CellType;
     SELECT: CellType;
     SWITCH: CellType;
@@ -125,8 +124,9 @@ export interface RenderResult {
     placeholder?: string;
     checkbox?: CheckboxConfig;
     radio?: RadioConfig;
-    button?: ButtonConfig;
-    buttons?: ButtonsConfig;
+    button?: ButtonConfig | ButtonConfig[];
+    /** 多按钮容器配置（仅当 button 为数组时生效） */
+    buttonOptions?: ButtonsOptions;
     input?: InputConfig;
     select?: SelectConfig;
     tags?: TagsConfig;
@@ -202,8 +202,8 @@ export interface ButtonConfig {
     actionKey?: string;
     visible?: boolean;
 }
-export interface ButtonsConfig {
-    buttons: ButtonConfig[];
+/** 多按钮容器配置（仅当 button 为数组时生效，挂在 RenderResult 上） */
+export interface ButtonsOptions {
     maxVisible?: number;
     moreButtonText?: string;
     gap?: number;

@@ -23,6 +23,7 @@ import {
   ImageTooltipState,
   ImageEditorState,
   ButtonHoverState,
+  ButtonsOptions,
   DisabledValue,
   DateDropdownState,
   ContextMenuState,
@@ -125,16 +126,21 @@ export class Renderer {
 
   // 性能监控
   private performanceEnabled: boolean = false;
-  private performanceStats: Map<string, { totalTime: number; count: number; maxTime: number }> =
-    new Map();
+  // type -> columnKey -> stats
+  private performanceStats: Map<
+    string,
+    Map<string, { totalTime: number; count: number; maxTime: number }>
+  > = new Map();
   private frameStartTime: number = 0;
   private frameCount: number = 0;
   private lastReportTime: number = 0;
 
-  // 当前帧统计
-  private currentFrameStats: Map<string, { totalTime: number; count: number }> = new Map();
+  // 当前帧统计 (type -> columnKey -> stats)
+  private currentFrameStats: Map<string, Map<string, { totalTime: number; count: number }>> =
+    new Map();
   // 上一帧统计（用于报告）
-  private lastFrameStats: Map<string, { totalTime: number; count: number }> = new Map();
+  private lastFrameStats: Map<string, Map<string, { totalTime: number; count: number }>> =
+    new Map();
 
   // 懒加载相关
   private currentVisibleRange: VisibleRange | null = null;
@@ -888,6 +894,7 @@ export class Renderer {
               -1,
               cell.startColumnIndex,
               false,
+              column.key,
             );
           }
 
@@ -2144,6 +2151,7 @@ export class Renderer {
           rowIndex,
           colIndex,
           isDisabled,
+          column.key,
         );
       } else {
         const levelIndent = isExpandColumn ? level * 16 : 0;
@@ -2158,6 +2166,7 @@ export class Renderer {
           rowIndex,
           colIndex,
           isDisabled,
+          column.key,
         );
       }
     }
@@ -2257,6 +2266,7 @@ export class Renderer {
     rowIndex?: number,
     colIndex?: number,
     isDisabled?: boolean,
+    columnKey?: string,
   ): void {
     try {
       this.renderCellContentInternal(
@@ -2270,6 +2280,7 @@ export class Renderer {
         rowIndex,
         colIndex,
         isDisabled,
+        columnKey,
       );
     } catch (error) {
       console.error(`Error rendering cell content at row ${rowIndex}, col ${colIndex}:`, error);
@@ -2298,6 +2309,7 @@ export class Renderer {
       hoveredImageIndex?: number;
       isHovered?: boolean;
       imageRuntime?: ImageRuntime;
+      buttonOptions?: ButtonsOptions;
     } = {},
   ): StrategyCellRenderResult | null {
     const renderer = this.cellRendererRegistry.get(type);
@@ -2329,6 +2341,7 @@ export class Renderer {
         multipleSelectSeparator: options.multipleSelectSeparator,
         hoveredButtonIndex: options.hoveredButtonIndex,
         hoveredImageIndex: options.hoveredImageIndex,
+        buttonOptions: options.buttonOptions,
         imageRuntime: options.imageRuntime,
       }),
     );
@@ -2345,11 +2358,13 @@ export class Renderer {
     rowIndex?: number,
     colIndex?: number,
     isDisabled?: boolean,
+    columnKey?: string,
   ): void {
     // 保存 canvas 状态，确保所有渲染操作不会影响后续单元格
     this.ctx.save();
     try {
       const { text, type, style, checkbox, radio, button, input, tags, link } = renderResult;
+      const ck = columnKey ?? "(unknown)";
 
       const fontSize = style?.fontSize ?? this.theme.font.size;
       const fontFamily = style?.fontFamily ?? this.theme.font.family;
@@ -2359,7 +2374,7 @@ export class Renderer {
       this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
       if (type === CellTypes.CHECKBOX && checkbox) {
-        this.measureRender("checkbox", () => {
+        this.measureRender("checkbox", ck, () => {
           this.renderWithCellRenderer("checkbox", checkbox, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2370,7 +2385,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.RADIO && radio) {
-        this.measureRender("radio", () => {
+        this.measureRender("radio", ck, () => {
           this.renderWithCellRenderer("radio", radio, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2381,6 +2396,28 @@ export class Renderer {
       }
 
       if (type === CellTypes.BUTTON && button) {
+        if (Array.isArray(button)) {
+          let hoveredButtonIndex = -1;
+          if (rowIndex !== undefined && colIndex !== undefined) {
+            const isCurrentCellHovered =
+              this.currentHoveredCell?.rowIndex === rowIndex &&
+              this.currentHoveredCell?.columnIndex === colIndex;
+            if (isCurrentCellHovered) {
+              hoveredButtonIndex = this.currentHoveredButtonIndex;
+            }
+          }
+          this.measureRender("button", ck, () => {
+            this.renderWithCellRenderer("button", button, x, y, width, height, {
+              rowIndex,
+              colIndex,
+              isDisabled,
+              hoveredButtonIndex,
+              buttonOptions: renderResult.buttonOptions,
+            });
+          });
+          return;
+        }
+
         let buttonHoverState: ButtonHoverState | undefined;
         if (rowIndex !== undefined && colIndex !== undefined && this.currentButtonHoverStates) {
           const cellKey = `${rowIndex}-${colIndex}`;
@@ -2389,33 +2426,12 @@ export class Renderer {
             buttonHoverState = hoverState;
           }
         }
-        this.measureRender("button", () => {
+        this.measureRender("button", ck, () => {
           this.renderWithCellRenderer("button", button, x, y, width, height, {
             rowIndex,
             colIndex,
             isDisabled,
             buttonHoverState,
-          });
-        });
-        return;
-      }
-
-      if (type === CellTypes.BUTTONS && renderResult.buttons) {
-        let hoveredButtonIndex = -1;
-        if (rowIndex !== undefined && colIndex !== undefined) {
-          const isCurrentCellHovered =
-            this.currentHoveredCell?.rowIndex === rowIndex &&
-            this.currentHoveredCell?.columnIndex === colIndex;
-          if (isCurrentCellHovered) {
-            hoveredButtonIndex = this.currentHoveredButtonIndex;
-          }
-        }
-        this.measureRender("buttons", () => {
-          this.renderWithCellRenderer("buttons", renderResult.buttons!, x, y, width, height, {
-            rowIndex,
-            colIndex,
-            isDisabled,
-            hoveredButtonIndex,
           });
         });
         return;
@@ -2430,7 +2446,7 @@ export class Renderer {
             switchAnimation = animation;
           }
         }
-        this.measureRender("switch", () => {
+        this.measureRender("switch", ck, () => {
           this.renderWithCellRenderer("switch", renderResult.switch!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2442,7 +2458,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.INPUT && input) {
-        this.measureRender("input", () => {
+        this.measureRender("input", ck, () => {
           this.renderWithCellRenderer("input", input, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2453,7 +2469,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.SELECT && renderResult.select) {
-        this.measureRender("select", () => {
+        this.measureRender("select", ck, () => {
           this.renderWithCellRenderer("select", renderResult.select!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2465,7 +2481,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.DATE && renderResult.date) {
-        this.measureRender("date", () => {
+        this.measureRender("date", ck, () => {
           this.renderWithCellRenderer("date", renderResult.date!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2476,7 +2492,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.TAG && tags) {
-        this.measureRender("tags", () => {
+        this.measureRender("tags", ck, () => {
           this.renderWithCellRenderer("tag", tags, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2518,10 +2534,7 @@ export class Renderer {
           const start = performance.now();
           this.imageRenderer.render(imageCtx);
           const duration = performance.now() - start;
-          const frameStats = this.currentFrameStats.get("image") || { totalTime: 0, count: 0 };
-          frameStats.totalTime += duration;
-          frameStats.count++;
-          this.currentFrameStats.set("image", frameStats);
+          this.recordRenderTiming("image", ck, duration);
         } else {
           this.imageRenderer.render(imageCtx);
         }
@@ -2542,7 +2555,7 @@ export class Renderer {
           ? { ...renderResult.progress!, value: this.currentProgressDragState!.displayValue }
           : renderResult.progress!;
 
-        this.measureRender("progress", () => {
+        this.measureRender("progress", ck, () => {
           this.renderWithCellRenderer("progress", progressConfig, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2554,7 +2567,7 @@ export class Renderer {
 
       if (type === CellTypes.RATING && renderResult.rating) {
         let starBounds: StrategyCellRenderResult["starBounds"] | undefined;
-        this.measureRender("rating", () => {
+        this.measureRender("rating", ck, () => {
           starBounds = this.renderWithCellRenderer(
             "rating",
             renderResult.rating!,
@@ -2576,7 +2589,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.COLOR && renderResult.color) {
-        this.measureRender("color", () => {
+        this.measureRender("color", ck, () => {
           this.renderWithCellRenderer("color", renderResult.color!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2593,7 +2606,7 @@ export class Renderer {
       // 渲染出错时仅跳过本单元格，不影响其它列的渲染。
 
       if (renderResult.type === "custom" && renderResult.jsxRender) {
-        this.measureRender("jsx", () => {
+        this.measureRender("jsx", ck, () => {
           // 强制保存完整 Canvas 状态，JSX 渲染完全隔离
           this.ctx.save();
           try {
@@ -2613,7 +2626,7 @@ export class Renderer {
       }
 
       if (renderResult.type === "custom" && renderResult.customRender) {
-        this.measureRender("custom", () => {
+        this.measureRender("custom", ck, () => {
           try {
             renderResult.customRender!({
               ctx: this.ctx,
@@ -2633,7 +2646,7 @@ export class Renderer {
       }
 
       // 文本渲染（默认）
-      this.measureRender("text", () => {
+      this.measureRender("text", ck, () => {
         // 处理 link 类型的显示文本
         let displayText = text;
         let color = style?.color ?? this.theme.colors.cellText;
@@ -2983,25 +2996,34 @@ export class Renderer {
     if (!this.performanceEnabled) return;
     this.frameCount++;
 
-    // 保存上一帧统计
-    this.lastFrameStats = new Map(this.currentFrameStats);
+    // 保存上一帧统计（深拷贝内层 Map）
+    this.lastFrameStats = new Map();
+    for (const [type, byKey] of this.currentFrameStats) {
+      this.lastFrameStats.set(type, new Map(byKey));
+    }
 
     // 将当前帧统计累积到总统计
-    for (const [type, frameStat] of this.currentFrameStats) {
-      const stats = this.performanceStats.get(type) || { totalTime: 0, count: 0, maxTime: 0 };
-      stats.totalTime += frameStat.totalTime;
-      stats.count += frameStat.count;
-      // 计算该渲染器在此帧的平均时间作为 maxTime 候选
-      const avgFrameTime = frameStat.totalTime / frameStat.count;
-      stats.maxTime = Math.max(stats.maxTime, avgFrameTime);
-      this.performanceStats.set(type, stats);
+    for (const [type, byKey] of this.currentFrameStats) {
+      let totalByKey = this.performanceStats.get(type);
+      if (!totalByKey) {
+        totalByKey = new Map();
+        this.performanceStats.set(type, totalByKey);
+      }
+      for (const [columnKey, frameStat] of byKey) {
+        const stats = totalByKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
+        stats.totalTime += frameStat.totalTime;
+        stats.count += frameStat.count;
+        const avgFrameTime = frameStat.count > 0 ? frameStat.totalTime / frameStat.count : 0;
+        stats.maxTime = Math.max(stats.maxTime, avgFrameTime);
+        totalByKey.set(columnKey, stats);
+      }
     }
   }
 
   /**
    * 测量渲染类型的时间
    */
-  private measureRender(type: string, fn: () => void): void {
+  private measureRender(type: string, columnKey: string, fn: () => void): void {
     if (!this.performanceEnabled) {
       fn();
       return;
@@ -3011,25 +3033,46 @@ export class Renderer {
     fn();
     const duration = performance.now() - start;
 
-    // 更新当前帧统计
-    const frameStats = this.currentFrameStats.get(type) || { totalTime: 0, count: 0 };
-    frameStats.totalTime += duration;
-    frameStats.count++;
-    this.currentFrameStats.set(type, frameStats);
+    this.recordRenderTiming(type, columnKey, duration);
   }
 
   /**
-   * 获取性能统计
+   * 记录单次渲染耗时（用于内联性能采样的场景，如 image 热路径）
+   */
+  private recordRenderTiming(type: string, columnKey: string, duration: number): void {
+    let byKey = this.currentFrameStats.get(type);
+    if (!byKey) {
+      byKey = new Map();
+      this.currentFrameStats.set(type, byKey);
+    }
+    const frameStats = byKey.get(columnKey) || { totalTime: 0, count: 0 };
+    frameStats.totalTime += duration;
+    frameStats.count++;
+    byKey.set(columnKey, frameStats);
+  }
+
+  /**
+   * 获取性能统计（按类型聚合，丢失列粒度，仅供向后兼容）
    */
   getPerformanceStats(): Map<
     string,
     { totalTime: number; count: number; maxTime: number; avgTime: number }
   > {
     const result = new Map();
-    for (const [type, stats] of this.performanceStats) {
+    for (const [type, byKey] of this.performanceStats) {
+      let totalTime = 0;
+      let count = 0;
+      let maxTime = 0;
+      for (const stats of byKey.values()) {
+        totalTime += stats.totalTime;
+        count += stats.count;
+        maxTime = Math.max(maxTime, stats.maxTime);
+      }
       result.set(type, {
-        ...stats,
-        avgTime: stats.totalTime / stats.count,
+        totalTime,
+        count,
+        maxTime,
+        avgTime: count > 0 ? totalTime / count : 0,
       });
     }
     return result;
@@ -3041,24 +3084,37 @@ export class Renderer {
   logPerformanceReport(): void {
     if (!this.performanceEnabled) return;
 
-    const entries = Array.from(this.performanceStats.entries())
-      .map(([type, stats]) => ({
-        type,
-        avgTime: stats.totalTime / stats.count,
-        ...stats,
-      }))
-      .sort((a, b) => b.avgTime - a.avgTime);
+    type Row = {
+      Type: string;
+      Key: string;
+      Calls: number;
+      "Avg(ms)": string;
+      "Max(ms)": string;
+      "Total(ms)": string;
+    };
+    const rows: Row[] = [];
+    for (const [type, byKey] of this.performanceStats) {
+      const keyEntries = Array.from(byKey.entries())
+        .map(([columnKey, stats]) => ({
+          columnKey,
+          ...stats,
+          avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
+        }))
+        .sort((a, b) => b.avgTime - a.avgTime);
+      for (const e of keyEntries) {
+        rows.push({
+          Type: type,
+          Key: e.columnKey,
+          Calls: e.count,
+          "Avg(ms)": e.avgTime.toFixed(3),
+          "Max(ms)": e.maxTime.toFixed(3),
+          "Total(ms)": e.totalTime.toFixed(1),
+        });
+      }
+    }
 
     console.group(`🎯 Renderer Performance (Frame ${this.frameCount})`);
-    console.table(
-      entries.map((e) => ({
-        Type: e.type,
-        Calls: e.count,
-        "Avg(ms)": e.avgTime.toFixed(3),
-        "Max(ms)": e.maxTime.toFixed(3),
-        "Total(ms)": e.totalTime.toFixed(1),
-      })),
-    );
+    console.table(rows);
     console.groupEnd();
   }
 
@@ -3088,25 +3144,42 @@ export class Renderer {
       lines.push("=== LAST FRAME STATS (most recent frame) ===");
       lines.push("-".repeat(70));
 
-      const lastEntries = Array.from(this.lastFrameStats.entries())
-        .map(([type, stats]) => ({
-          type,
-          count: stats.count,
-          totalTime: stats.totalTime,
-          avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
-        }))
+      const typeBuckets = Array.from(this.lastFrameStats.entries())
+        .map(([type, byKey]) => {
+          const keyEntries = Array.from(byKey.entries())
+            .map(([columnKey, stats]) => ({
+              columnKey,
+              count: stats.count,
+              totalTime: stats.totalTime,
+              avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
+            }))
+            .sort((a, b) => b.totalTime - a.totalTime);
+          const totalTime = keyEntries.reduce((s, e) => s + e.totalTime, 0);
+          const totalCount = keyEntries.reduce((s, e) => s + e.count, 0);
+          return { type, totalTime, totalCount, keyEntries };
+        })
         .sort((a, b) => b.totalTime - a.totalTime);
 
-      for (const e of lastEntries) {
+      for (const bucket of typeBuckets) {
+        lines.push(`[${bucket.type}]`);
+        for (const e of bucket.keyEntries) {
+          lines.push(
+            `  ${e.columnKey.padEnd(20)} | ` +
+              `calls: ${e.count.toString().padStart(4)} | ` +
+              `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
+              `total: ${e.totalTime.toFixed(2).padStart(6)}ms`,
+          );
+        }
+        const typeAvg = bucket.totalCount > 0 ? bucket.totalTime / bucket.totalCount : 0;
         lines.push(
-          `${e.type.padEnd(15)} | ` +
-            `calls: ${e.count.toString().padStart(4)} | ` +
-            `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
-            `total: ${e.totalTime.toFixed(2).padStart(6)}ms`,
+          `  ${"total".padEnd(20)} | ` +
+            `calls: ${bucket.totalCount.toString().padStart(4)} | ` +
+            `avg: ${typeAvg.toFixed(3).padStart(7)}ms | ` +
+            `total: ${bucket.totalTime.toFixed(2).padStart(6)}ms`,
         );
       }
 
-      const lastFrameTotal = lastEntries.reduce((sum, e) => sum + e.totalTime, 0);
+      const lastFrameTotal = typeBuckets.reduce((s, b) => s + b.totalTime, 0);
       lines.push("");
       lines.push(`Last frame total render time: ${lastFrameTotal.toFixed(2)}ms`);
     }
@@ -3116,29 +3189,50 @@ export class Renderer {
     lines.push("=== TOTAL STATS (all frames average) ===");
     lines.push("-".repeat(70));
 
-    const totalEntries = Array.from(this.performanceStats.entries())
-      .map(([type, stats]) => ({
-        type,
-        count: stats.count,
-        totalTime: stats.totalTime,
-        maxTime: stats.maxTime,
-        avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
-        callsPerFrame: Math.round(stats.count / frameCount),
-        avgFrameTime: stats.totalTime / frameCount,
-      }))
-      .sort((a, b) => b.avgFrameTime - a.avgFrameTime);
+    const typeBuckets = Array.from(this.performanceStats.entries())
+      .map(([type, byKey]) => {
+        const keyEntries = Array.from(byKey.entries())
+          .map(([columnKey, stats]) => ({
+            columnKey,
+            count: stats.count,
+            totalTime: stats.totalTime,
+            maxTime: stats.maxTime,
+            avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
+            callsPerFrame: Math.round(stats.count / frameCount),
+            avgFrameTime: stats.totalTime / frameCount,
+          }))
+          .sort((a, b) => b.avgFrameTime - a.avgFrameTime);
+        const totalCount = keyEntries.reduce((s, e) => s + e.count, 0);
+        const totalTime = keyEntries.reduce((s, e) => s + e.totalTime, 0);
+        const maxTime = keyEntries.reduce((m, e) => Math.max(m, e.maxTime), 0);
+        return { type, totalCount, totalTime, maxTime, keyEntries };
+      })
+      .sort((a, b) => b.totalTime - a.totalTime);
 
-    for (const e of totalEntries) {
+    for (const bucket of typeBuckets) {
+      lines.push(`[${bucket.type}]`);
+      for (const e of bucket.keyEntries) {
+        lines.push(
+          `  ${e.columnKey.padEnd(20)} | ` +
+            `avg calls/frame: ${e.callsPerFrame.toString().padStart(4)} | ` +
+            `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
+            `max: ${e.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `frameTotal: ${e.avgFrameTime.toFixed(2).padStart(6)}ms`,
+        );
+      }
+      const typeAvg = bucket.totalCount > 0 ? bucket.totalTime / bucket.totalCount : 0;
+      const typeFrameTotal = bucket.totalTime / frameCount;
+      const typeCallsPerFrame = Math.round(bucket.totalCount / frameCount);
       lines.push(
-        `${e.type.padEnd(15)} | ` +
-          `avg calls/frame: ${e.callsPerFrame.toString().padStart(4)} | ` +
-          `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
-          `max: ${e.maxTime.toFixed(3).padStart(7)}ms | ` +
-          `frameTotal: ${e.avgFrameTime.toFixed(2).padStart(6)}ms`,
+        `  ${"total".padEnd(20)} | ` +
+          `avg calls/frame: ${typeCallsPerFrame.toString().padStart(4)} | ` +
+          `avg: ${typeAvg.toFixed(3).padStart(7)}ms | ` +
+          `max: ${bucket.maxTime.toFixed(3).padStart(7)}ms | ` +
+          `frameTotal: ${typeFrameTotal.toFixed(2).padStart(6)}ms`,
       );
     }
 
-    const avgFrameTotal = totalEntries.reduce((sum, e) => sum + e.avgFrameTime, 0);
+    const avgFrameTotal = typeBuckets.reduce((sum, b) => sum + b.totalTime / frameCount, 0);
     lines.push("");
     lines.push(`Average frame render time: ${avgFrameTotal.toFixed(2)}ms`);
 
@@ -3958,6 +4052,7 @@ export class Renderer {
       rowIndex,
       undefined,
       isDisabled,
+      column.key,
     );
   }
 
