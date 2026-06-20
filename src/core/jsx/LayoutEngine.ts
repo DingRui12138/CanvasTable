@@ -1,5 +1,6 @@
 // src/core/jsx/LayoutEngine.ts
 import type { CTElement, CTLayoutInfo, CTLayoutNode, CTBoxProps } from "./types";
+import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { MeasurementEngine } from "./MeasurementEngine";
 
 /**
@@ -9,15 +10,49 @@ import { MeasurementEngine } from "./MeasurementEngine";
  * 支持: position='relative' 定位模式（子元素用 x, y, zIndex 定位）
  * 支持: width/height 百分比（"100%"），基于父容器尺寸（根元素基于传入的 parentSize）
  * 支持: overflow clipping
+ *
+ * 性能优化：
+ * - 单次布局内 measureChildSize 结果按 (element, parentSize) 记忆化，避免子树重复测量
+ * - layoutGroupNode 在容器尺寸已显式时直接进入定位阶段，避免预测量整棵子树
+ * - 跨单元格相对布局缓存（layoutTree 级别），按元素树签名 + parentSize 命中后克隆并平移
  */
+
+type Margin = { top: number; right: number; bottom: number; left: number };
+
+interface MeasureCacheEntry {
+  size: CTLayoutInfo;
+  parentSize?: { width: number; height: number };
+}
+
+interface CachedRelativeTree {
+  tree: CTLayoutNode;
+}
+
+const ZERO_MARGIN: Margin = { top: 0, right: 0, bottom: 0, left: 0 };
+
+// 跨 LayoutEngine 实例共享的相对布局缓存
+const RELATIVE_TREE_CACHE = new Map<string, CachedRelativeTree>();
+const RELATIVE_TREE_CACHE_MAX = 500;
+
 export class LayoutEngine {
   private measurementEngine: MeasurementEngine;
+  private trace?: CellRenderTrace;
   private layoutResults: CTLayoutInfo[] = [];
   /** 当前根元素的父容器尺寸（通常是单元格尺寸），用于解析根元素百分比 */
   private rootParentSize: { width: number; height: number } | undefined;
+  /** 单次 layout/layoutTree 调用内的 measureChildSize 缓存 */
+  private measureCache: Map<CTElement, MeasureCacheEntry[]> = new Map();
+  /** 跨单元格缓存命中计数（用于 trace） */
+  private static cacheHits = 0;
+  private static cacheMisses = 0;
 
-  constructor(measurementEngine: MeasurementEngine) {
+  constructor(measurementEngine: MeasurementEngine, trace?: CellRenderTrace) {
     this.measurementEngine = measurementEngine;
+    this.trace = trace;
+  }
+
+  private traceStep<T>(name: string, fn: () => T): T {
+    return this.trace ? this.trace.measure(name, fn) : fn();
   }
 
   /**
@@ -32,8 +67,13 @@ export class LayoutEngine {
   ): CTLayoutInfo[] {
     this.layoutResults = [];
     this.rootParentSize = parentSize;
-    this.layoutElement(root, startX, startY, parentSize);
-    this.rootParentSize = undefined;
+    this.measureCache.clear();
+    try {
+      this.layoutElement(root, startX, startY, parentSize);
+    } finally {
+      this.rootParentSize = undefined;
+      this.measureCache.clear();
+    }
     // 按 zIndex 排序返回结果
     return this.layoutResults.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
   }
@@ -48,9 +88,48 @@ export class LayoutEngine {
     startY: number,
     parentSize?: { width: number; height: number },
   ): CTLayoutNode {
+    // 1) 尝试跨单元格缓存（基于 0,0 的相对布局）
+    const cacheKey = this.buildRelativeCacheKey(root, parentSize);
+    if (cacheKey !== null) {
+      const cached = RELATIVE_TREE_CACHE.get(cacheKey);
+      if (cached) {
+        LayoutEngine.cacheHits++;
+        if (this.trace) {
+          this.trace.measure("jsx.layout.cacheHit", () => undefined);
+        }
+        // LRU 行为：最近命中放回末尾
+        RELATIVE_TREE_CACHE.delete(cacheKey);
+        RELATIVE_TREE_CACHE.set(cacheKey, cached);
+        try {
+          return this.cloneTreeWithOffset(cached.tree, root, startX, startY);
+        } catch {
+          RELATIVE_TREE_CACHE.delete(cacheKey);
+        }
+      }
+      LayoutEngine.cacheMisses++;
+    }
+
     this.rootParentSize = parentSize;
-    const node = this.layoutNode(root, startX, startY, parentSize);
-    this.rootParentSize = undefined;
+    this.measureCache.clear();
+    let node: CTLayoutNode;
+    try {
+      // 2) 计算相对布局（startX/startY = 0），便于缓存
+      const relative = this.traceStep("jsx.layout.layoutNode.root", () =>
+        this.layoutNode(root, 0, 0, parentSize),
+      );
+      // 3) 写入缓存（如果可缓存）
+      if (cacheKey !== null) {
+        this.cacheRelativeTree(cacheKey, relative);
+      }
+      // 4) 偏移到目标位置
+      node =
+        startX === 0 && startY === 0
+          ? relative
+          : this.cloneTreeWithOffset(relative, root, startX, startY);
+    } finally {
+      this.rootParentSize = undefined;
+      this.measureCache.clear();
+    }
     return node;
   }
 
@@ -75,28 +154,40 @@ export class LayoutEngine {
     x: number,
     y: number,
     parentSize?: { width: number; height: number },
+    presetSize?: { width: number; height: number; margin?: Margin },
   ): CTLayoutNode {
     // CTBox + display='flex' → Flex 布局
     if (element.type === "CTBox" && element.props.display === "flex") {
-      return this.layoutGroupNode(element, x, y, parentSize);
+      return this.layoutGroupNode(element, x, y, parentSize, presetSize);
     }
 
     // CTBox + position='relative' → 定位模式
     if (element.type === "CTBox" && element.props.position === "relative") {
-      return this.layoutPositionedGroupNode(element, x, y, parentSize);
+      return this.layoutPositionedGroupNode(element, x, y, parentSize, presetSize);
     }
 
     // 非容器元素：直接测量尺寸
-    const size = this.measurementEngine.measureElement(element);
-    const clampedSize = this.clampSize(size, element.props, parentSize);
+    let width: number;
+    let height: number;
+    let margin: Margin;
+    if (presetSize) {
+      width = presetSize.width;
+      height = presetSize.height;
+      margin = presetSize.margin ?? this.parseMargin(element.props.margin as CTBoxProps["margin"]);
+    } else {
+      const size = this.measurementEngine.measureElement(element);
+      const clampedSize = this.clampSize(size, element.props, parentSize);
+      width = clampedSize.width;
+      height = clampedSize.height;
+      margin = this.parseMargin(element.props.margin as CTBoxProps["margin"]);
+    }
     const zIndex = element.props.zIndex as number | undefined;
-    const margin = this.parseMargin(element.props.margin as CTBoxProps["margin"]);
     return {
       element,
       x,
       y,
-      width: clampedSize.width,
-      height: clampedSize.height,
+      width,
+      height,
       zIndex,
       margin,
       children: [],
@@ -212,18 +303,22 @@ export class LayoutEngine {
     x: number,
     y: number,
     parentSize?: { width: number; height: number },
+    presetSize?: { width: number; height: number; margin?: Margin },
   ): CTLayoutNode {
     const props = group.props as CTBoxProps;
     const children = group.children || [];
     const isRoot = parentSize !== undefined && parentSize === this.rootParentSize;
 
-    const { width: groupWidth, height: groupHeight } = this.resolveContainerSize(
-      props,
-      parentSize,
-      100,
-      100,
-      isRoot,
-    );
+    let groupWidth: number;
+    let groupHeight: number;
+    if (presetSize) {
+      groupWidth = presetSize.width;
+      groupHeight = presetSize.height;
+    } else {
+      const resolved = this.resolveContainerSize(props, parentSize, 100, 100, isRoot);
+      groupWidth = resolved.width;
+      groupHeight = resolved.height;
+    }
 
     const sortedChildren = [...children].sort((a, b) => {
       const aZ = (a.props.zIndex as number | undefined) ?? 0;
@@ -268,7 +363,6 @@ export class LayoutEngine {
     const hasExplicitHeight =
       props.height !== undefined || (isRoot && parentSize?.height !== undefined);
 
-    // 测量子元素尺寸（用于 contentSize fallback 和 flex 布局）
     // 子元素的 parentSize 暂时未知，待 groupWidth 确定后再测量
     let groupWidth: number;
     let groupHeight: number;
@@ -279,7 +373,9 @@ export class LayoutEngine {
       groupHeight = resolved.height;
     } else {
       // 需要内容尺寸 fallback：先测量子元素
-      const tempSizes: CTLayoutInfo[] = children.map((child) => this.measureChildSize(child));
+      const tempSizes: CTLayoutInfo[] = this.traceStep("jsx.layout.measureTempChildren", () =>
+        children.map((child) => this.measureChildSize(child)),
+      );
       const contentWidth = this.calculateContentSize(tempSizes, props);
       const contentHeight = this.calculateContentHeight(tempSizes, props);
       const fallbackW = contentWidth + padding.left + padding.right;
@@ -294,8 +390,8 @@ export class LayoutEngine {
       width: groupWidth - padding.left - padding.right,
       height: groupHeight - padding.top - padding.bottom,
     };
-    const childSizes: CTLayoutInfo[] = children.map((child) =>
-      this.measureChildSize(child, childContentSize),
+    const childSizes: CTLayoutInfo[] = this.traceStep("jsx.layout.measureChildren", () =>
+      children.map((child) => this.measureChildSize(child, childContentSize)),
     );
 
     const contentX = x + padding.left;
@@ -322,6 +418,7 @@ export class LayoutEngine {
     x: number,
     y: number,
     parentSize?: { width: number; height: number },
+    presetSize?: { width: number; height: number; margin?: Margin },
   ): CTLayoutNode {
     const props = group.props as CTBoxProps;
     const children = group.children || [];
@@ -329,20 +426,29 @@ export class LayoutEngine {
 
     const padding = this.parsePadding(props.padding);
 
+    let groupWidth: number;
+    let groupHeight: number;
+    let childSizes: CTLayoutInfo[];
+
     const hasExplicitWidth =
       props.width !== undefined || (isRoot && parentSize?.width !== undefined);
     const hasExplicitHeight =
       props.height !== undefined || (isRoot && parentSize?.height !== undefined);
 
-    let groupWidth: number;
-    let groupHeight: number;
-
-    if (hasExplicitWidth && hasExplicitHeight) {
+    if (presetSize) {
+      // 父布局已传入最终尺寸，直接走子元素布局阶段
+      groupWidth = presetSize.width;
+      groupHeight = presetSize.height;
+    } else if (hasExplicitWidth && hasExplicitHeight) {
+      // 显式尺寸短路：跳过 measureTempChildren，直接基于父尺寸解析容器尺寸
       const resolved = this.resolveContainerSize(props, parentSize, 0, 0, isRoot);
       groupWidth = resolved.width;
       groupHeight = resolved.height;
     } else {
-      const tempSizes: CTLayoutInfo[] = children.map((child) => this.measureChildSize(child));
+      // 需要内容尺寸 fallback：测量一次子元素（无 parentSize），并通过 measureCache 复用
+      const tempSizes: CTLayoutInfo[] = this.traceStep("jsx.layout.measureTempChildren", () =>
+        children.map((child) => this.measureChildSize(child)),
+      );
       const contentWidth = this.calculateContentSize(tempSizes, props);
       const contentHeight = this.calculateContentHeight(tempSizes, props);
       const fallbackW = contentWidth + padding.left + padding.right;
@@ -356,8 +462,10 @@ export class LayoutEngine {
       width: groupWidth - padding.left - padding.right,
       height: groupHeight - padding.top - padding.bottom,
     };
-    const childSizes: CTLayoutInfo[] = children.map((child) =>
-      this.measureChildSize(child, childContentSize),
+
+    // 测量子元素（带 measureCache，重复键命中复用）
+    childSizes = this.traceStep("jsx.layout.measureChildren", () =>
+      children.map((child) => this.measureChildSize(child, childContentSize)),
     );
 
     const contentX = x + padding.left;
@@ -432,7 +540,7 @@ export class LayoutEngine {
     for (let i = 0; i < children.length; i++) {
       const child = children[i]!;
       const size = childSizes[i]!;
-      const childMargin = size.margin ?? { top: 0, right: 0, bottom: 0, left: 0 };
+      const childMargin = size.margin ?? ZERO_MARGIN;
 
       // 自身尺寸（不含 margin）
       const childWidth = size.width - childMargin.left - childMargin.right;
@@ -463,7 +571,14 @@ export class LayoutEngine {
         childY = contentY + availableHeight - currentMain - size.height + childMargin.top;
       }
 
-      childNodes.push(this.layoutNode(child, childX, childY, childContentSize));
+      // 把已测得的尺寸传递给子布局，避免子布局再次预测量自己的子树
+      childNodes.push(
+        this.layoutNode(child, childX, childY, childContentSize, {
+          width: childWidth,
+          height: childHeight,
+          margin: childMargin,
+        }),
+      );
 
       currentMain +=
         (direction === "row" || direction === "row-reverse" ? size.width : size.height) + gap;
@@ -482,24 +597,36 @@ export class LayoutEngine {
   /**
    * 测量子元素尺寸（包含 margin），用于 flex 布局计算
    * @param parentSize 父容器内容区尺寸，用于解析子元素的百分比 width/height
+   *
+   * 单次布局内对相同 (element, parentSize) 的请求记忆化。
    */
   private measureChildSize(
     child: CTElement,
     parentSize?: { width: number; height: number },
   ): CTLayoutInfo {
+    let bucket = this.measureCache.get(child);
+    if (bucket) {
+      for (let i = 0; i < bucket.length; i++) {
+        const entry = bucket[i]!;
+        if (this.parentSizeMatches(entry.parentSize, parentSize)) {
+          return entry.size;
+        }
+      }
+    }
+
     const margin = this.parseMargin(child.props.margin as CTBoxProps["margin"]);
 
+    let result: CTLayoutInfo;
     if (child.type === "CTBox" && child.props.display === "flex") {
       const groupSize = this.measureGroupSize(child, parentSize);
-      return {
+      result = {
         x: 0,
         y: 0,
         width: groupSize.width + margin.left + margin.right,
         height: groupSize.height + margin.top + margin.bottom,
         margin,
       };
-    }
-    if (child.type === "CTBox" && child.props.position === "relative") {
+    } else if (child.type === "CTBox" && child.props.position === "relative") {
       const props = child.props as CTBoxProps;
       const parentW = parentSize?.width;
       const parentH = parentSize?.height;
@@ -509,28 +636,41 @@ export class LayoutEngine {
       const maxW = this.resolveSize(props.maxWidth, parentW);
       const minH = this.resolveSize(props.minHeight, parentH);
       const maxH = this.resolveSize(props.maxHeight, parentH);
-      return {
+      result = {
         x: 0,
         y: 0,
         width: this.clampValue(w, minW, maxW) + margin.left + margin.right,
         height: this.clampValue(h, minH, maxH) + margin.top + margin.bottom,
         margin,
       };
+    } else {
+      const size = this.measurementEngine.measureElement(child);
+      const clampedSize = this.clampSize(size, child.props, parentSize);
+      result = {
+        x: 0,
+        y: 0,
+        width: clampedSize.width + margin.left + margin.right,
+        height: clampedSize.height + margin.top + margin.bottom,
+        margin,
+      };
     }
 
-    const size = this.measurementEngine.measureElement(child);
-    const clampedSize = this.clampSize(size, child.props, parentSize);
-    return {
-      x: 0,
-      y: 0,
-      width: clampedSize.width + margin.left + margin.right,
-      height: clampedSize.height + margin.top + margin.bottom,
-      margin,
-    };
+    if (!bucket) {
+      bucket = [];
+      this.measureCache.set(child, bucket);
+    }
+    bucket.push({
+      size: result,
+      parentSize: parentSize ? { ...parentSize } : undefined,
+    });
+    return result;
   }
 
   /**
    * 测量 group 尺寸，不影响 layoutResults
+   *
+   * 显式尺寸短路：当 props.width/height 已显式给出时，不递归测量子元素，
+   * 仅基于声明值（含 min/max clamp）返回容器尺寸。
    */
   private measureGroupSize(
     group: CTElement,
@@ -550,6 +690,7 @@ export class LayoutEngine {
     let groupHeight: number;
 
     if (explicitWidth !== undefined && explicitHeight !== undefined) {
+      // 短路：完全显式尺寸下，无需递归子树
       groupWidth = explicitWidth;
       groupHeight = explicitHeight;
     } else {
@@ -591,7 +732,7 @@ export class LayoutEngine {
 
   private parseMargin(
     margin?: number | { top?: number; right?: number; bottom?: number; left?: number },
-  ) {
+  ): Margin {
     if (margin === undefined) return { top: 0, right: 0, bottom: 0, left: 0 };
     if (typeof margin === "number")
       return { top: margin, right: margin, bottom: margin, left: margin };
@@ -798,5 +939,195 @@ export class LayoutEngine {
       currentMain +=
         (direction === "row" || direction === "row-reverse" ? size.width : size.height) + gap;
     }
+  }
+
+  // ─── measureCache / parent size match helpers ───
+
+  private parentSizeMatches(
+    cachedParentSize: { width: number; height: number } | undefined,
+    parentSize?: { width: number; height: number },
+  ): boolean {
+    if (cachedParentSize === undefined || parentSize === undefined) {
+      return cachedParentSize === undefined && parentSize === undefined;
+    }
+    return (
+      cachedParentSize.width === parentSize.width && cachedParentSize.height === parentSize.height
+    );
+  }
+
+  // ─── Cross-cell relative tree cache ───
+
+  private buildRelativeCacheKey(
+    root: CTElement,
+    parentSize?: { width: number; height: number },
+  ): string | null {
+    try {
+      const sig = this.elementSignature(root);
+      if (sig === null) return null;
+      const ps = parentSize ? `${parentSize.width}x${parentSize.height}` : "_";
+      return `${ps}|${sig}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 生成元素树签名。遇到无法序列化的值（函数、Symbol、循环引用等）返回 null
+   * 以放弃缓存而不是冒着错误命中渲染的风险。
+   */
+  private elementSignature(element: CTElement): string | null {
+    const out: string[] = [];
+    const ok = this.appendElementSignature(element, out, new WeakSet());
+    if (!ok) return null;
+    return out.join("");
+  }
+
+  private appendElementSignature(
+    element: CTElement,
+    out: string[],
+    seen: WeakSet<object>,
+  ): boolean {
+    if (seen.has(element)) return false;
+    seen.add(element);
+    out.push("[", element.type);
+    const propsOk = this.appendValueSignature(element.props, out, seen);
+    if (!propsOk) return false;
+    const children = element.children || [];
+    out.push("(", String(children.length));
+    for (const child of children) {
+      out.push(",");
+      const ok = this.appendElementSignature(child, out, seen);
+      if (!ok) return false;
+    }
+    out.push(")]");
+    return true;
+  }
+
+  private appendValueSignature(value: unknown, out: string[], seen: WeakSet<object>): boolean {
+    if (value === null || value === undefined) {
+      out.push("n");
+      return true;
+    }
+    const t = typeof value;
+    if (t === "string") {
+      out.push("s:", (value as string).length.toString(), ":", value as string, ";");
+      return true;
+    }
+    if (t === "number" || t === "boolean") {
+      out.push(t[0]!, ":", String(value), ";");
+      return true;
+    }
+    if (t === "function" || t === "symbol" || t === "bigint") {
+      // 不可安全序列化：放弃缓存
+      return false;
+    }
+    if (Array.isArray(value)) {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      out.push("a(", String(value.length));
+      for (const item of value) {
+        out.push(",");
+        const ok = this.appendValueSignature(item, out, seen);
+        if (!ok) return false;
+      }
+      out.push(")");
+      return true;
+    }
+    if (t === "object") {
+      if (seen.has(value as object)) return false;
+      seen.add(value as object);
+      // 仅允许普通对象
+      const proto = Object.getPrototypeOf(value as object);
+      if (proto !== Object.prototype && proto !== null) {
+        return false;
+      }
+      const keys = Object.keys(value as Record<string, unknown>).sort();
+      out.push("o(", String(keys.length));
+      for (const k of keys) {
+        out.push(",", k, "=");
+        const ok = this.appendValueSignature((value as Record<string, unknown>)[k], out, seen);
+        if (!ok) return false;
+      }
+      out.push(")");
+      return true;
+    }
+    return false;
+  }
+
+  private cacheRelativeTree(key: string, tree: CTLayoutNode): void {
+    // LRU 边界：超出最大条目时移除最久未使用项
+    if (RELATIVE_TREE_CACHE.size >= RELATIVE_TREE_CACHE_MAX) {
+      const oldestKey = RELATIVE_TREE_CACHE.keys().next().value;
+      if (oldestKey !== undefined) RELATIVE_TREE_CACHE.delete(oldestKey);
+    }
+    RELATIVE_TREE_CACHE.set(key, { tree: this.cloneTreeForCache(tree) });
+  }
+
+  private cloneTreeForCache(node: CTLayoutNode): CTLayoutNode {
+    return {
+      element: node.element,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+      zIndex: node.zIndex,
+      margin: node.margin,
+      children: node.children.map((child) => this.cloneTreeForCache(child)),
+    };
+  }
+
+  /**
+   * 克隆缓存的相对布局树，将坐标偏移到 (offsetX, offsetY)，
+   * 并按当前元素树的布局顺序重新绑定 element 引用。
+   */
+  private cloneTreeWithOffset(
+    cached: CTLayoutNode,
+    currentElement: CTElement,
+    offsetX: number,
+    offsetY: number,
+  ): CTLayoutNode {
+    return this.cloneNode(cached, currentElement, offsetX, offsetY);
+  }
+
+  private cloneNode(
+    cached: CTLayoutNode,
+    currentElement: CTElement,
+    offsetX: number,
+    offsetY: number,
+  ): CTLayoutNode {
+    const cachedChildren = cached.children;
+    const currentChildren = this.getLayoutOrderedChildren(currentElement);
+    const childCount = cachedChildren.length;
+    if (currentChildren.length !== childCount) {
+      throw new Error("Cached layout tree shape mismatch");
+    }
+    const children: CTLayoutNode[] = new Array(childCount);
+    for (let i = 0; i < childCount; i++) {
+      const childCached = cachedChildren[i]!;
+      const childElement = currentChildren[i]!;
+      children[i] = this.cloneNode(childCached, childElement, offsetX, offsetY);
+    }
+    return {
+      element: currentElement,
+      x: cached.x + offsetX,
+      y: cached.y + offsetY,
+      width: cached.width,
+      height: cached.height,
+      zIndex: cached.zIndex,
+      margin: cached.margin,
+      children,
+    };
+  }
+
+  private getLayoutOrderedChildren(element: CTElement): CTElement[] {
+    const children = element.children || [];
+    if (element.type === "CTBox" && element.props.position === "relative") {
+      return [...children].sort((a, b) => {
+        const aZ = (a.props.zIndex as number | undefined) ?? 0;
+        const bZ = (b.props.zIndex as number | undefined) ?? 0;
+        return aZ - bZ;
+      });
+    }
+    return children;
   }
 }

@@ -1,4 +1,5 @@
 import type { CTElement, CTLayoutInfo } from "./types";
+import type { CellRenderTrace } from "../renderers/CellRenderer";
 
 /**
  * 尺寸测量引擎
@@ -7,9 +8,15 @@ import type { CTElement, CTLayoutInfo } from "./types";
  */
 export class MeasurementEngine {
   private ctx: CanvasRenderingContext2D;
+  private trace?: CellRenderTrace;
 
-  constructor(ctx: CanvasRenderingContext2D) {
+  constructor(ctx: CanvasRenderingContext2D, trace?: CellRenderTrace) {
     this.ctx = ctx;
+    this.trace = trace;
+  }
+
+  private traceStep<T>(name: string, fn: () => T): T {
+    return this.trace ? this.trace.measure(name, fn) : fn();
   }
 
   measureTextWidth(
@@ -20,24 +27,29 @@ export class MeasurementEngine {
     fontStyle?: string,
   ): number {
     this.ctx.font = `${fontStyle ?? "normal"} ${fontWeight ?? "normal"} ${fontSize}px ${fontFamily}`;
-    return this.ctx.measureText(text).width;
+    return this.traceStep(
+      "jsx.measurement.measureTextWidth",
+      () => this.ctx.measureText(text).width,
+    );
   }
 
   measureElement(element: CTElement): CTLayoutInfo {
-    switch (element.type) {
-      case "CTText":
-        return this.measureText(element);
-      case "CTBox":
-        return this.measureBox(element);
-      case "CTCircle":
-        return this.measureCircle(element);
-      case "CTImage":
-        return this.measureImage(element);
-      case "CTLine":
-        return this.measureLine(element);
-      default:
-        return { x: 0, y: 0, width: 0, height: 0 };
-    }
+    return this.traceStep(`jsx.measurement.measureElement.${element.type}`, () => {
+      switch (element.type) {
+        case "CTText":
+          return this.measureText(element);
+        case "CTBox":
+          return this.measureBox(element);
+        case "CTCircle":
+          return this.measureCircle(element);
+        case "CTImage":
+          return this.measureImage(element);
+        case "CTLine":
+          return this.measureLine(element);
+        default:
+          return { x: 0, y: 0, width: 0, height: 0 };
+      }
+    });
   }
 
   private measureText(element: CTElement): CTLayoutInfo {

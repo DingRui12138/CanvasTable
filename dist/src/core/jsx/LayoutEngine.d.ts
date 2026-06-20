@@ -1,19 +1,19 @@
 import type { CTElement, CTLayoutInfo, CTLayoutNode } from "./types";
+import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { MeasurementEngine } from "./MeasurementEngine";
-/**
- * 简化版 Flex 布局引擎
- * 支持: flexDirection, justifyContent, alignItems, gap, padding, margin
- * 支持: minWidth/maxWidth/minHeight/maxHeight, alignSelf
- * 支持: position='relative' 定位模式（子元素用 x, y, zIndex 定位）
- * 支持: width/height 百分比（"100%"），基于父容器尺寸（根元素基于传入的 parentSize）
- * 支持: overflow clipping
- */
 export declare class LayoutEngine {
     private measurementEngine;
+    private trace?;
     private layoutResults;
     /** 当前根元素的父容器尺寸（通常是单元格尺寸），用于解析根元素百分比 */
     private rootParentSize;
-    constructor(measurementEngine: MeasurementEngine);
+    /** 单次 layout/layoutTree 调用内的 measureChildSize 缓存 */
+    private measureCache;
+    /** 跨单元格缓存命中计数（用于 trace） */
+    private static cacheHits;
+    private static cacheMisses;
+    constructor(measurementEngine: MeasurementEngine, trace?: CellRenderTrace);
+    private traceStep;
     /**
      * 计算元素树布局，返回所有元素的绝对坐标
      * @param parentSize 父容器尺寸，用于解析根元素的百分比 width/height
@@ -49,10 +49,15 @@ export declare class LayoutEngine {
     /**
      * 测量子元素尺寸（包含 margin），用于 flex 布局计算
      * @param parentSize 父容器内容区尺寸，用于解析子元素的百分比 width/height
+     *
+     * 单次布局内对相同 (element, parentSize) 的请求记忆化。
      */
     private measureChildSize;
     /**
      * 测量 group 尺寸，不影响 layoutResults
+     *
+     * 显式尺寸短路：当 props.width/height 已显式给出时，不递归测量子元素，
+     * 仅基于声明值（含 min/max clamp）返回容器尺寸。
      */
     private measureGroupSize;
     private parsePadding;
@@ -64,5 +69,23 @@ export declare class LayoutEngine {
     private calculateContentSize;
     private calculateContentHeight;
     private layoutChildren;
+    private parentSizeMatches;
+    private buildRelativeCacheKey;
+    /**
+     * 生成元素树签名。遇到无法序列化的值（函数、Symbol、循环引用等）返回 null
+     * 以放弃缓存而不是冒着错误命中渲染的风险。
+     */
+    private elementSignature;
+    private appendElementSignature;
+    private appendValueSignature;
+    private cacheRelativeTree;
+    private cloneTreeForCache;
+    /**
+     * 克隆缓存的相对布局树，将坐标偏移到 (offsetX, offsetY)，
+     * 并按当前元素树的布局顺序重新绑定 element 引用。
+     */
+    private cloneTreeWithOffset;
+    private cloneNode;
+    private getLayoutOrderedChildren;
 }
 //# sourceMappingURL=LayoutEngine.d.ts.map

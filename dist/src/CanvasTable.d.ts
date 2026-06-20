@@ -93,6 +93,16 @@ export declare class CanvasTable implements CanvasTableAPI {
     private pendingAnimationFrame;
     private forcedValidationTooltipCell;
     private warningTooltipTimeout;
+    private ctPerformanceEnabled;
+    private ctFrameHistory;
+    private static readonly CT_MAX_FRAME_HISTORY;
+    private ctFrameCount;
+    private ctLastRafTime;
+    private ctScheduledAt;
+    private ctRafInterval;
+    private ctScheduledToStartDelay;
+    private ctCoalescedCount;
+    private ctCurrentFramePhases;
     constructor(container: HTMLElement | string, props: CanvasTableProps);
     private setupInternalEventListeners;
     private setupEventHandlers;
@@ -122,6 +132,10 @@ export declare class CanvasTable implements CanvasTableAPI {
     private buildVisibleValidationErrorIndex;
     private render;
     private performRender;
+    /**
+     * 记录 CanvasTable 帧统计
+     */
+    private _recordCtFrame;
     resize(): void;
     setRows(rows: Row[]): void;
     getRows(): Row[];
@@ -245,7 +259,11 @@ export declare class CanvasTable implements CanvasTableAPI {
     private teardownAutoThemeDetection;
     private handleThemeChange;
     /**
-     * 启用或禁用渲染器性能监控
+     * 测量 CanvasTable 阶段时间的辅助方法
+     */
+    private measureCanvasPhase;
+    /**
+     * 启用或禁用性能监控
      * @param enabled 是否启用
      */
     setPerformanceMonitoring(enabled: boolean): void;
@@ -265,6 +283,22 @@ export declare class CanvasTable implements CanvasTableAPI {
      * 重置性能统计数据
      */
     resetPerformanceStats(): void;
+    /**
+     * 获取 CanvasTable 最后一帧的诊断信息
+     */
+    private getCtLastFrameDiagnostics;
+    /**
+     * 获取 CanvasTable 最差帧的诊断信息（总时间最长的帧）
+     */
+    private getCtWorstFrameDiagnostics;
+    /**
+     * 获取慢帧数组（总时间超过阈值的帧，默认 16ms）
+     */
+    private getCtSlowFrames;
+    /**
+     * 获取完整的性能诊断信息（包含 CanvasTable 和 Renderer）
+     */
+    getPerformanceDiagnostics(): any;
     /**
      * 清空渲染缓存
      * 当数据外部变化时调用，确保缓存失效

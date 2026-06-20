@@ -9,6 +9,7 @@ import { CellType } from "../../types";
 import { BaseCellRenderer, CellRendererContext, CellRenderResult } from "./CellRenderer";
 export declare class ImageRenderer extends BaseCellRenderer {
     readonly type: CellType;
+    private traceStep;
     render(context: CellRendererContext): CellRenderResult;
     private renderMultipleImages;
     private getMaxImageSize;

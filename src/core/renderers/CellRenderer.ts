@@ -51,6 +51,12 @@ export interface ImageRuntime {
   isInLazyLoadRange(rowIndex: number, threshold: number): boolean;
 }
 
+export interface CellRenderTrace {
+  measure<T>(name: string, fn: () => T): T;
+  add(name: string, duration: number): void;
+  markBranch(name: string): void;
+}
+
 /**
  * Context provided to each cell renderer
  */
@@ -126,6 +132,9 @@ export interface CellRendererContext {
 
   /** Required when rendering image cells; provides host runtime hooks. */
   imageRuntime?: ImageRuntime;
+
+  /** Optional per-cell detail timing trace used by performance diagnostics. */
+  renderTrace?: CellRenderTrace;
 }
 
 /**

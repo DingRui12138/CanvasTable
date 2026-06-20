@@ -9,6 +9,7 @@ import type {
   CTBackgroundGradient,
 } from "./types";
 import type { TableTheme } from "../../types/index";
+import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { LayoutEngine } from "./LayoutEngine";
 
 /**
@@ -26,12 +27,23 @@ export class CTRenderer {
   private ctx: CanvasRenderingContext2D;
   private layoutEngine: LayoutEngine;
   private theme: TableTheme;
+  private trace?: CellRenderTrace;
   private layouts: CTLayoutInfo[] = [];
 
-  constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme) {
+  constructor(
+    ctx: CanvasRenderingContext2D,
+    layoutEngine: LayoutEngine,
+    theme: TableTheme,
+    trace?: CellRenderTrace,
+  ) {
     this.ctx = ctx;
     this.layoutEngine = layoutEngine;
     this.theme = theme;
+    this.trace = trace;
+  }
+
+  private traceStep<T>(name: string, fn: () => T): T {
+    return this.trace ? this.trace.measure(name, fn) : fn();
   }
 
   render(
@@ -40,13 +52,17 @@ export class CTRenderer {
     y: number,
     parentSize?: { width: number; height: number },
   ): void {
-    const layoutTree = this.layoutEngine.layoutTree(root, x, y, parentSize);
-    this.layouts = this.flattenLayoutTree(layoutTree);
-    this.ctx.save();
+    const layoutTree = this.traceStep("jsx.ctRenderer.layoutTree", () =>
+      this.layoutEngine.layoutTree(root, x, y, parentSize),
+    );
+    this.layouts = this.traceStep("jsx.ctRenderer.flattenLayoutTree", () =>
+      this.flattenLayoutTree(layoutTree),
+    );
+    this.traceStep("jsx.ctRenderer.ctx.save", () => this.ctx.save());
     try {
       this.renderLayoutNode(layoutTree);
     } finally {
-      this.ctx.restore();
+      this.traceStep("jsx.ctRenderer.ctx.restore", () => this.ctx.restore());
     }
   }
 
@@ -77,16 +93,20 @@ export class CTRenderer {
         this.renderBoxNode(node);
         break;
       case "CTCircle":
-        this.renderCircle(node.element, node.x, node.y);
+        this.traceStep("jsx.ctRenderer.circle", () =>
+          this.renderCircle(node.element, node.x, node.y),
+        );
         break;
       case "CTText":
         this.renderText(node.element, node.x, node.y, node.width);
         break;
       case "CTImage":
-        this.renderImage(node.element, node.x, node.y);
+        this.traceStep("jsx.ctRenderer.image", () =>
+          this.renderImage(node.element, node.x, node.y),
+        );
         break;
       case "CTLine":
-        this.renderLine(node.element, node.x, node.y);
+        this.traceStep("jsx.ctRenderer.line", () => this.renderLine(node.element, node.x, node.y));
         break;
     }
   }
@@ -386,21 +406,25 @@ export class CTRenderer {
     const textDecoration = props.textDecoration ?? "none";
     const letterSpacing = props.letterSpacing ?? 0;
 
-    this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
-    this.ctx.fillStyle = color;
+    this.traceStep("jsx.ctRenderer.text.setup", () => {
+      this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+      this.ctx.fillStyle = color;
+    });
 
     // ─── Text Alignment ───
     let textX = x;
-    if (textAlign === "center") {
-      textX = x + layoutWidth / 2;
-      this.ctx.textAlign = "center";
-    } else if (textAlign === "right") {
-      textX = x + layoutWidth;
-      this.ctx.textAlign = "right";
-    } else {
-      this.ctx.textAlign = "left";
-    }
-    this.ctx.textBaseline = "middle";
+    this.traceStep("jsx.ctRenderer.text.align", () => {
+      if (textAlign === "center") {
+        textX = x + layoutWidth / 2;
+        this.ctx.textAlign = "center";
+      } else if (textAlign === "right") {
+        textX = x + layoutWidth;
+        this.ctx.textAlign = "right";
+      } else {
+        this.ctx.textAlign = "left";
+      }
+      this.ctx.textBaseline = "middle";
+    });
     const textY = y + lineHeight / 2;
 
     // ─── Letter Spacing ───
@@ -435,20 +459,24 @@ export class CTRenderer {
 
       for (let i = 0; i < props.text.length; i++) {
         const ch = props.text[i]!;
-        if (props.maxWidth) {
-          this.ctx.fillText(ch, charX, textY, props.maxWidth);
-        } else {
-          this.ctx.fillText(ch, charX, textY);
-        }
+        this.traceStep("jsx.ctRenderer.text.fillChar", () => {
+          if (props.maxWidth) {
+            this.ctx.fillText(ch, charX, textY, props.maxWidth);
+          } else {
+            this.ctx.fillText(ch, charX, textY);
+          }
+        });
         const charWidth = this.measureCharWidth(ch, fontSize, fontFamily, fontWeight, fontStyle);
         charX += charWidth + letterSpacing;
       }
     } else {
-      if (props.maxWidth) {
-        this.ctx.fillText(props.text, textX, textY, props.maxWidth);
-      } else {
-        this.ctx.fillText(props.text, textX, textY);
-      }
+      this.traceStep("jsx.ctRenderer.text.fillText", () => {
+        if (props.maxWidth) {
+          this.ctx.fillText(props.text, textX, textY, props.maxWidth);
+        } else {
+          this.ctx.fillText(props.text, textX, textY);
+        }
+      });
     }
 
     // ─── Text Decoration ───

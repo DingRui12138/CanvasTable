@@ -46,7 +46,12 @@ import {
   CellRendererRegistry,
   type CellRenderResult as StrategyCellRenderResult,
 } from "./renderers";
-import type { CellRenderer, CellRendererContext, ImageRuntime } from "./renderers/CellRenderer";
+import type {
+  CellRenderer,
+  CellRendererContext,
+  ImageRuntime,
+  CellRenderTrace,
+} from "./renderers/CellRenderer";
 import {
   truncateText,
   getDevicePixelRatio,
@@ -57,6 +62,99 @@ import {
 } from "../utils";
 import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
 import { zhCN } from "../locale";
+
+type CellRenderLocation = {
+  rowIndex?: number;
+  colIndex?: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type PhaseStats = {
+  totalTime: number;
+  count: number;
+  maxTime: number;
+};
+
+type CellRenderSubStepStats = {
+  name: string;
+  totalTime: number;
+  count: number;
+  maxTime: number;
+};
+
+type CellRenderDetailSnapshot = {
+  type: string;
+  columnKey: string;
+  totalTime: number;
+  location: CellRenderLocation;
+  branch?: string;
+  steps: CellRenderSubStepStats[];
+};
+
+type CellRenderStats = PhaseStats & {
+  maxCell?: CellRenderLocation;
+  maxCellDetail?: CellRenderDetailSnapshot;
+};
+
+type RowBandDetailStats = PhaseStats & {
+  maxAt?: CellRenderLocation;
+  columnKey?: string;
+};
+
+type RowBandCellTrace = {
+  prefix: string;
+  location: CellRenderLocation;
+  columnKey: string;
+};
+
+class CellRenderDetailRecorder implements CellRenderTrace {
+  private steps: Map<string, CellRenderSubStepStats> = new Map();
+  private branch?: string;
+
+  measure<T>(name: string, fn: () => T): T {
+    const start = performance.now();
+    try {
+      return fn();
+    } finally {
+      this.add(name, performance.now() - start);
+    }
+  }
+
+  add(name: string, duration: number): void {
+    const stats = this.steps.get(name) ?? { name, totalTime: 0, count: 0, maxTime: 0 };
+    stats.totalTime += duration;
+    stats.count++;
+    stats.maxTime = Math.max(stats.maxTime, duration);
+    this.steps.set(name, stats);
+  }
+
+  markBranch(name: string): void {
+    this.branch = name;
+  }
+
+  toSnapshot(
+    type: string,
+    columnKey: string,
+    totalTime: number,
+    location: CellRenderLocation,
+    maxSteps: number,
+  ): CellRenderDetailSnapshot {
+    return {
+      type,
+      columnKey,
+      totalTime,
+      location: { ...location },
+      branch: this.branch,
+      steps: Array.from(this.steps.values())
+        .map((step) => ({ ...step }))
+        .sort((a, b) => b.totalTime - a.totalTime)
+        .slice(0, maxSteps),
+    };
+  }
+}
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -127,20 +225,41 @@ export class Renderer {
   // 性能监控
   private performanceEnabled: boolean = false;
   // type -> columnKey -> stats
-  private performanceStats: Map<
-    string,
-    Map<string, { totalTime: number; count: number; maxTime: number }>
-  > = new Map();
+  private performanceStats: Map<string, Map<string, CellRenderStats>> = new Map();
   private frameStartTime: number = 0;
   private frameCount: number = 0;
   private lastReportTime: number = 0;
 
+  // 帧历史记录（保留最近 120 帧）
+  private frameHistory: Array<{
+    frameId: number;
+    startTime: number;
+    totalTime: number;
+    cellRenderTime: number;
+    nonCellRendererTime: number;
+    unaccountedTime: number;
+    phases: Map<string, PhaseStats>;
+    rowBandDetails: Map<string, RowBandDetailStats>;
+    cellsByType: Map<string, Map<string, CellRenderStats>>;
+    visibleRows: number;
+    visibleColumns: number;
+    visibleCells: number;
+    scrollTop: number;
+    scrollLeft: number;
+  }> = [];
+  private static readonly MAX_FRAME_HISTORY = 120;
+  private static readonly SLOW_CELL_DETAIL_THRESHOLD_MS = 8;
+  private static readonly DETAILED_CELL_TYPES = new Set(["image", "jsx"]);
+  private static readonly MAX_DETAIL_STEPS_PER_CELL = 24;
+
   // 当前帧统计 (type -> columnKey -> stats)
-  private currentFrameStats: Map<string, Map<string, { totalTime: number; count: number }>> =
-    new Map();
+  private currentFrameStats: Map<string, Map<string, CellRenderStats>> = new Map();
+  // 当前帧阶段统计 (phaseName -> stats)
+  private currentFramePhases: Map<string, PhaseStats> = new Map();
+  // 当前帧 rowBands 内部细分统计 (detailName -> stats)
+  private currentFrameRowBandDetails: Map<string, RowBandDetailStats> = new Map();
   // 上一帧统计（用于报告）
-  private lastFrameStats: Map<string, Map<string, { totalTime: number; count: number }>> =
-    new Map();
+  private lastFrameStats: Map<string, Map<string, CellRenderStats>> = new Map();
 
   // 懒加载相关
   private currentVisibleRange: VisibleRange | null = null;
@@ -410,193 +529,253 @@ export class Renderer {
     // 开始性能监控帧
     this.beginFrame();
 
-    // 保存可视区域信息用于图片懒加载
-    this.currentVisibleRange = visibleRange;
-    this.currentRows = rows;
-    this.currentScrollTop = scrollTop;
-    this.rowHeight = this.theme.row.height;
+    let rootStateSaved = false;
+    let centerClipStateSaved = false;
 
-    const { startRow, endRow } = visibleRange;
-    const viewportWidth = this.canvas.width / this.dpr;
-    const viewportHeight = this.canvas.height / this.dpr;
+    try {
+      // 保存可视区域信息用于图片懒加载
+      this.currentVisibleRange = visibleRange;
+      this.currentRows = rows;
+      this.currentScrollTop = scrollTop;
+      this.rowHeight = this.theme.row.height;
 
-    this.ctx.save();
+      const { startRow, endRow } = visibleRange;
+      const viewportWidth = this.canvas.width / this.dpr;
+      const viewportHeight = this.canvas.height / this.dpr;
 
-    this.ctx.fillStyle = this.theme.colors.background;
-    this.ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+      this.ctx.save();
+      rootStateSaved = true;
 
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const fixedInfo = this.layoutManager.getFixedColumnsInfo(columns);
-    const hasLeftFixed = fixedInfo.leftFixed.columns.length > 0;
-    const hasRightFixed = fixedInfo.rightFixed.columns.length > 0;
+      this.measurePhase("clearBackground", () => {
+        this.ctx.fillStyle = this.theme.colors.background;
+        this.ctx.fillRect(0, 0, viewportWidth, viewportHeight);
+      });
 
-    // 检测悬浮的占位列索引
-    this.hoveredPlaceholderColumnIndex =
-      options.hoveredCell &&
-      leafColumns[options.hoveredCell.columnIndex]?.key.startsWith("__hidden_placeholder__")
-        ? options.hoveredCell.columnIndex
-        : -1;
+      const leafColumns = this.layoutManager.getLeafColumns();
+      const fixedInfo = this.layoutManager.getFixedColumnsInfo(columns);
+      const hasLeftFixed = fixedInfo.leftFixed.columns.length > 0;
+      const hasRightFixed = fixedInfo.rightFixed.columns.length > 0;
 
-    const centerStartX = hasLeftFixed ? fixedInfo.leftFixed.width : 0;
-    const centerEndX = viewportWidth - (hasRightFixed ? fixedInfo.rightFixed.width : 0);
+      // 检测悬浮的占位列索引
+      this.hoveredPlaceholderColumnIndex =
+        options.hoveredCell &&
+        leafColumns[options.hoveredCell.columnIndex]?.key.startsWith("__hidden_placeholder__")
+          ? options.hoveredCell.columnIndex
+          : -1;
 
-    const centerColumnIndices = this.layoutManager.getVisibleCenterColumnIndices();
+      const centerStartX = hasLeftFixed ? fixedInfo.leftFixed.width : 0;
+      const centerEndX = viewportWidth - (hasRightFixed ? fixedInfo.rightFixed.width : 0);
 
-    const leftFixedIndices: number[] = [];
-    const rightFixedIndices: number[] = [];
-    for (let i = 0; i < leafColumns.length; i++) {
-      const col = leafColumns[i];
-      if (col) {
-        if (col.fixed === "left") leftFixedIndices.push(i);
-        if (col.fixed === "right") rightFixedIndices.push(i);
+      const centerColumnIndices = this.layoutManager.getVisibleCenterColumnIndices();
+
+      const leftFixedIndices: number[] = [];
+      const rightFixedIndices: number[] = [];
+      for (let i = 0; i < leafColumns.length; i++) {
+        const col = leafColumns[i];
+        if (col) {
+          if (col.fixed === "left") leftFixedIndices.push(i);
+          if (col.fixed === "right") rightFixedIndices.push(i);
+        }
       }
-    }
 
-    const renderBands = this.shouldRenderRowBands();
+      const renderBands = this.shouldRenderRowBands();
 
-    this.ctx.save();
-    this.ctx.beginPath();
-    this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
-    this.ctx.clip();
+      this.ctx.save();
+      centerClipStateSaved = true;
+      this.ctx.beginPath();
+      this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
+      this.ctx.clip();
 
-    if (renderBands) {
-      this.renderRowBands(
-        rows,
-        centerColumnIndices,
-        [],
-        [],
-        scrollLeft,
-        scrollTop,
-        visibleRange,
-        fixedInfo,
-        options,
-      );
-    } else {
-      this.renderCenterRows(
-        leafColumns,
-        rows,
-        startRow,
-        endRow,
-        centerColumnIndices,
-        scrollLeft,
-        scrollTop,
-        {
-          ...options,
-          dragColumnIndex: options.columnReorderState?.dragColumnIndex,
-          columnReorderState: options.columnReorderState,
-        },
-      );
-    }
+      if (renderBands) {
+        this.measurePhase("rowBands", () => {
+          this.renderRowBands(
+            rows,
+            centerColumnIndices,
+            [],
+            [],
+            scrollLeft,
+            scrollTop,
+            visibleRange,
+            fixedInfo,
+            options,
+            "rowBands",
+          );
+        });
+      } else {
+        this.measurePhase("centerRows", () => {
+          this.renderCenterRows(
+            leafColumns,
+            rows,
+            startRow,
+            endRow,
+            centerColumnIndices,
+            scrollLeft,
+            scrollTop,
+            {
+              ...options,
+              dragColumnIndex: options.columnReorderState?.dragColumnIndex,
+              columnReorderState: options.columnReorderState,
+            },
+          );
+        });
+      }
 
-    this.ctx.restore();
+      this.ctx.restore();
+      centerClipStateSaved = false;
 
-    this.renderCenterSelections(options.selectedCells, scrollLeft, scrollTop, centerColumnIndices);
+      this.measurePhase("centerSelections", () => {
+        this.renderCenterSelections(
+          options.selectedCells,
+          scrollLeft,
+          scrollTop,
+          centerColumnIndices,
+        );
+      });
 
-    if (options.showHeader) {
-      this.renderCenterHeader(
-        columns,
-        centerColumnIndices,
-        scrollTop,
-        options.sortConfig,
-        options.filterConfig,
-        scrollLeft,
-        options.hoveredHeaderColumnKey,
-        options.columnReorderState?.dragColumnIndex,
-        options.columnReorderState,
-      );
-    }
+      if (options.showHeader) {
+        this.measurePhase("centerHeader", () => {
+          this.renderCenterHeader(
+            columns,
+            centerColumnIndices,
+            scrollTop,
+            options.sortConfig,
+            options.filterConfig,
+            scrollLeft,
+            options.hoveredHeaderColumnKey,
+            options.columnReorderState?.dragColumnIndex,
+            options.columnReorderState,
+          );
+        });
+      }
 
-    if (hasLeftFixed && !renderBands) {
-      this.renderFixedColumnsContent(
-        leafColumns,
-        rows,
-        leftFixedIndices,
-        0,
-        scrollTop,
-        visibleRange,
-        options,
-      );
-    }
+      if (hasLeftFixed && !renderBands) {
+        this.measurePhase("fixedColumnsContentLeft", () => {
+          this.renderFixedColumnsContent(
+            leafColumns,
+            rows,
+            leftFixedIndices,
+            0,
+            scrollTop,
+            visibleRange,
+            options,
+          );
+        });
+      }
 
-    if (hasRightFixed && !renderBands) {
-      this.renderFixedColumnsContent(
-        leafColumns,
-        rows,
-        rightFixedIndices,
-        viewportWidth - fixedInfo.rightFixed.width,
-        scrollTop,
-        visibleRange,
-        options,
-      );
-    }
+      if (hasRightFixed && !renderBands) {
+        this.measurePhase("fixedColumnsContentRight", () => {
+          this.renderFixedColumnsContent(
+            leafColumns,
+            rows,
+            rightFixedIndices,
+            viewportWidth - fixedInfo.rightFixed.width,
+            scrollTop,
+            visibleRange,
+            options,
+          );
+        });
+      }
 
-    if (renderBands && (hasLeftFixed || hasRightFixed)) {
-      this.renderRowBands(
-        rows,
-        [],
-        leftFixedIndices,
-        rightFixedIndices,
-        scrollLeft,
-        scrollTop,
-        visibleRange,
-        fixedInfo,
-        options,
-      );
-    }
+      if (renderBands && (hasLeftFixed || hasRightFixed)) {
+        this.measurePhase("rowBandsFixed", () => {
+          this.renderRowBands(
+            rows,
+            [],
+            leftFixedIndices,
+            rightFixedIndices,
+            scrollLeft,
+            scrollTop,
+            visibleRange,
+            fixedInfo,
+            options,
+            "rowBandsFixed",
+          );
+        });
+      }
 
-    this.renderFixedSelections(
-      options.selectedCells,
-      scrollTop,
-      leftFixedIndices,
-      rightFixedIndices,
-    );
-
-    if (options.showHeader) {
-      if (hasLeftFixed) {
-        this.renderFixedColumnsHeader(
-          leafColumns,
+      this.measurePhase("fixedSelections", () => {
+        this.renderFixedSelections(
+          options.selectedCells,
+          scrollTop,
           leftFixedIndices,
-          0,
-          options.sortConfig,
-          options.filterConfig,
-          options.hoveredHeaderColumnKey,
-          options.columnReorderState,
-        );
-      }
-
-      if (hasRightFixed) {
-        this.renderFixedColumnsHeader(
-          leafColumns,
           rightFixedIndices,
-          viewportWidth - fixedInfo.rightFixed.width,
-          options.sortConfig,
-          options.filterConfig,
-          options.hoveredHeaderColumnKey,
-          options.columnReorderState,
         );
+      });
+
+      if (options.showHeader) {
+        if (hasLeftFixed) {
+          this.measurePhase("fixedColumnsHeaderLeft", () => {
+            this.renderFixedColumnsHeader(
+              leafColumns,
+              leftFixedIndices,
+              0,
+              options.sortConfig,
+              options.filterConfig,
+              options.hoveredHeaderColumnKey,
+              options.columnReorderState,
+            );
+          });
+        }
+
+        if (hasRightFixed) {
+          this.measurePhase("fixedColumnsHeaderRight", () => {
+            this.renderFixedColumnsHeader(
+              leafColumns,
+              rightFixedIndices,
+              viewportWidth - fixedInfo.rightFixed.width,
+              options.sortConfig,
+              options.filterConfig,
+              options.hoveredHeaderColumnKey,
+              options.columnReorderState,
+            );
+          });
+        }
       }
+
+      this.measurePhase("rowResizeGuide", () => {
+        this.renderRowResizeGuide(viewportWidth);
+      });
+
+      if (options.dropdown) {
+        const dropdown = options.dropdown;
+        this.measurePhase("dropdown", () => {
+          this.renderDropdown(dropdown);
+        });
+      }
+
+      if (options.headerContextMenu) {
+        const headerContextMenu = options.headerContextMenu;
+        this.measurePhase("headerContextMenu", () => {
+          this.renderHeaderContextMenu(headerContextMenu);
+        });
+      }
+
+      if (options.columnReorderState) {
+        const columnReorderState = options.columnReorderState;
+        this.measurePhase("columnReorderIndicator", () => {
+          this.renderColumnReorderIndicator(columnReorderState, rows, visibleRange, scrollTop);
+        });
+      }
+
+      this.ctx.restore();
+      rootStateSaved = false;
+
+      // 提交当前帧可见图片集合，取消不可见图片的加载请求
+      this.measurePhase("imageCommit", () => {
+        this.commitVisibleImages();
+      });
+
+      this.dirtyRegions = [];
+    } finally {
+      if (centerClipStateSaved) {
+        this.ctx.restore();
+      }
+      if (rootStateSaved) {
+        this.ctx.restore();
+      }
+      // 结束性能监控帧
+      this.endFrame(visibleRange, scrollTop, scrollLeft, columns);
     }
-
-    this.renderRowResizeGuide(viewportWidth);
-
-    if (options.dropdown) {
-      this.renderDropdown(options.dropdown);
-    }
-
-    if (options.headerContextMenu) {
-      this.renderHeaderContextMenu(options.headerContextMenu);
-    }
-
-    if (options.columnReorderState) {
-      this.renderColumnReorderIndicator(options.columnReorderState, rows, visibleRange, scrollTop);
-    }
-
-    this.ctx.restore();
-
-    // 提交当前帧可见图片集合，取消不可见图片的加载请求
-    this.commitVisibleImages();
-
-    this.dirtyRegions = [];
   }
 
   private shouldRenderRowBands(): boolean {
@@ -622,6 +801,7 @@ export class Renderer {
       stripeRows: boolean;
     },
     startX?: number,
+    detailPrefix?: string,
   ): void {
     let y = band.y;
     if (band.type === "body") {
@@ -633,6 +813,13 @@ export class Renderer {
       band.type === "body"
         ? Math.min(visibleRange.endRow, band.rows.length - 1)
         : band.rows.length - 1;
+    const measureDetail = <T>(name: string, fn: () => T): T =>
+      detailPrefix ? this.measureRowBandDetail(`${detailPrefix}.${name}`, fn) : fn();
+    const countDetail = (name: string): void => {
+      if (detailPrefix) {
+        this.recordRowBandDetail(`${detailPrefix}.${name}`, 0);
+      }
+    };
 
     for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
       const row = band.rows[bandRowIndex];
@@ -640,14 +827,22 @@ export class Renderer {
         continue;
       }
 
-      const rowIndex = this.layoutManager.getRowIndexByRef(row);
+      countDetail("rows.visited");
+      const rowIndex = measureDetail("rowIndexLookup", () =>
+        this.layoutManager.getRowIndexByRef(row),
+      );
       if (rowIndex < 0) {
         continue;
       }
 
-      const rowHeight = this.layoutManager.getRowHeightByIndex(rowIndex);
+      const rowHeight = measureDetail("rowHeightLookup", () =>
+        this.layoutManager.getRowHeightByIndex(rowIndex),
+      );
       if (band.type === "body") {
-        y = band.y - scrollTop + (this.layoutManager.getRowBandOffsetByRef(row) ?? 0);
+        const rowOffset = measureDetail("rowOffsetLookup", () =>
+          this.layoutManager.getRowBandOffsetByRef(row),
+        );
+        y = band.y - scrollTop + (rowOffset ?? 0);
       }
       const viewportHeight = this.canvas.height / this.dpr;
       if (y + rowHeight < 0 || y > viewportHeight) {
@@ -667,31 +862,49 @@ export class Renderer {
       }
 
       for (const colIndex of columnIndices) {
-        const column = this.layoutManager.getLeafColumn(colIndex);
+        countDetail("cells.visited");
+        const column = measureDetail("columnLookup", () =>
+          this.layoutManager.getLeafColumn(colIndex),
+        );
         if (!column) continue;
 
-        const width = this.layoutManager.getColumnWidthByIndex(colIndex);
-        const x =
+        const width = measureDetail("columnWidthLookup", () =>
+          this.layoutManager.getColumnWidthByIndex(colIndex),
+        );
+        const x = measureDetail("columnOffsetLookup", () =>
           startX !== undefined
             ? startX +
               this.layoutManager.getColumnOffset(colIndex) -
               this.layoutManager.getColumnOffset(columnIndices[0]!)
-            : this.layoutManager.getColumnOffset(colIndex) - scrollLeft;
-
-        this.ctx.fillStyle = backgroundColor;
-        this.ctx.fillRect(x, y, width, rowHeight);
-        this.renderCellWithPosition(
-          column,
-          row,
-          rowIndex,
-          colIndex,
-          row.data[getColumnField(column)],
-          x,
-          y,
-          width,
-          rowHeight,
-          options,
+            : this.layoutManager.getColumnOffset(colIndex) - scrollLeft,
         );
+
+        measureDetail("backgroundFill", () => {
+          this.ctx.fillStyle = backgroundColor;
+          this.ctx.fillRect(x, y, width, rowHeight);
+        });
+        const cellTrace = detailPrefix
+          ? {
+              prefix: `${detailPrefix}.cellInternal`,
+              location: { rowIndex, colIndex, x, y, width, height: rowHeight },
+              columnKey: column.key,
+            }
+          : undefined;
+        measureDetail("cellWithPosition", () => {
+          this.renderCellWithPosition(
+            column,
+            row,
+            rowIndex,
+            colIndex,
+            row.data[getColumnField(column)],
+            x,
+            y,
+            width,
+            rowHeight,
+            options,
+            cellTrace,
+          );
+        });
       }
 
       y += rowHeight;
@@ -713,8 +926,11 @@ export class Renderer {
       editingCell: CellPosition | null;
       stripeRows: boolean;
     },
+    detailRoot: "rowBands" | "rowBandsFixed",
   ): void {
-    const rowBands = this.layoutManager.getRowBandsForRender();
+    const rowBands = this.measureRowBandDetail(`${detailRoot}.getBands`, () =>
+      this.layoutManager.getRowBandsForRender(),
+    );
     const pinnedBands = [rowBands.pinnedTop, rowBands.pinnedBottom];
     const summaryBands = [rowBands.summaryTop, rowBands.summaryBottom];
 
@@ -735,6 +951,8 @@ export class Renderer {
       scrollTop,
       visibleRange,
       options,
+      undefined,
+      `${detailRoot}.center.body`,
     );
     this.ctx.restore();
 
@@ -747,10 +965,14 @@ export class Renderer {
         scrollTop,
         visibleRange,
         options,
+        undefined,
+        `${detailRoot}.center.${band.type}`,
       );
     }
     for (const band of summaryBands) {
-      this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft);
+      this.measureRowBandDetail(`${detailRoot}.center.${band.type}.summaryCells`, () => {
+        this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft);
+      });
     }
 
     if (leftFixedIndices.length > 0) {
@@ -772,6 +994,7 @@ export class Renderer {
         visibleRange,
         options,
         0,
+        `${detailRoot}.leftFixed.body`,
       );
       this.ctx.restore();
 
@@ -785,10 +1008,13 @@ export class Renderer {
           visibleRange,
           options,
           0,
+          `${detailRoot}.leftFixed.${band.type}`,
         );
       }
       for (const band of summaryBands) {
-        this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0);
+        this.measureRowBandDetail(`${detailRoot}.leftFixed.${band.type}.summaryCells`, () => {
+          this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0);
+        });
       }
     }
 
@@ -812,6 +1038,7 @@ export class Renderer {
         visibleRange,
         options,
         viewportWidth - fixedInfo.rightFixed.width,
+        `${detailRoot}.rightFixed.body`,
       );
       this.ctx.restore();
 
@@ -825,15 +1052,18 @@ export class Renderer {
           visibleRange,
           options,
           viewportWidth - fixedInfo.rightFixed.width,
+          `${detailRoot}.rightFixed.${band.type}`,
         );
       }
       for (const band of summaryBands) {
-        this.renderSummaryBandCells(
-          band,
-          rightFixedIndices,
-          scrollLeft,
-          viewportWidth - fixedInfo.rightFixed.width,
-        );
+        this.measureRowBandDetail(`${detailRoot}.rightFixed.${band.type}.summaryCells`, () => {
+          this.renderSummaryBandCells(
+            band,
+            rightFixedIndices,
+            scrollLeft,
+            viewportWidth - fixedInfo.rightFixed.width,
+          );
+        });
       }
     }
   }
@@ -1048,9 +1278,6 @@ export class Renderer {
         columnIndex,
       );
     }
-
-    // 结束性能监控帧
-    this.endFrame();
 
     this.ctx.restore();
   }
@@ -2049,8 +2276,21 @@ export class Renderer {
       selectedCells: CellRange[];
       editingCell: CellPosition | null;
     },
+    rowBandTrace?: RowBandCellTrace,
   ): void {
-    this.renderCellInternal(column, row, rowIndex, colIndex, value, x, y, width, height, options);
+    this.renderCellInternal(
+      column,
+      row,
+      rowIndex,
+      colIndex,
+      value,
+      x,
+      y,
+      width,
+      height,
+      options,
+      rowBandTrace,
+    );
   }
 
   private renderCellInternal(
@@ -2068,68 +2308,75 @@ export class Renderer {
       selectedCells: CellRange[];
       editingCell: CellPosition | null;
     },
+    rowBandTrace?: RowBandCellTrace,
   ): void {
     const padding = 8;
+    const measureCell = <T>(name: string, fn: () => T): T =>
+      this.measureRowBandCellDetail(rowBandTrace, name, fn);
 
-    // 检查是否是隐藏占位列
     if (column.key.startsWith("__hidden_placeholder__")) {
-      // 检查整列是否悬浮（当前列是悬浮的占位列）
-      const isColumnHovered = this.hoveredPlaceholderColumnIndex === colIndex;
-
-      // 绘制背景 - 悬浮时整列高亮
-      this.ctx.fillStyle = isColumnHovered
-        ? this.theme.colors.hiddenPlaceholder.hoverBg
-        : this.theme.colors.rowBackground;
-      this.ctx.fillRect(x, y, width, height);
-
-      // 绘制边框
-      this.ctx.strokeStyle = this.theme.colors.cellBorder;
-      this.ctx.lineWidth = this.theme.border.width;
-      this.ctx.beginPath();
-      this.ctx.moveTo(x + width, y);
-      this.ctx.lineTo(x + width, y + height);
-      this.ctx.stroke();
-
+      measureCell("hiddenPlaceholder", () => {
+        const isColumnHovered = this.hoveredPlaceholderColumnIndex === colIndex;
+        this.ctx.fillStyle = isColumnHovered
+          ? this.theme.colors.hiddenPlaceholder.hoverBg
+          : this.theme.colors.rowBackground;
+        this.ctx.fillRect(x, y, width, height);
+        this.ctx.strokeStyle = this.theme.colors.cellBorder;
+        this.ctx.lineWidth = this.theme.border.width;
+        this.ctx.beginPath();
+        this.ctx.moveTo(x + width, y);
+        this.ctx.lineTo(x + width, y + height);
+        this.ctx.stroke();
+      });
       return;
     }
 
-    // Check if cell is disabled
-    const isDisabled = this.resolveDisabled(column.disabled, row, column);
+    const isDisabled = measureCell("resolveDisabled", () =>
+      this.resolveDisabled(column.disabled, row, column),
+    );
 
-    // 确定缓存模式
-    const cacheMode = this.getCacheMode(column);
+    const cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
     let renderResult: RenderResult;
 
-    // 尝试从缓存获取
     if (this.renderCache && cacheMode !== false) {
-      const cached = this.renderCache.get(row, column, value, cacheMode);
+      const cached = measureCell("cacheGet", () =>
+        this.renderCache!.get(row, column, value, cacheMode),
+      );
       if (cached) {
         renderResult = cached;
       } else {
-        // 缓存未命中，执行渲染
-        renderResult = this.executeRender(column, row, rowIndex, value);
-
-        // 存入缓存
-        this.renderCache.set(row, column, value, renderResult, cacheMode);
+        renderResult = measureCell("executeRender", () =>
+          this.executeRender(column, row, rowIndex, value, rowBandTrace),
+        );
+        measureCell("cacheSet", () => {
+          this.renderCache!.set(row, column, value, renderResult, cacheMode);
+        });
       }
     } else {
-      // 不使用缓存，直接渲染
-      renderResult = this.executeRender(column, row, rowIndex, value);
+      renderResult = measureCell("executeRender", () =>
+        this.executeRender(column, row, rowIndex, value, rowBandTrace),
+      );
     }
 
-    const isCellSelected = this.isCellSelected(rowIndex, colIndex, options.selectedCells);
-    const isHovered =
-      options.hoveredCell?.rowIndex === rowIndex && options.hoveredCell?.columnIndex === colIndex;
-    const isEditing =
-      options.editingCell?.rowIndex === rowIndex && options.editingCell?.columnIndex === colIndex;
+    const isCellSelected = measureCell("selectionCheck", () =>
+      this.isCellSelected(rowIndex, colIndex, options.selectedCells),
+    );
+    const { isHovered, isEditing } = measureCell("hoverEditingCheck", () => ({
+      isHovered:
+        options.hoveredCell?.rowIndex === rowIndex && options.hoveredCell?.columnIndex === colIndex,
+      isEditing:
+        options.editingCell?.rowIndex === rowIndex && options.editingCell?.columnIndex === colIndex,
+    }));
 
-    if (isCellSelected && !row.selected) {
-      this.ctx.fillStyle = this.theme.colors.rowSelectedBackground;
-      this.ctx.fillRect(x, y, width, height);
-    } else if (isHovered && !row.selected) {
-      this.ctx.fillStyle = this.theme.colors.rowHoverBackground;
-      this.ctx.fillRect(x, y, width, height);
-    }
+    measureCell("stateBackground", () => {
+      if (isCellSelected && !row.selected) {
+        this.ctx.fillStyle = this.theme.colors.rowSelectedBackground;
+        this.ctx.fillRect(x, y, width, height);
+      } else if (isHovered && !row.selected) {
+        this.ctx.fillStyle = this.theme.colors.rowHoverBackground;
+        this.ctx.fillRect(x, y, width, height);
+      }
+    });
 
     if (!isEditing) {
       const isExpandColumn = this.expandColumnKey === column.key;
@@ -2137,72 +2384,91 @@ export class Renderer {
       const level = row.level ?? 0;
 
       if (isExpandColumn && hasChildren) {
-        this.renderExpandIcon(x, y, width, height, row.expanded ?? false, level);
+        measureCell("expandIcon", () => {
+          this.renderExpandIcon(x, y, width, height, row.expanded ?? false, level);
+        });
         const iconWidth = 12 + padding;
         const levelIndent = level * 16;
-        this.renderCellContent(
-          renderResult,
-          x + iconWidth + levelIndent,
-          y,
-          width - iconWidth - levelIndent,
-          height,
-          padding,
-          column.align,
-          rowIndex,
-          colIndex,
-          isDisabled,
-          column.key,
-        );
+        measureCell("renderCellContent", () => {
+          this.renderCellContent(
+            renderResult,
+            x + iconWidth + levelIndent,
+            y,
+            width - iconWidth - levelIndent,
+            height,
+            padding,
+            column.align,
+            rowIndex,
+            colIndex,
+            isDisabled,
+            column.key,
+          );
+        });
       } else {
         const levelIndent = isExpandColumn ? level * 16 : 0;
-        this.renderCellContent(
-          renderResult,
-          x + levelIndent,
-          y,
-          width - levelIndent,
-          height,
-          padding,
-          column.align,
-          rowIndex,
-          colIndex,
-          isDisabled,
-          column.key,
-        );
+        measureCell("renderCellContent", () => {
+          this.renderCellContent(
+            renderResult,
+            x + levelIndent,
+            y,
+            width - levelIndent,
+            height,
+            padding,
+            column.align,
+            rowIndex,
+            colIndex,
+            isDisabled,
+            column.key,
+          );
+        });
       }
     }
 
-    this.ctx.strokeStyle = this.theme.colors.cellBorder;
-    this.ctx.lineWidth = this.theme.border.width;
-    this.ctx.strokeRect(x, y, width, height);
+    measureCell("border", () => {
+      this.ctx.strokeStyle = this.theme.colors.cellBorder;
+      this.ctx.lineWidth = this.theme.border.width;
+      this.ctx.strokeRect(x, y, width, height);
+    });
 
-    const validationError = this.currentValidationErrors.get(`${rowIndex}-${colIndex}`);
+    const validationKey = `${rowIndex}-${colIndex}`;
+    const validationError = measureCell("validationLookup", () =>
+      this.currentValidationErrors.get(validationKey),
+    );
     if (validationError) {
-      const outlineWidth = Math.max(this.theme.border.width, 2);
-      const inset = outlineWidth / 2;
-      this.ctx.strokeStyle =
-        validationError.level === "warning"
-          ? (this.theme.colors.tagColors.warning ?? "#faad14")
-          : (this.theme.colors.tagColors.error ?? "#ff4d4f");
-      this.ctx.lineWidth = outlineWidth;
-      this.ctx.strokeRect(x + inset, y + inset, width - outlineWidth, height - outlineWidth);
-    } else if (this.currentPendingValidations.has(`${rowIndex}-${colIndex}`)) {
-      // Pending async validation — pulsing blue border
-      const outlineWidth = Math.max(this.theme.border.width, 2);
-      const inset = outlineWidth / 2;
-      const pulsePhase = (Date.now() % 1500) / 1500;
-      const alpha = 0.3 + 0.4 * Math.sin(pulsePhase * Math.PI * 2);
-      this.ctx.strokeStyle = `rgba(59, 130, 246, ${alpha})`;
-      this.ctx.lineWidth = outlineWidth;
-      this.ctx.strokeRect(x + inset, y + inset, width - outlineWidth, height - outlineWidth);
+      measureCell("validationDraw", () => {
+        const outlineWidth = Math.max(this.theme.border.width, 2);
+        const inset = outlineWidth / 2;
+        this.ctx.strokeStyle =
+          validationError.level === "warning"
+            ? (this.theme.colors.tagColors.warning ?? "#faad14")
+            : (this.theme.colors.tagColors.error ?? "#ff4d4f");
+        this.ctx.lineWidth = outlineWidth;
+        this.ctx.strokeRect(x + inset, y + inset, width - outlineWidth, height - outlineWidth);
+      });
+    } else {
+      const isPendingValidation = measureCell("pendingValidationLookup", () =>
+        this.currentPendingValidations.has(validationKey),
+      );
+      if (isPendingValidation) {
+        measureCell("pendingValidationDraw", () => {
+          const outlineWidth = Math.max(this.theme.border.width, 2);
+          const inset = outlineWidth / 2;
+          const pulsePhase = (Date.now() % 1500) / 1500;
+          const alpha = 0.3 + 0.4 * Math.sin(pulsePhase * Math.PI * 2);
+          this.ctx.strokeStyle = `rgba(59, 130, 246, ${alpha})`;
+          this.ctx.lineWidth = outlineWidth;
+          this.ctx.strokeRect(x + inset, y + inset, width - outlineWidth, height - outlineWidth);
+        });
+      }
     }
 
-    // Apply disabled overlay
     if (isDisabled) {
-      // Use appropriate overlay color based on theme
-      const overlayColor =
-        this.theme.name === "dark" ? "rgba(0, 0, 0, 0.3)" : "rgba(255, 255, 255, 0.35)";
-      this.ctx.fillStyle = overlayColor;
-      this.ctx.fillRect(x, y, width, height);
+      measureCell("disabledOverlay", () => {
+        const overlayColor =
+          this.theme.name === "dark" ? "rgba(0, 0, 0, 0.3)" : "rgba(255, 255, 255, 0.35)";
+        this.ctx.fillStyle = overlayColor;
+        this.ctx.fillRect(x, y, width, height);
+      });
     }
   }
 
@@ -2226,25 +2492,40 @@ export class Renderer {
   /**
    * 执行渲染函数
    */
-  private executeRender(column: Column, row: Row, rowIndex: number, value: unknown): RenderResult {
+  private executeRender(
+    column: Column,
+    row: Row,
+    rowIndex: number,
+    value: unknown,
+    rowBandTrace?: RowBandCellTrace,
+  ): RenderResult {
+    const measureCell = <T>(name: string, fn: () => T): T =>
+      this.measureRowBandCellDetail(rowBandTrace, name, fn);
+
     let renderResult: RenderResult = {
-      text: this.formatValue(value, column, row),
+      text: measureCell("formatValue", () => this.formatValue(value, column, row, rowBandTrace)),
       type: column.type ?? "text",
     };
 
-    // number 类型：将 column.placeholder 传入 renderResult，供占位符渲染使用
     if (column.type === "number") {
       renderResult.placeholder = column.placeholder ?? this.locale.cell.numberPlaceholder;
     }
 
     if (column.render) {
       try {
-        const customResult = column.render(value, row, column, rowIndex);
+        const customResult = measureCell("columnRender", () =>
+          column.render!(value, row, column, rowIndex),
+        );
         if (customResult) {
-          renderResult = { ...renderResult, ...customResult };
+          renderResult = measureCell("mergeRenderResult", () => ({
+            ...renderResult,
+            ...customResult,
+          }));
         }
       } catch (error) {
-        console.error(`Error rendering cell at row ${rowIndex}, column ${column.key}:`, error);
+        measureCell("renderError", () => {
+          console.error(`Error rendering cell at row ${rowIndex}, column ${column.key}:`, error);
+        });
         renderResult = {
           text: "[Error]",
           type: "text",
@@ -2370,11 +2651,14 @@ export class Renderer {
       const fontFamily = style?.fontFamily ?? this.theme.font.family;
       const fontWeight = style?.fontWeight ?? "normal";
       const fontStyle = style?.fontStyle ?? "normal";
+      const cellLocation = this.performanceEnabled
+        ? { rowIndex, colIndex, x, y, width, height }
+        : undefined;
 
       this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
 
       if (type === CellTypes.CHECKBOX && checkbox) {
-        this.measureRender("checkbox", ck, () => {
+        this.measureRender("checkbox", ck, cellLocation, () => {
           this.renderWithCellRenderer("checkbox", checkbox, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2385,7 +2669,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.RADIO && radio) {
-        this.measureRender("radio", ck, () => {
+        this.measureRender("radio", ck, cellLocation, () => {
           this.renderWithCellRenderer("radio", radio, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2406,7 +2690,7 @@ export class Renderer {
               hoveredButtonIndex = this.currentHoveredButtonIndex;
             }
           }
-          this.measureRender("button", ck, () => {
+          this.measureRender("button", ck, cellLocation, () => {
             this.renderWithCellRenderer("button", button, x, y, width, height, {
               rowIndex,
               colIndex,
@@ -2426,7 +2710,7 @@ export class Renderer {
             buttonHoverState = hoverState;
           }
         }
-        this.measureRender("button", ck, () => {
+        this.measureRender("button", ck, cellLocation, () => {
           this.renderWithCellRenderer("button", button, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2446,7 +2730,7 @@ export class Renderer {
             switchAnimation = animation;
           }
         }
-        this.measureRender("switch", ck, () => {
+        this.measureRender("switch", ck, cellLocation, () => {
           this.renderWithCellRenderer("switch", renderResult.switch!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2458,7 +2742,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.INPUT && input) {
-        this.measureRender("input", ck, () => {
+        this.measureRender("input", ck, cellLocation, () => {
           this.renderWithCellRenderer("input", input, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2469,7 +2753,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.SELECT && renderResult.select) {
-        this.measureRender("select", ck, () => {
+        this.measureRender("select", ck, cellLocation, () => {
           this.renderWithCellRenderer("select", renderResult.select!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2481,7 +2765,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.DATE && renderResult.date) {
-        this.measureRender("date", ck, () => {
+        this.measureRender("date", ck, cellLocation, () => {
           this.renderWithCellRenderer("date", renderResult.date!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2492,7 +2776,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.TAG && tags) {
-        this.measureRender("tags", ck, () => {
+        this.measureRender("tags", ck, cellLocation, () => {
           this.renderWithCellRenderer("tag", tags, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2531,10 +2815,24 @@ export class Renderer {
         imageCtx.hoveredImageIndex = this.currentHoveredImageIndex;
 
         if (this.performanceEnabled) {
+          const imageLocation = cellLocation ?? { rowIndex, colIndex, x, y, width, height };
+          const detailRecorder = this.createRenderDetailRecorder("image");
           const start = performance.now();
-          this.imageRenderer.render(imageCtx);
+          try {
+            imageCtx.renderTrace = detailRecorder;
+            this.imageRenderer.render(imageCtx);
+          } finally {
+            imageCtx.renderTrace = undefined;
+          }
           const duration = performance.now() - start;
-          this.recordRenderTiming("image", ck, duration);
+          const detail = this.finalizeRenderDetail(
+            detailRecorder,
+            "image",
+            ck,
+            duration,
+            imageLocation,
+          );
+          this.recordRenderTiming("image", ck, duration, imageLocation, detail);
         } else {
           this.imageRenderer.render(imageCtx);
         }
@@ -2555,7 +2853,7 @@ export class Renderer {
           ? { ...renderResult.progress!, value: this.currentProgressDragState!.displayValue }
           : renderResult.progress!;
 
-        this.measureRender("progress", ck, () => {
+        this.measureRender("progress", ck, cellLocation, () => {
           this.renderWithCellRenderer("progress", progressConfig, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2567,7 +2865,7 @@ export class Renderer {
 
       if (type === CellTypes.RATING && renderResult.rating) {
         let starBounds: StrategyCellRenderResult["starBounds"] | undefined;
-        this.measureRender("rating", ck, () => {
+        this.measureRender("rating", ck, cellLocation, () => {
           starBounds = this.renderWithCellRenderer(
             "rating",
             renderResult.rating!,
@@ -2589,7 +2887,7 @@ export class Renderer {
       }
 
       if (type === CellTypes.COLOR && renderResult.color) {
-        this.measureRender("color", ck, () => {
+        this.measureRender("color", ck, cellLocation, () => {
           this.renderWithCellRenderer("color", renderResult.color!, x, y, width, height, {
             rowIndex,
             colIndex,
@@ -2606,27 +2904,49 @@ export class Renderer {
       // 渲染出错时仅跳过本单元格，不影响其它列的渲染。
 
       if (renderResult.type === "custom" && renderResult.jsxRender) {
-        this.measureRender("jsx", ck, () => {
+        this.measureRender("jsx", ck, cellLocation, (trace) => {
+          if (trace) {
+            trace.markBranch("jsx.render");
+          }
           // 强制保存完整 Canvas 状态，JSX 渲染完全隔离
-          this.ctx.save();
+          if (trace) {
+            trace.measure("jsx.ctx.save", () => this.ctx.save());
+          } else {
+            this.ctx.save();
+          }
           try {
-            const elementTree = renderResult.jsxRender!();
-            const measurementEngine = new MeasurementEngine(this.ctx);
-            const layoutEngine = new LayoutEngine(measurementEngine);
-            const ctRenderer = new CTRenderer(this.ctx, layoutEngine, this.theme);
+            const traceValue = <T>(name: string, fn: () => T): T =>
+              trace ? trace.measure(name, fn) : fn();
+            const elementTree = traceValue("jsx.jsxRender", () => renderResult.jsxRender!());
+            const measurementEngine = traceValue(
+              "jsx.measurementEngine.create",
+              () => new MeasurementEngine(this.ctx, trace),
+            );
+            const layoutEngine = traceValue(
+              "jsx.layoutEngine.create",
+              () => new LayoutEngine(measurementEngine, trace),
+            );
+            const ctRenderer = traceValue(
+              "jsx.ctRenderer.create",
+              () => new CTRenderer(this.ctx, layoutEngine, this.theme, trace),
+            );
             ctRenderer.render(elementTree, x, y, { width, height });
           } catch (e) {
             console.error(`[Renderer] JSX render error at row ${rowIndex}, col ${colIndex}:`, e);
           } finally {
             // 强制恢复 Canvas 状态，不管 JSX 内部发生了什么
-            this.ctx.restore();
+            if (trace) {
+              trace.measure("jsx.ctx.restore", () => this.ctx.restore());
+            } else {
+              this.ctx.restore();
+            }
           }
         });
         return;
       }
 
       if (renderResult.type === "custom" && renderResult.customRender) {
-        this.measureRender("custom", ck, () => {
+        this.measureRender("custom", ck, cellLocation, () => {
           try {
             renderResult.customRender!({
               ctx: this.ctx,
@@ -2646,7 +2966,7 @@ export class Renderer {
       }
 
       // 文本渲染（默认）
-      this.measureRender("text", ck, () => {
+      this.measureRender("text", ck, cellLocation, () => {
         // 处理 link 类型的显示文本
         let displayText = text;
         let color = style?.color ?? this.theme.colors.cellText;
@@ -2954,6 +3274,35 @@ export class Renderer {
   // ==================== 性能监控方法 ====================
 
   /**
+   * 获取最后一帧的诊断信息
+   */
+  getLastFrameDiagnostics(): any {
+    if (this.frameHistory.length === 0) return null;
+    return this.frameHistory[this.frameHistory.length - 1] ?? null;
+  }
+
+  /**
+   * 获取最差帧的诊断信息（总时间最长的帧）
+   */
+  getWorstFrameDiagnostics(): any {
+    if (this.frameHistory.length === 0) return null;
+    return this.frameHistory.reduce((worst, frame) =>
+      frame.totalTime > worst.totalTime ? frame : worst,
+    );
+  }
+
+  /**
+   * 获取完整的性能诊断信息
+   */
+  getPerformanceDiagnostics(): any {
+    return {
+      frameHistory: [...this.frameHistory],
+      lastFrame: this.getLastFrameDiagnostics(),
+      worstFrame: this.getWorstFrameDiagnostics(),
+    };
+  }
+
+  /**
    * 启用或禁用性能监控
    */
   setPerformanceMonitoring(enabled: boolean): void {
@@ -2974,7 +3323,10 @@ export class Renderer {
   resetPerformanceStats(): void {
     this.performanceStats.clear();
     this.currentFrameStats.clear();
+    this.currentFramePhases.clear();
+    this.currentFrameRowBandDetails.clear();
     this.lastFrameStats.clear();
+    this.frameHistory = [];
     this.frameCount = 0;
     this.lastReportTime = 0;
   }
@@ -2987,19 +3339,46 @@ export class Renderer {
     this.frameStartTime = performance.now();
     // 清空当前帧统计
     this.currentFrameStats.clear();
+    this.currentFramePhases.clear();
+    this.currentFrameRowBandDetails.clear();
   }
 
   /**
    * 结束帧计时
    */
-  endFrame(): void {
+  endFrame(
+    visibleRange: VisibleRange,
+    scrollTop: number,
+    scrollLeft: number,
+    columns: Column[],
+  ): void {
     if (!this.performanceEnabled) return;
+    const frameEndTime = performance.now();
+    const frameTotalTime = frameEndTime - this.frameStartTime;
     this.frameCount++;
 
     // 保存上一帧统计（深拷贝内层 Map）
     this.lastFrameStats = new Map();
     for (const [type, byKey] of this.currentFrameStats) {
-      this.lastFrameStats.set(type, new Map(byKey));
+      const copiedByKey: Map<string, CellRenderStats> = new Map();
+      for (const [columnKey, stats] of byKey) {
+        copiedByKey.set(columnKey, this.copyCellStats(stats));
+      }
+      this.lastFrameStats.set(type, copiedByKey);
+    }
+
+    // 计算 cellRenderTime（所有单元格渲染时间总和）
+    let cellRenderTime = 0;
+    for (const byKey of this.currentFrameStats.values()) {
+      for (const stat of byKey.values()) {
+        cellRenderTime += stat.totalTime;
+      }
+    }
+
+    // 计算 instrumentedPhaseTime（所有阶段时间总和）
+    let instrumentedPhaseTime = 0;
+    for (const stat of this.currentFramePhases.values()) {
+      instrumentedPhaseTime += stat.totalTime;
     }
 
     // 将当前帧统计累积到总统计
@@ -3013,42 +3392,254 @@ export class Renderer {
         const stats = totalByKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
         stats.totalTime += frameStat.totalTime;
         stats.count += frameStat.count;
-        const avgFrameTime = frameStat.count > 0 ? frameStat.totalTime / frameStat.count : 0;
-        stats.maxTime = Math.max(stats.maxTime, avgFrameTime);
+        if (frameStat.maxTime > stats.maxTime) {
+          stats.maxTime = frameStat.maxTime;
+          stats.maxCell = frameStat.maxCell ? { ...frameStat.maxCell } : undefined;
+          stats.maxCellDetail = this.copyCellDetail(frameStat.maxCellDetail);
+        }
         totalByKey.set(columnKey, stats);
       }
     }
+
+    // 保存帧历史记录
+    const visibleRows = visibleRange.endRow - visibleRange.startRow + 1;
+    const fixedInfo = this.layoutManager.getFixedColumnsInfo(columns);
+    const visibleColumns =
+      this.layoutManager.getVisibleCenterColumnIndices().length +
+      fixedInfo.leftFixed.columns.length +
+      fixedInfo.rightFixed.columns.length;
+    const visibleCells = visibleRows * visibleColumns;
+
+    // 深拷贝 cellsByType
+    const cellsByType: Map<string, Map<string, CellRenderStats>> = new Map();
+    for (const [type, byKey] of this.currentFrameStats) {
+      const copiedByKey: Map<string, CellRenderStats> = new Map();
+      for (const [columnKey, stats] of byKey) {
+        copiedByKey.set(columnKey, this.copyCellStats(stats));
+      }
+      cellsByType.set(type, copiedByKey);
+    }
+
+    // 深拷贝 phases
+    const phases: Map<string, PhaseStats> = new Map();
+    for (const [name, stats] of this.currentFramePhases) {
+      phases.set(name, { ...stats });
+    }
+
+    // 深拷贝 rowBands 内部细分统计
+    const rowBandDetails: Map<string, RowBandDetailStats> = new Map();
+    for (const [name, stats] of this.currentFrameRowBandDetails) {
+      rowBandDetails.set(name, {
+        ...stats,
+        maxAt: stats.maxAt ? { ...stats.maxAt } : undefined,
+      });
+    }
+
+    const nonCellRendererTime = Math.max(0, frameTotalTime - cellRenderTime);
+    const unaccountedTime = Math.max(0, frameTotalTime - instrumentedPhaseTime);
+
+    const frameEntry = {
+      frameId: this.frameCount,
+      startTime: this.frameStartTime,
+      totalTime: frameTotalTime,
+      cellRenderTime,
+      nonCellRendererTime,
+      unaccountedTime,
+      phases,
+      rowBandDetails,
+      cellsByType,
+      visibleRows,
+      visibleColumns,
+      visibleCells,
+      scrollTop,
+      scrollLeft,
+    };
+
+    this.frameHistory.push(frameEntry);
+
+    // 保留最近 120 帧
+    if (this.frameHistory.length > Renderer.MAX_FRAME_HISTORY) {
+      this.frameHistory.shift();
+    }
+  }
+
+  private formatCellLocation(location?: CellRenderLocation): string {
+    if (!location) return "row: N/A col: N/A xy: N/A";
+    return `row: ${location.rowIndex ?? "N/A"} col: ${location.colIndex ?? "N/A"} xy: (${location.x.toFixed(0)},${location.y.toFixed(0)}) size: ${location.width.toFixed(0)}x${location.height.toFixed(0)}`;
+  }
+
+  private copyCellDetail(detail?: CellRenderDetailSnapshot): CellRenderDetailSnapshot | undefined {
+    if (!detail) return undefined;
+    return {
+      ...detail,
+      location: { ...detail.location },
+      steps: detail.steps.map((step) => ({ ...step })),
+    };
+  }
+
+  private copyCellStats(stats: CellRenderStats): CellRenderStats {
+    return {
+      ...stats,
+      maxCell: stats.maxCell ? { ...stats.maxCell } : undefined,
+      maxCellDetail: this.copyCellDetail(stats.maxCellDetail),
+    };
+  }
+
+  private createRenderDetailRecorder(type: string): CellRenderDetailRecorder | undefined {
+    if (!this.performanceEnabled || !Renderer.DETAILED_CELL_TYPES.has(type)) return undefined;
+    return new CellRenderDetailRecorder();
+  }
+
+  private finalizeRenderDetail(
+    recorder: CellRenderDetailRecorder | undefined,
+    type: string,
+    columnKey: string,
+    duration: number,
+    location: CellRenderLocation,
+  ): CellRenderDetailSnapshot | undefined {
+    if (!recorder || duration < Renderer.SLOW_CELL_DETAIL_THRESHOLD_MS) return undefined;
+    return recorder.toSnapshot(
+      type,
+      columnKey,
+      duration,
+      location,
+      Renderer.MAX_DETAIL_STEPS_PER_CELL,
+    );
   }
 
   /**
    * 测量渲染类型的时间
    */
-  private measureRender(type: string, columnKey: string, fn: () => void): void {
+  private measureRender(
+    type: string,
+    columnKey: string,
+    location: CellRenderLocation | undefined,
+    fn: (trace?: CellRenderDetailRecorder) => void,
+  ): void {
     if (!this.performanceEnabled) {
       fn();
       return;
     }
 
+    const renderLocation = location ?? { x: 0, y: 0, width: 0, height: 0 };
+    const detailRecorder = this.createRenderDetailRecorder(type);
     const start = performance.now();
-    fn();
+    fn(detailRecorder);
     const duration = performance.now() - start;
+    const detail = this.finalizeRenderDetail(
+      detailRecorder,
+      type,
+      columnKey,
+      duration,
+      renderLocation,
+    );
 
-    this.recordRenderTiming(type, columnKey, duration);
+    this.recordRenderTiming(type, columnKey, duration, renderLocation, detail);
   }
 
   /**
    * 记录单次渲染耗时（用于内联性能采样的场景，如 image 热路径）
    */
-  private recordRenderTiming(type: string, columnKey: string, duration: number): void {
+  private recordRenderTiming(
+    type: string,
+    columnKey: string,
+    duration: number,
+    location: CellRenderLocation,
+    detail?: CellRenderDetailSnapshot,
+  ): void {
     let byKey = this.currentFrameStats.get(type);
     if (!byKey) {
       byKey = new Map();
       this.currentFrameStats.set(type, byKey);
     }
-    const frameStats = byKey.get(columnKey) || { totalTime: 0, count: 0 };
+    const frameStats = byKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
     frameStats.totalTime += duration;
     frameStats.count++;
+    if (duration > frameStats.maxTime) {
+      frameStats.maxTime = duration;
+      frameStats.maxCell = { ...location };
+      frameStats.maxCellDetail = this.copyCellDetail(detail);
+    }
     byKey.set(columnKey, frameStats);
+  }
+
+  /**
+   * 测量渲染阶段的时间
+   */
+  private measurePhase<T>(name: string, fn: () => T): T {
+    if (!this.performanceEnabled) {
+      return fn();
+    }
+
+    const start = performance.now();
+    const result = fn();
+    const duration = performance.now() - start;
+
+    const phaseStats = this.currentFramePhases.get(name) || { totalTime: 0, count: 0, maxTime: 0 };
+    phaseStats.totalTime += duration;
+    phaseStats.count++;
+    phaseStats.maxTime = Math.max(phaseStats.maxTime, duration);
+    this.currentFramePhases.set(name, phaseStats);
+
+    return result;
+  }
+
+  private recordRowBandDetail(
+    name: string,
+    duration: number,
+    location?: CellRenderLocation,
+    columnKey?: string,
+  ): void {
+    if (!this.performanceEnabled) return;
+
+    const stats = this.currentFrameRowBandDetails.get(name) ?? {
+      totalTime: 0,
+      count: 0,
+      maxTime: 0,
+    };
+    stats.totalTime += duration;
+    stats.count++;
+    if (duration > stats.maxTime) {
+      stats.maxTime = duration;
+      stats.maxAt = location ? { ...location } : undefined;
+      stats.columnKey = columnKey;
+    }
+    this.currentFrameRowBandDetails.set(name, stats);
+  }
+
+  private measureRowBandDetail<T>(
+    name: string,
+    fn: () => T,
+    location?: CellRenderLocation,
+    columnKey?: string,
+  ): T {
+    if (!this.performanceEnabled) {
+      return fn();
+    }
+
+    const start = performance.now();
+    try {
+      return fn();
+    } finally {
+      this.recordRowBandDetail(name, performance.now() - start, location, columnKey);
+    }
+  }
+
+  private measureRowBandCellDetail<T>(
+    trace: RowBandCellTrace | undefined,
+    name: string,
+    fn: () => T,
+  ): T {
+    if (!trace) {
+      return fn();
+    }
+
+    return this.measureRowBandDetail(
+      `${trace.prefix}.${name}`,
+      fn,
+      trace.location,
+      trace.columnKey,
+    );
   }
 
   /**
@@ -3084,6 +3675,8 @@ export class Renderer {
   logPerformanceReport(): void {
     if (!this.performanceEnabled) return;
 
+    const formatCellLocation = (location?: CellRenderLocation) => this.formatCellLocation(location);
+
     type Row = {
       Type: string;
       Key: string;
@@ -3091,8 +3684,10 @@ export class Renderer {
       "Avg(ms)": string;
       "Max(ms)": string;
       "Total(ms)": string;
+      MaxAt: string;
     };
     const rows: Row[] = [];
+    const detailRows: Array<{ type: string; key: string; detail: CellRenderDetailSnapshot }> = [];
     for (const [type, byKey] of this.performanceStats) {
       const keyEntries = Array.from(byKey.entries())
         .map(([columnKey, stats]) => ({
@@ -3109,12 +3704,80 @@ export class Renderer {
           "Avg(ms)": e.avgTime.toFixed(3),
           "Max(ms)": e.maxTime.toFixed(3),
           "Total(ms)": e.totalTime.toFixed(1),
+          MaxAt: formatCellLocation(e.maxCell),
         });
+        if (e.maxCellDetail) {
+          detailRows.push({ type, key: e.columnKey, detail: e.maxCellDetail });
+        }
       }
     }
 
     console.group(`🎯 Renderer Performance (Frame ${this.frameCount})`);
     console.table(rows);
+
+    // Output detail for slow cells
+    if (detailRows.length > 0) {
+      console.group("🔍 Slow Cell Details");
+      for (const { type, key, detail } of detailRows) {
+        console.group(`${type}/${key} - ${detail.totalTime.toFixed(3)}ms`);
+        if (detail.branch) {
+          console.log(`Branch: ${detail.branch}`);
+        }
+        // Top 8 steps
+        const topSteps = detail.steps.slice(0, 8);
+        type DetailRow = {
+          Step: string;
+          "Total(ms)": string;
+          Count: number;
+          "Avg(ms)": string;
+          "Max(ms)": string;
+          "%": string;
+        };
+        const detailTableRows: DetailRow[] = [];
+        for (const step of topSteps) {
+          const percent =
+            detail.totalTime > 0 ? ((step.totalTime / detail.totalTime) * 100).toFixed(1) : "0.0";
+          const avg = step.count > 0 ? step.totalTime / step.count : 0;
+          detailTableRows.push({
+            Step: step.name,
+            "Total(ms)": step.totalTime.toFixed(3),
+            Count: step.count,
+            "Avg(ms)": avg.toFixed(3),
+            "Max(ms)": step.maxTime.toFixed(3),
+            "%": percent,
+          });
+        }
+        console.table(detailTableRows);
+        console.groupEnd();
+      }
+      console.groupEnd();
+    }
+
+    const lastFrame = this.getLastFrameDiagnostics();
+    const rowBandDetails = lastFrame?.rowBandDetails as Map<string, RowBandDetailStats> | undefined;
+    if (rowBandDetails && rowBandDetails.size > 0) {
+      const phases = lastFrame.phases as Map<string, PhaseStats>;
+      const rowBandsTotal = phases.get("rowBands")?.totalTime ?? 0;
+      const rowBandsFixedTotal = phases.get("rowBandsFixed")?.totalTime ?? 0;
+      const total = rowBandsTotal + rowBandsFixedTotal;
+      const rowBandRows = Array.from(rowBandDetails.entries())
+        .map(([name, stats]) => ({
+          Step: name,
+          Column: stats.columnKey ?? "",
+          "Total(ms)": stats.totalTime.toFixed(3),
+          Count: stats.count,
+          "Avg(ms)": (stats.count > 0 ? stats.totalTime / stats.count : 0).toFixed(3),
+          "Max(ms)": stats.maxTime.toFixed(3),
+          "%": (total > 0 ? (stats.totalTime / total) * 100 : 0).toFixed(1),
+          MaxAt: this.formatCellLocation(stats.maxAt),
+        }))
+        .sort((a, b) => Number(b["Total(ms)"]) - Number(a["Total(ms)"]))
+        .slice(0, 24);
+      console.group("🔎 RowBands Details (last frame)");
+      console.table(rowBandRows);
+      console.groupEnd();
+    }
+
     console.groupEnd();
   }
 
@@ -3125,8 +3788,65 @@ export class Renderer {
     const lines: string[] = [
       "=== Renderer Performance Report ===",
       `Status: ${this.performanceEnabled ? "Enabled" : "Disabled"}`,
-      `Total Frames: ${this.frameCount}`,
+      `Captured Renderer Frames: ${this.frameCount}`,
+      `Retained Renderer Frames: ${this.frameHistory.length} ` +
+        `(last ${Renderer.MAX_FRAME_HISTORY} max)`,
     ];
+
+    // Helper to format cell detail steps
+    const formatCellDetail = (detail: CellRenderDetailSnapshot, indent: string = "    ") => {
+      const detailLines: string[] = [];
+      if (detail.branch) {
+        detailLines.push(`${indent}Branch: ${detail.branch}`);
+      }
+      // Take top 8 steps
+      const topSteps = detail.steps.slice(0, 8);
+      for (const step of topSteps) {
+        const percent =
+          detail.totalTime > 0 ? ((step.totalTime / detail.totalTime) * 100).toFixed(1) : "0.0";
+        const avg = step.count > 0 ? step.totalTime / step.count : 0;
+        detailLines.push(
+          `${indent}${step.name.padEnd(35)} | ` +
+            `total: ${step.totalTime.toFixed(3).padStart(8)}ms | ` +
+            `count: ${step.count.toString().padStart(3)} | ` +
+            `avg: ${avg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${step.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `${percent.padStart(5)}%`,
+        );
+      }
+      return detailLines;
+    };
+
+    const formatRowBandDetails = (
+      details: Map<string, RowBandDetailStats> | undefined,
+      totalTime: number,
+      indent = "  ",
+    ) => {
+      if (!details || details.size === 0) return [];
+      return Array.from(details.entries())
+        .map(([name, stats]) => ({
+          name,
+          ...stats,
+          avg: stats.count > 0 ? stats.totalTime / stats.count : 0,
+          percentage: totalTime > 0 ? (stats.totalTime / totalTime) * 100 : 0,
+        }))
+        .sort((a, b) => b.totalTime - a.totalTime)
+        .slice(0, 24)
+        .map((detail) => {
+          const location = detail.maxAt ? ` | maxAt: ${this.formatCellLocation(detail.maxAt)}` : "";
+          const column = detail.columnKey ? ` | column: ${detail.columnKey}` : "";
+          return (
+            `${indent}${detail.name.padEnd(42)} | ` +
+            `calls: ${detail.count.toString().padStart(5)} | ` +
+            `avg: ${detail.avg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${detail.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${detail.totalTime.toFixed(2).padStart(8)}ms | ` +
+            `${detail.percentage.toFixed(1).padStart(5)}%` +
+            column +
+            location
+          );
+        });
+    };
 
     const frameCount = this.frameCount || 1;
 
@@ -3152,6 +3872,9 @@ export class Renderer {
               count: stats.count,
               totalTime: stats.totalTime,
               avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
+              maxTime: stats.maxTime,
+              maxCell: stats.maxCell,
+              maxCellDetail: stats.maxCellDetail,
             }))
             .sort((a, b) => b.totalTime - a.totalTime);
           const totalTime = keyEntries.reduce((s, e) => s + e.totalTime, 0);
@@ -3167,14 +3890,25 @@ export class Renderer {
             `  ${e.columnKey.padEnd(20)} | ` +
               `calls: ${e.count.toString().padStart(4)} | ` +
               `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
-              `total: ${e.totalTime.toFixed(2).padStart(6)}ms`,
+              `max: ${e.maxTime.toFixed(3).padStart(7)}ms | ` +
+              `total: ${e.totalTime.toFixed(2).padStart(6)}ms | ` +
+              `maxAt: ${this.formatCellLocation(e.maxCell)}`,
           );
+          // Add detail lines if available
+          if (e.maxCellDetail) {
+            lines.push(...formatCellDetail(e.maxCellDetail, "    "));
+          }
         }
         const typeAvg = bucket.totalCount > 0 ? bucket.totalTime / bucket.totalCount : 0;
+        let typeMax = 0;
+        for (const e of bucket.keyEntries) {
+          typeMax = Math.max(typeMax, e.maxTime);
+        }
         lines.push(
           `  ${"total".padEnd(20)} | ` +
             `calls: ${bucket.totalCount.toString().padStart(4)} | ` +
             `avg: ${typeAvg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${typeMax.toFixed(3).padStart(7)}ms | ` +
             `total: ${bucket.totalTime.toFixed(2).padStart(6)}ms`,
         );
       }
@@ -3182,6 +3916,21 @@ export class Renderer {
       const lastFrameTotal = typeBuckets.reduce((s, b) => s + b.totalTime, 0);
       lines.push("");
       lines.push(`Last frame total render time: ${lastFrameTotal.toFixed(2)}ms`);
+
+      const lastFrame = this.getLastFrameDiagnostics();
+      if (lastFrame?.rowBandDetails?.size > 0) {
+        const rowBandsTotal = lastFrame.phases.get("rowBands")?.totalTime ?? 0;
+        const rowBandsFixedTotal = lastFrame.phases.get("rowBandsFixed")?.totalTime ?? 0;
+        lines.push("");
+        lines.push("=== ROW BANDS DETAIL (last frame, top 24) ===");
+        lines.push(
+          ...formatRowBandDetails(
+            lastFrame.rowBandDetails,
+            rowBandsTotal + rowBandsFixedTotal,
+            "  ",
+          ),
+        );
+      }
     }
 
     // 总体统计
@@ -3197,6 +3946,7 @@ export class Renderer {
             count: stats.count,
             totalTime: stats.totalTime,
             maxTime: stats.maxTime,
+            maxCell: stats.maxCell,
             avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
             callsPerFrame: Math.round(stats.count / frameCount),
             avgFrameTime: stats.totalTime / frameCount,
@@ -3217,7 +3967,8 @@ export class Renderer {
             `avg calls/frame: ${e.callsPerFrame.toString().padStart(4)} | ` +
             `avg: ${e.avgTime.toFixed(3).padStart(7)}ms | ` +
             `max: ${e.maxTime.toFixed(3).padStart(7)}ms | ` +
-            `frameTotal: ${e.avgFrameTime.toFixed(2).padStart(6)}ms`,
+            `frameTotal: ${e.avgFrameTime.toFixed(2).padStart(6)}ms | ` +
+            `maxAt: ${this.formatCellLocation(e.maxCell)}`,
         );
       }
       const typeAvg = bucket.totalCount > 0 ? bucket.totalTime / bucket.totalCount : 0;
@@ -3282,27 +4033,37 @@ export class Renderer {
     return disabled;
   }
 
-  private formatValue(value: unknown, column: Column, row: Row): string {
+  private formatValue(
+    value: unknown,
+    column: Column,
+    row: Row,
+    rowBandTrace?: RowBandCellTrace,
+  ): string {
+    const measureCell = <T>(name: string, fn: () => T): T =>
+      this.measureRowBandCellDetail(rowBandTrace, `formatValue.${name}`, fn);
+
     if (value === null || value === undefined) {
-      return "";
+      return measureCell("empty", () => "");
     }
 
     if (column.formatter) {
-      return column.formatter(value, row, column);
+      return measureCell("columnFormatter", () => column.formatter!(value, row, column));
     }
 
     switch (column.type) {
       case "number":
-        return typeof value === "number" ? value.toLocaleString() : String(value);
+        return typeof value === "number"
+          ? measureCell("number.toLocaleString", () => value.toLocaleString())
+          : measureCell("number.stringConvert", () => String(value));
       case "boolean":
-        return value ? "Yes" : "No";
+        return measureCell("boolean", () => (value ? "Yes" : "No"));
       case "date":
         if (value instanceof Date) {
-          return value.toLocaleDateString();
+          return measureCell("date.toLocaleDateString", () => value.toLocaleDateString());
         }
-        return String(value);
+        return measureCell("date.stringConvert", () => String(value));
       default:
-        return String(value);
+        return measureCell("default.stringConvert", () => String(value));
     }
   }
 

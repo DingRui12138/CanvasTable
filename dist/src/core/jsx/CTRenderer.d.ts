@@ -1,5 +1,6 @@
 import type { CTElement, CTLayoutInfo } from "./types";
 import type { TableTheme } from "../../types/index";
+import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { LayoutEngine } from "./LayoutEngine";
 /**
  * CTElement Canvas Renderer
@@ -16,8 +17,10 @@ export declare class CTRenderer {
     private ctx;
     private layoutEngine;
     private theme;
+    private trace?;
     private layouts;
-    constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme);
+    constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme, trace?: CellRenderTrace);
+    private traceStep;
     render(root: CTElement, x: number, y: number, parentSize?: {
         width: number;
         height: number;

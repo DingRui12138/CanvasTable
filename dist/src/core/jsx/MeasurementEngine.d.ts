@@ -1,4 +1,5 @@
 import type { CTElement, CTLayoutInfo } from "./types";
+import type { CellRenderTrace } from "../renderers/CellRenderer";
 /**
  * 尺寸测量引擎
  * CTText: 自动测量宽度，高度由 fontSize/lineHeight 决定
@@ -6,7 +7,9 @@ import type { CTElement, CTLayoutInfo } from "./types";
  */
 export declare class MeasurementEngine {
     private ctx;
-    constructor(ctx: CanvasRenderingContext2D);
+    private trace?;
+    constructor(ctx: CanvasRenderingContext2D, trace?: CellRenderTrace);
+    private traceStep;
     measureTextWidth(text: string, fontSize: number, fontFamily: string, fontWeight?: string, fontStyle?: string): number;
     measureElement(element: CTElement): CTLayoutInfo;
     private measureText;

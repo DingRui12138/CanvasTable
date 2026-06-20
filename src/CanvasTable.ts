@@ -49,6 +49,82 @@ import { SummaryManager } from "./core/SummaryManager";
 import { EditorRegistry, InteractiveEditorStrategy, DomEditorStrategy } from "./core/editors";
 import { resolveLocale } from "./locale";
 
+type CellRenderLocation = {
+  rowIndex?: number;
+  colIndex?: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type CellRenderSubStepStats = {
+  name: string;
+  totalTime: number;
+  count: number;
+  maxTime: number;
+};
+
+type CellRenderDetailSnapshot = {
+  type: string;
+  columnKey: string;
+  totalTime: number;
+  location: CellRenderLocation;
+  branch?: string;
+  steps: CellRenderSubStepStats[];
+};
+
+type CellRenderStatsSnapshot = {
+  totalTime: number;
+  count: number;
+  maxTime: number;
+  maxCell?: CellRenderLocation;
+  maxCellDetail?: CellRenderDetailSnapshot;
+};
+
+type RendererFrameSnapshot = {
+  frameId: number;
+  startTime: number;
+  totalTime: number;
+  cellRenderTime: number;
+  nonCellRendererTime: number;
+  unaccountedTime: number;
+  phases: Map<string, { totalTime: number; count: number; maxTime: number }>;
+  rowBandDetails?: Map<
+    string,
+    {
+      totalTime: number;
+      count: number;
+      maxTime: number;
+      maxAt?: CellRenderLocation;
+      columnKey?: string;
+    }
+  >;
+  cellsByType: Map<string, Map<string, CellRenderStatsSnapshot>>;
+  visibleRows: number;
+  visibleColumns: number;
+  visibleCells: number;
+  scrollTop: number;
+  scrollLeft: number;
+};
+
+type CanvasTableFrameEntry = {
+  frameId: number;
+  startTime: number;
+  scheduledAt: number;
+  scheduledToStartDelay: number;
+  rafInterval: number | null;
+  totalTime: number;
+  dataStateTime: number;
+  layoutUpdateTime: number;
+  rendererRenderTime: number;
+  overlaysTime: number;
+  nonRendererTime: number;
+  coalescedCount: number;
+  phases: Map<string, { totalTime: number; count: number; maxTime: number }>;
+  rendererFrame: RendererFrameSnapshot | null;
+};
+
 interface TableEvents {
   load: [{ rows: Row[]; columns: Column[] }];
   error: [Error];
@@ -145,6 +221,19 @@ export class CanvasTable implements CanvasTableAPI {
   private pendingAnimationFrame: number | null = null;
   private forcedValidationTooltipCell: CellPosition | null = null;
   private warningTooltipTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // CanvasTable 性能监控字段
+  private ctPerformanceEnabled: boolean = false;
+  private ctFrameHistory: CanvasTableFrameEntry[] = [];
+  private static readonly CT_MAX_FRAME_HISTORY = 120;
+  private ctFrameCount: number = 0;
+  private ctLastRafTime: number | null = null;
+  private ctScheduledAt: number | null = null;
+  private ctRafInterval: number | null = null;
+  private ctScheduledToStartDelay: number = 0;
+  private ctCoalescedCount: number = 0;
+  private ctCurrentFramePhases: Map<string, { totalTime: number; count: number; maxTime: number }> =
+    new Map();
 
   constructor(container: HTMLElement | string, props: CanvasTableProps) {
     if (typeof container === "string") {
@@ -1362,7 +1451,15 @@ export class CanvasTable implements CanvasTableAPI {
     if (this.isDestroyed) return;
 
     if (this.scheduledRender) {
+      // 渲染请求被合并
+      if (this.ctPerformanceEnabled) {
+        this.ctCoalescedCount++;
+      }
       return;
+    }
+
+    if (this.ctPerformanceEnabled) {
+      this.ctScheduledAt = performance.now();
     }
 
     this.scheduledRender = () => {
@@ -1372,155 +1469,236 @@ export class CanvasTable implements CanvasTableAPI {
 
     requestAnimationFrame(() => {
       if (this.scheduledRender) {
+        if (this.ctPerformanceEnabled) {
+          const now = performance.now();
+          this.ctScheduledToStartDelay = this.ctScheduledAt ? now - this.ctScheduledAt : 0;
+          this.ctRafInterval = this.ctLastRafTime ? now - this.ctLastRafTime : null;
+          this.ctLastRafTime = now;
+        }
         this.scheduledRender();
       }
     });
   }
 
   private performRender(): void {
-    const columns = this.dataManager.getColumns();
-    const rows = this.dataManager.getRows();
-    const interactionState = this.interactionManager.getInteractionState();
-    const scrollState = this.interactionManager.getScrollState();
+    const totalStart = this.ctPerformanceEnabled ? performance.now() : 0;
+    if (this.ctPerformanceEnabled) {
+      this.ctCurrentFramePhases.clear();
+    }
 
-    // 始终更新滚动位置，确保 getVisibleHeaderCells 能正确计算
-    this.layoutManager.setScrollPosition(scrollState.scrollLeft, scrollState.scrollTop);
+    const { columns, rows, interactionState, scrollState } = this.measureCanvasPhase(
+      "dataState",
+      () => ({
+        columns: this.dataManager.getColumns(),
+        rows: this.dataManager.getRows(),
+        interactionState: this.interactionManager.getInteractionState(),
+        scrollState: this.interactionManager.getScrollState(),
+      }),
+    );
+
+    const visibleRange = this.measureCanvasPhase("layoutUpdate", () => {
+      // 始终更新滚动位置，确保 getVisibleHeaderCells 能正确计算
+      this.layoutManager.setScrollPosition(scrollState.scrollLeft, scrollState.scrollTop);
+      return this.layoutManager.getVisibleRange();
+    });
 
     if (rows.length === 0) {
-      this.loadingOverlay.hide();
-      this.renderer.renderEmptyState(
-        this.props.emptyText ?? this.locale.emptyText,
-        this.dataManager.getSort(),
-        this.dataManager.getFilters(),
-        interactionState.hoveredHeaderColumnKey,
-        scrollState.scrollLeft,
-      );
+      this.measureCanvasPhase("rendererRender", () => {
+        this.loadingOverlay.hide();
+        this.renderer.renderEmptyState(
+          this.props.emptyText ?? this.locale.emptyText,
+          this.dataManager.getSort(),
+          this.dataManager.getFilters(),
+          interactionState.hoveredHeaderColumnKey,
+          scrollState.scrollLeft,
+        );
+      });
 
-      const filterDropdown = this.interactionManager.getFilterDropdown();
-      if (filterDropdown) {
-        this.renderer.renderFilterDropdown(filterDropdown);
-      }
-      this.renderer.renderWatermark();
+      this.measureCanvasPhase("overlays", () => {
+        const filterDropdown = this.interactionManager.getFilterDropdown();
+        if (filterDropdown) {
+          this.renderer.renderFilterDropdown(filterDropdown);
+        }
+        this.renderer.renderWatermark();
+      });
+
+      this._recordCtFrame(totalStart);
       return;
     }
 
     if (this.dataManager.isLoading() || this.manualLoading) {
-      this.loadingOverlay.show(this.props.loadingText ?? this.locale.loadingText);
-      this.renderer.renderWatermark();
+      this.measureCanvasPhase("rendererRender", () => {
+        this.loadingOverlay.show(this.props.loadingText ?? this.locale.loadingText);
+        this.renderer.renderWatermark();
+      });
+
+      this._recordCtFrame(totalStart);
       return;
     }
 
     // 隐藏 loading overlay（如果正在显示）
     this.loadingOverlay.hide();
 
-    const visibleRange = this.layoutManager.getVisibleRange();
+    this.measureCanvasPhase("rendererRender", () => {
+      this.renderer.render(
+        columns,
+        rows,
+        visibleRange,
+        scrollState.scrollLeft,
+        scrollState.scrollTop,
+        {
+          hoveredCell: interactionState.hoveredCell,
+          selectedCells: interactionState.selectedCells,
+          editingCell: interactionState.editingCell,
+          sortConfig: this.dataManager.getSort(),
+          filterConfig: this.dataManager.getFilters(),
+          showHeader: this.props.showHeader !== false,
+          stripeRows: this.props.stripeRows !== false,
+          dropdown: interactionState.dropdown,
+          hoveredHeaderColumnKey: interactionState.hoveredHeaderColumnKey,
+          switchAnimations: interactionState.switchAnimations,
+          buttonHoverStates: interactionState.buttonHoverStates,
+          columnReorderState: interactionState.columnReorderState,
+          headerContextMenu: interactionState.headerContextMenu,
+          hoveredImageIndex: this.interactionManager.getHoveredImageIndex(),
+          hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
+          progressDragState: interactionState.progressDragState,
+          rowResizeState: interactionState.rowResizeState,
+          validationErrors: this.buildVisibleValidationErrorIndex(),
+          pendingValidations: this.pendingValidationCells,
+        },
+      );
+    });
 
-    this.renderer.render(
-      columns,
-      rows,
-      visibleRange,
-      scrollState.scrollLeft,
-      scrollState.scrollTop,
-      {
-        hoveredCell: interactionState.hoveredCell,
-        selectedCells: interactionState.selectedCells,
-        editingCell: interactionState.editingCell,
-        sortConfig: this.dataManager.getSort(),
-        filterConfig: this.dataManager.getFilters(),
-        showHeader: this.props.showHeader !== false,
-        stripeRows: this.props.stripeRows !== false,
-        dropdown: interactionState.dropdown,
-        hoveredHeaderColumnKey: interactionState.hoveredHeaderColumnKey,
-        switchAnimations: interactionState.switchAnimations,
-        buttonHoverStates: interactionState.buttonHoverStates,
-        columnReorderState: interactionState.columnReorderState,
-        headerContextMenu: interactionState.headerContextMenu,
-        hoveredImageIndex: this.interactionManager.getHoveredImageIndex(),
-        hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
-        progressDragState: interactionState.progressDragState,
-        rowResizeState: interactionState.rowResizeState,
-        validationErrors: this.buildVisibleValidationErrorIndex(),
-        pendingValidations: this.pendingValidationCells,
-      },
-    );
+    this.measureCanvasPhase("overlays", () => {
+      const scrollbarState = this.interactionManager.getScrollbarState();
+      this.renderer.renderScrollbars(
+        scrollState.scrollLeft,
+        scrollState.scrollTop,
+        scrollState.maxScrollLeft,
+        scrollState.maxScrollTop,
+        scrollbarState,
+      );
 
-    const scrollbarState = this.interactionManager.getScrollbarState();
-    this.renderer.renderScrollbars(
-      scrollState.scrollLeft,
-      scrollState.scrollTop,
-      scrollState.maxScrollLeft,
-      scrollState.maxScrollTop,
-      scrollbarState,
-    );
-
-    const validationTooltipCell = this.forcedValidationTooltipCell ?? interactionState.hoveredCell;
-    const validationTooltip = this.getValidationTooltip(
-      validationTooltipCell,
-      scrollState.scrollLeft,
-      scrollState.scrollTop,
-    );
-    if (validationTooltip && interactionState.tooltip) {
-      // 同一单元格同时有校验提示和普通 tooltip → 合并显示
-      const normalCell = interactionState.tooltip.cell;
-      const isSameCell =
-        validationTooltip.cell.rowIndex === normalCell.rowIndex &&
-        validationTooltip.cell.columnIndex === normalCell.columnIndex;
-      const validationText =
-        validationTooltip.content.type === "text" ? validationTooltip.content.text : "";
-      if (isSameCell && interactionState.tooltip.content.type === "text") {
-        const normalText = interactionState.tooltip.content.text;
-        this.renderer.renderTooltip({
-          ...validationTooltip,
-          content: {
-            type: "text",
-            text: validationText + "\n" + normalText,
-          },
-        });
-      } else {
+      const validationTooltipCell =
+        this.forcedValidationTooltipCell ?? interactionState.hoveredCell;
+      const validationTooltip = this.getValidationTooltip(
+        validationTooltipCell,
+        scrollState.scrollLeft,
+        scrollState.scrollTop,
+      );
+      if (validationTooltip && interactionState.tooltip) {
+        // 同一单元格同时有校验提示和普通 tooltip → 合并显示
+        const normalCell = interactionState.tooltip.cell;
+        const isSameCell =
+          validationTooltip.cell.rowIndex === normalCell.rowIndex &&
+          validationTooltip.cell.columnIndex === normalCell.columnIndex;
+        const validationText =
+          validationTooltip.content.type === "text" ? validationTooltip.content.text : "";
+        if (isSameCell && interactionState.tooltip.content.type === "text") {
+          const normalText = interactionState.tooltip.content.text;
+          this.renderer.renderTooltip({
+            ...validationTooltip,
+            content: {
+              type: "text",
+              text: validationText + "\n" + normalText,
+            },
+          });
+        } else {
+          this.renderer.renderTooltip(validationTooltip);
+        }
+      } else if (validationTooltip) {
         this.renderer.renderTooltip(validationTooltip);
+      } else if (interactionState.tooltip) {
+        this.renderer.renderTooltip(interactionState.tooltip);
       }
-    } else if (validationTooltip) {
-      this.renderer.renderTooltip(validationTooltip);
-    } else if (interactionState.tooltip) {
-      this.renderer.renderTooltip(interactionState.tooltip);
+
+      const filterDropdown = this.interactionManager.getFilterDropdown();
+      if (filterDropdown) {
+        this.renderer.renderFilterDropdown(filterDropdown);
+      }
+
+      const dateDropdown = this.interactionManager.getDateDropdown();
+      if (dateDropdown) {
+        this.renderer.renderDateDropdown(dateDropdown);
+      }
+
+      const colorDropdown = this.interactionManager.getColorDropdown();
+      if (colorDropdown) {
+        this.renderer.renderColorDropdown(colorDropdown);
+      }
+
+      const buttonsDropdown = this.interactionManager.getButtonsDropdown();
+      if (buttonsDropdown) {
+        this.renderer.renderButtonsDropdown(buttonsDropdown);
+      }
+
+      const imageTooltip = this.interactionManager.getImageTooltip();
+      if (imageTooltip) {
+        this.renderer.renderImageTooltip(imageTooltip);
+      }
+
+      const imageEditor = this.interactionManager.getImageEditor();
+      if (imageEditor) {
+        this.renderer.renderImageEditor(imageEditor);
+      }
+
+      const contextMenu = this.interactionManager.getContextMenu();
+      if (contextMenu) {
+        this.renderer.renderContextMenu(contextMenu);
+      }
+
+      this.renderer.renderWatermark();
+    });
+
+    this._recordCtFrame(totalStart);
+  }
+
+  /**
+   * 记录 CanvasTable 帧统计
+   */
+  private _recordCtFrame(totalStart: number): void {
+    if (!this.ctPerformanceEnabled) return;
+
+    const now = performance.now();
+    const totalTime = now - totalStart;
+
+    const dataStateTime = this.ctCurrentFramePhases.get("dataState")?.totalTime ?? 0;
+    const layoutUpdateTime = this.ctCurrentFramePhases.get("layoutUpdate")?.totalTime ?? 0;
+    const rendererRenderTime = this.ctCurrentFramePhases.get("rendererRender")?.totalTime ?? 0;
+    const overlaysTime = this.ctCurrentFramePhases.get("overlays")?.totalTime ?? 0;
+    const nonRendererTime = Math.max(0, totalTime - rendererRenderTime);
+    const phases = new Map<string, { totalTime: number; count: number; maxTime: number }>();
+    for (const [name, stats] of this.ctCurrentFramePhases) {
+      phases.set(name, { ...stats });
     }
 
-    const filterDropdown = this.interactionManager.getFilterDropdown();
-    if (filterDropdown) {
-      this.renderer.renderFilterDropdown(filterDropdown);
+    const frameEntry: CanvasTableFrameEntry = {
+      frameId: ++this.ctFrameCount,
+      startTime: totalStart,
+      scheduledAt: this.ctScheduledAt ?? 0,
+      scheduledToStartDelay: this.ctScheduledToStartDelay,
+      rafInterval: this.ctRafInterval,
+      totalTime,
+      dataStateTime,
+      layoutUpdateTime,
+      rendererRenderTime,
+      overlaysTime,
+      nonRendererTime,
+      coalescedCount: this.ctCoalescedCount,
+      phases,
+      rendererFrame: this.renderer.getLastFrameDiagnostics() as RendererFrameSnapshot | null,
+    };
+
+    this.ctFrameHistory.push(frameEntry);
+    if (this.ctFrameHistory.length > CanvasTable.CT_MAX_FRAME_HISTORY) {
+      this.ctFrameHistory.shift();
     }
 
-    const dateDropdown = this.interactionManager.getDateDropdown();
-    if (dateDropdown) {
-      this.renderer.renderDateDropdown(dateDropdown);
-    }
-
-    const colorDropdown = this.interactionManager.getColorDropdown();
-    if (colorDropdown) {
-      this.renderer.renderColorDropdown(colorDropdown);
-    }
-
-    const buttonsDropdown = this.interactionManager.getButtonsDropdown();
-    if (buttonsDropdown) {
-      this.renderer.renderButtonsDropdown(buttonsDropdown);
-    }
-
-    const imageTooltip = this.interactionManager.getImageTooltip();
-    if (imageTooltip) {
-      this.renderer.renderImageTooltip(imageTooltip);
-    }
-
-    const imageEditor = this.interactionManager.getImageEditor();
-    if (imageEditor) {
-      this.renderer.renderImageEditor(imageEditor);
-    }
-
-    const contextMenu = this.interactionManager.getContextMenu();
-    if (contextMenu) {
-      this.renderer.renderContextMenu(contextMenu);
-    }
-
-    this.renderer.renderWatermark();
+    this.ctScheduledAt = null;
+    this.ctScheduledToStartDelay = 0;
+    this.ctRafInterval = null;
+    this.ctCoalescedCount = 0;
   }
 
   resize(): void {
@@ -2418,12 +2596,32 @@ export class CanvasTable implements CanvasTableAPI {
   };
 
   // 性能监控 API
+
   /**
-   * 启用或禁用渲染器性能监控
+   * 测量 CanvasTable 阶段时间的辅助方法
+   */
+  private measureCanvasPhase<T>(name: string, fn: () => T): T {
+    if (!this.ctPerformanceEnabled) {
+      return fn();
+    }
+    const start = performance.now();
+    const result = fn();
+    const duration = performance.now() - start;
+    const stats = this.ctCurrentFramePhases.get(name) ?? { totalTime: 0, count: 0, maxTime: 0 };
+    stats.totalTime += duration;
+    stats.count++;
+    stats.maxTime = Math.max(stats.maxTime, duration);
+    this.ctCurrentFramePhases.set(name, stats);
+    return result;
+  }
+
+  /**
+   * 启用或禁用性能监控
    * @param enabled 是否启用
    */
   setPerformanceMonitoring(enabled: boolean): void {
     this.renderer.setPerformanceMonitoring(enabled);
+    this.ctPerformanceEnabled = enabled;
   }
 
   /**
@@ -2437,14 +2635,487 @@ export class CanvasTable implements CanvasTableAPI {
    * 获取性能统计报告
    */
   getPerformanceReport(): string {
-    return this.renderer.getPerformanceReport();
+    const lines: string[] = [
+      "=== CanvasTable Performance Report ===",
+      `Status: ${this.ctPerformanceEnabled ? "Enabled" : "Disabled"}`,
+    ];
+
+    // Helper to format cell detail steps
+    const formatCellDetail = (detail: CellRenderDetailSnapshot, indent: string = "    ") => {
+      const detailLines: string[] = [];
+      if (detail.branch) {
+        detailLines.push(`${indent}Branch: ${detail.branch}`);
+      }
+      // Take top 8 steps
+      const topSteps = detail.steps.slice(0, 8);
+      for (const step of topSteps) {
+        const percentage = detail.totalTime > 0 ? (step.totalTime / detail.totalTime) * 100 : 0;
+        const stepAvg = step.count > 0 ? step.totalTime / step.count : 0;
+        detailLines.push(
+          `${indent}${step.name.padEnd(35)} | ` +
+            `total: ${step.totalTime.toFixed(3).padStart(8)}ms | ` +
+            `count: ${step.count.toString().padStart(3)} | ` +
+            `avg: ${stepAvg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${step.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `${percentage.toFixed(1).padStart(5)}%`,
+        );
+      }
+      return detailLines;
+    };
+
+    const rendererDiagnostics = this.renderer.getPerformanceDiagnostics();
+    const hasData = this.ctFrameHistory.length > 0 || rendererDiagnostics.frameHistory.length > 0;
+
+    if (!hasData) {
+      lines.push("");
+      lines.push("No performance data collected yet.");
+      lines.push("Try scrolling the table while monitoring is enabled.");
+      return lines.join("\n");
+    }
+
+    // --- Summary section ---
+    lines.push("");
+    lines.push("=== SUMMARY ===");
+    lines.push("-".repeat(70));
+
+    const retainedFrames = this.ctFrameHistory.length;
+    const avgCtFrameTime =
+      retainedFrames > 0
+        ? this.ctFrameHistory.reduce((sum, f) => sum + f.totalTime, 0) / retainedFrames
+        : 0;
+    const worstFrameTotal =
+      retainedFrames > 0 ? Math.max(...this.ctFrameHistory.map((f) => f.totalTime)) : 0;
+
+    const countSlowFrames = (threshold: number) =>
+      this.ctFrameHistory.filter((f) => f.totalTime > threshold).length;
+
+    const rafSamples = this.ctFrameHistory
+      .map((f) => f.rafInterval)
+      .filter((v): v is number => v !== null && Number.isFinite(v));
+    const avgRafInterval =
+      rafSamples.length > 0 ? rafSamples.reduce((sum, v) => sum + v, 0) / rafSamples.length : null;
+    const worstRafInterval = rafSamples.length > 0 ? Math.max(...rafSamples) : null;
+    const estimatedFps = avgRafInterval && avgRafInterval > 0 ? 1000 / avgRafInterval : null;
+    const worstFps = worstRafInterval && worstRafInterval > 0 ? 1000 / worstRafInterval : null;
+
+    lines.push(`Captured CanvasTable Frames: ${this.ctFrameCount}`);
+    lines.push(
+      `Retained CanvasTable Frames: ${retainedFrames} ` +
+        `(last ${CanvasTable.CT_MAX_FRAME_HISTORY} max)`,
+    );
+    lines.push(`Average CanvasTable Frame Time: ${avgCtFrameTime.toFixed(2)}ms (retained)`);
+    lines.push(`Worst Frame Total: ${worstFrameTotal.toFixed(2)}ms (retained)`);
+    lines.push(`Slow Retained Frames >16.7ms: ${countSlowFrames(16.7)}`);
+    lines.push(`Slow Retained Frames >33.3ms: ${countSlowFrames(33.3)}`);
+    lines.push(`Slow Retained Frames >50ms: ${countSlowFrames(50)}`);
+    lines.push(`Slow Retained Frames >100ms: ${countSlowFrames(100)}`);
+    lines.push(
+      `RAF Interval (retained samples=${rafSamples.length}): ` +
+        `avg ${avgRafInterval !== null ? `${avgRafInterval.toFixed(2)}ms` : "N/A"}, ` +
+        `worst ${worstRafInterval !== null ? `${worstRafInterval.toFixed(2)}ms` : "N/A"}`,
+    );
+    lines.push(
+      `Estimated FPS: ` +
+        `avg ${estimatedFps !== null ? estimatedFps.toFixed(1) : "N/A"}, ` +
+        `worst ${worstFps !== null ? worstFps.toFixed(1) : "N/A"}`,
+    );
+
+    // --- Worst Frame Details ---
+    lines.push("");
+    lines.push("=== WORST FRAME DETAILS ===");
+    lines.push("-".repeat(70));
+
+    const ctWorstFrame = this.getCtWorstFrameDiagnostics();
+    if (ctWorstFrame) {
+      lines.push(`[CanvasTable]`);
+      lines.push(`  Total Time:        ${ctWorstFrame.totalTime.toFixed(2)}ms`);
+      lines.push(`  Renderer Time:     ${ctWorstFrame.rendererRenderTime.toFixed(2)}ms`);
+      lines.push(`  Non-Renderer Time: ${ctWorstFrame.nonRendererTime.toFixed(2)}ms`);
+      lines.push(`  Data State:        ${ctWorstFrame.dataStateTime.toFixed(2)}ms`);
+      lines.push(`  Layout Update:     ${ctWorstFrame.layoutUpdateTime.toFixed(2)}ms`);
+      lines.push(`  Overlays:          ${ctWorstFrame.overlaysTime.toFixed(2)}ms`);
+      lines.push(`  RAF Interval:      ${ctWorstFrame.rafInterval?.toFixed(2) ?? "N/A"}ms`);
+      lines.push(`  Scheduled Delay:   ${ctWorstFrame.scheduledToStartDelay.toFixed(2)}ms`);
+      lines.push(`  Coalesced Count:   ${ctWorstFrame.coalescedCount}`);
+
+      const matchedRendererFrame = ctWorstFrame.rendererFrame;
+      if (matchedRendererFrame) {
+        lines.push("");
+        lines.push(`[Renderer - matching CanvasTable worst frame]`);
+        lines.push(`  Total Time:        ${matchedRendererFrame.totalTime.toFixed(2)}ms`);
+        lines.push(`  Cell Render Time:  ${matchedRendererFrame.cellRenderTime.toFixed(2)}ms`);
+        lines.push(`  Non-Cell Time:     ${matchedRendererFrame.nonCellRendererTime.toFixed(2)}ms`);
+        lines.push(`  Unaccounted Time:  ${matchedRendererFrame.unaccountedTime.toFixed(2)}ms`);
+        lines.push(`  Visible Rows:      ${matchedRendererFrame.visibleRows}`);
+        lines.push(`  Visible Columns:   ${matchedRendererFrame.visibleColumns}`);
+        lines.push(`  Visible Cells:     ${matchedRendererFrame.visibleCells}`);
+        lines.push(`  Scroll Top:        ${matchedRendererFrame.scrollTop.toFixed(0)}`);
+        lines.push(`  Scroll Left:       ${matchedRendererFrame.scrollLeft.toFixed(0)}`);
+      }
+    }
+
+    const rendererFrameForBreakdown =
+      ctWorstFrame?.rendererFrame ??
+      (rendererDiagnostics.worstFrame as RendererFrameSnapshot | null) ??
+      (rendererDiagnostics.lastFrame as RendererFrameSnapshot | null);
+    const rendererFrameLabel = ctWorstFrame?.rendererFrame
+      ? "Matching CanvasTable Worst Frame"
+      : "Renderer Worst/Last Frame";
+    const rendererFrames = (rendererDiagnostics.frameHistory as RendererFrameSnapshot[]) ?? [];
+    const formatCellLocation = (location?: CellRenderLocation) => {
+      if (!location) return "row: N/A col: N/A xy: N/A";
+      return `row: ${location.rowIndex ?? "N/A"} col: ${location.colIndex ?? "N/A"} xy: (${location.x.toFixed(0)},${location.y.toFixed(0)}) size: ${location.width.toFixed(0)}x${location.height.toFixed(0)}`;
+    };
+    const formatRowBandDetails = (
+      details:
+        | Map<
+            string,
+            {
+              totalTime: number;
+              count: number;
+              maxTime: number;
+              maxAt?: CellRenderLocation;
+              columnKey?: string;
+            }
+          >
+        | undefined,
+      totalTime: number,
+      indent = "  ",
+    ) => {
+      if (!details || details.size === 0) return [];
+      return Array.from(details.entries())
+        .map(([name, stats]) => ({
+          name,
+          ...stats,
+          avg: stats.count > 0 ? stats.totalTime / stats.count : 0,
+          percentage: totalTime > 0 ? (stats.totalTime / totalTime) * 100 : 0,
+        }))
+        .sort((a, b) => b.totalTime - a.totalTime)
+        .slice(0, 24)
+        .map((detail) => {
+          const column = detail.columnKey ? ` | column: ${detail.columnKey}` : "";
+          const location = detail.maxAt ? ` | maxAt: ${formatCellLocation(detail.maxAt)}` : "";
+          return (
+            `${indent}${detail.name.padEnd(42)} | ` +
+            `calls: ${detail.count.toString().padStart(5)} | ` +
+            `avg: ${detail.avg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${detail.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${detail.totalTime.toFixed(2).padStart(8)}ms | ` +
+            `${detail.percentage.toFixed(1).padStart(5)}%` +
+            column +
+            location
+          );
+        });
+    };
+
+    // --- Aggregate Renderer Phase Breakdown ---
+    const aggregatePhases = new Map<
+      string,
+      { totalTime: number; count: number; maxTime: number }
+    >();
+    for (const frame of rendererFrames) {
+      for (const [name, stats] of frame.phases.entries()) {
+        const aggregate = aggregatePhases.get(name) ?? { totalTime: 0, count: 0, maxTime: 0 };
+        aggregate.totalTime += stats.totalTime;
+        aggregate.count += stats.count;
+        aggregate.maxTime = Math.max(aggregate.maxTime, stats.maxTime);
+        aggregatePhases.set(name, aggregate);
+      }
+    }
+
+    if (aggregatePhases.size > 0) {
+      lines.push("");
+      lines.push(
+        "=== AGGREGATE RENDERER PHASE BREAKDOWN (All Retained Renderer Frames; last 120 max) ===",
+      );
+      lines.push(`Retained Renderer Frames: ${rendererFrames.length}`);
+      lines.push("-".repeat(86));
+
+      const phases = Array.from(aggregatePhases.entries())
+        .map(([name, stats]) => ({
+          name,
+          totalTime: stats.totalTime,
+          maxTime: stats.maxTime,
+          count: stats.count,
+          avg: stats.count > 0 ? stats.totalTime / stats.count : 0,
+        }))
+        .sort((a, b) => b.totalTime - a.totalTime);
+
+      for (const phase of phases) {
+        lines.push(
+          `${phase.name.padEnd(25)} | ` +
+            `calls: ${phase.count.toString().padStart(6)} | ` +
+            `avg: ${phase.avg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${phase.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${phase.totalTime.toFixed(2).padStart(8)}ms`,
+        );
+      }
+
+      const aggregateRowBandDetails = new Map<
+        string,
+        {
+          totalTime: number;
+          count: number;
+          maxTime: number;
+          maxAt?: CellRenderLocation;
+          columnKey?: string;
+        }
+      >();
+      for (const frame of rendererFrames) {
+        for (const [name, stats] of frame.rowBandDetails?.entries() ?? []) {
+          const aggregate = aggregateRowBandDetails.get(name) ?? {
+            totalTime: 0,
+            count: 0,
+            maxTime: 0,
+          };
+          aggregate.totalTime += stats.totalTime;
+          aggregate.count += stats.count;
+          if (stats.maxTime > aggregate.maxTime) {
+            aggregate.maxTime = stats.maxTime;
+            aggregate.maxAt = stats.maxAt ? { ...stats.maxAt } : undefined;
+            aggregate.columnKey = stats.columnKey;
+          }
+          aggregateRowBandDetails.set(name, aggregate);
+        }
+      }
+      if (aggregateRowBandDetails.size > 0) {
+        const rowBandsTotal = aggregatePhases.get("rowBands")?.totalTime ?? 0;
+        const rowBandsFixedTotal = aggregatePhases.get("rowBandsFixed")?.totalTime ?? 0;
+        lines.push("");
+        lines.push("  rowBands detail (aggregate, top 24):");
+        lines.push(
+          ...formatRowBandDetails(
+            aggregateRowBandDetails,
+            rowBandsTotal + rowBandsFixedTotal,
+            "    ",
+          ),
+        );
+      }
+    }
+
+    // --- Aggregate Cell Renderer Breakdown ---
+    const aggregateCells = new Map<string, Map<string, CellRenderStatsSnapshot>>();
+    for (const frame of rendererFrames) {
+      for (const [type, byKey] of frame.cellsByType.entries()) {
+        let aggregateByKey = aggregateCells.get(type);
+        if (!aggregateByKey) {
+          aggregateByKey = new Map();
+          aggregateCells.set(type, aggregateByKey);
+        }
+
+        for (const [columnKey, stats] of byKey.entries()) {
+          const aggregate = aggregateByKey.get(columnKey) ?? { totalTime: 0, count: 0, maxTime: 0 };
+          aggregate.totalTime += stats.totalTime;
+          aggregate.count += stats.count;
+          if (stats.maxTime > aggregate.maxTime) {
+            aggregate.maxTime = stats.maxTime;
+            aggregate.maxCell = stats.maxCell ? { ...stats.maxCell } : undefined;
+            aggregate.maxCellDetail = stats.maxCellDetail
+              ? {
+                  ...stats.maxCellDetail,
+                  location: { ...stats.maxCellDetail.location },
+                  steps: stats.maxCellDetail.steps.map((s) => ({ ...s })),
+                }
+              : undefined;
+          }
+          aggregateByKey.set(columnKey, aggregate);
+        }
+      }
+    }
+
+    if (aggregateCells.size > 0) {
+      lines.push("");
+      lines.push(
+        "=== AGGREGATE CELL RENDERER BREAKDOWN (All Retained Renderer Frames; last 120 max) ===",
+      );
+      lines.push(`Retained Renderer Frames: ${rendererFrames.length}`);
+      lines.push(
+        "Note: detail % = step total / slow-cell total; partial when only sub-steps are traced.",
+      );
+      lines.push("-".repeat(92));
+
+      const allCells: Array<{
+        type: string;
+        columnKey: string;
+        totalTime: number;
+        count: number;
+        maxTime: number;
+        maxCell?: CellRenderLocation;
+        maxCellDetail?: CellRenderDetailSnapshot;
+      }> = [];
+
+      for (const [type, byKey] of aggregateCells.entries()) {
+        for (const [columnKey, stats] of byKey.entries()) {
+          allCells.push({ type, columnKey, ...stats });
+        }
+      }
+
+      allCells.sort((a, b) => b.totalTime - a.totalTime);
+
+      for (const cell of allCells) {
+        const avg = cell.count > 0 ? cell.totalTime / cell.count : 0;
+        lines.push(
+          `${`${cell.type}/${cell.columnKey}`.padEnd(30)} | ` +
+            `totalCalls: ${cell.count.toString().padStart(6)} | ` +
+            `avg: ${avg.toFixed(3).padStart(7)}ms | ` +
+            `maxCell: ${cell.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${cell.totalTime.toFixed(2).padStart(8)}ms | ` +
+            `maxAt: ${formatCellLocation(cell.maxCell)}`,
+        );
+        if (cell.maxCellDetail) {
+          lines.push(...formatCellDetail(cell.maxCellDetail, "    "));
+        }
+      }
+    }
+
+    // --- Renderer Phase Breakdown ---
+    if (rendererFrameForBreakdown && rendererFrameForBreakdown.phases.size > 0) {
+      lines.push("");
+      lines.push(
+        `=== RENDERER PHASE BREAKDOWN (${rendererFrameLabel}; calls are this frame only) ===`,
+      );
+      lines.push(`Frame ID: ${rendererFrameForBreakdown.frameId}`);
+      lines.push("-".repeat(86));
+
+      const phaseEntries = Array.from(
+        rendererFrameForBreakdown.phases as Map<
+          string,
+          { totalTime: number; maxTime: number; count: number }
+        >,
+      );
+      const phases = phaseEntries
+        .map(([name, stats]) => ({
+          name,
+          totalTime: stats.totalTime,
+          maxTime: stats.maxTime,
+          count: stats.count,
+          percentage:
+            rendererFrameForBreakdown.totalTime > 0
+              ? (stats.totalTime / rendererFrameForBreakdown.totalTime) * 100
+              : 0,
+        }))
+        .sort((a, b) => b.totalTime - a.totalTime);
+
+      for (const phase of phases) {
+        lines.push(
+          `${phase.name.padEnd(25)} | ` +
+            `calls/frame: ${phase.count.toString().padStart(3)} | ` +
+            `max: ${phase.maxTime.toFixed(2).padStart(7)}ms | ` +
+            `total: ${phase.totalTime.toFixed(2).padStart(7)}ms | ` +
+            `${phase.percentage.toFixed(1).padStart(5)}%`,
+        );
+      }
+      if (
+        rendererFrameForBreakdown.rowBandDetails &&
+        rendererFrameForBreakdown.rowBandDetails.size > 0
+      ) {
+        const rowBandsTotal = rendererFrameForBreakdown.phases.get("rowBands")?.totalTime ?? 0;
+        const rowBandsFixedTotal =
+          rendererFrameForBreakdown.phases.get("rowBandsFixed")?.totalTime ?? 0;
+        lines.push("");
+        lines.push("  rowBands detail (matching frame, top 24):");
+        lines.push(
+          ...formatRowBandDetails(
+            rendererFrameForBreakdown.rowBandDetails,
+            rowBandsTotal + rowBandsFixedTotal,
+            "    ",
+          ),
+        );
+      }
+    }
+
+    // --- Cell Renderer Breakdown ---
+    if (rendererFrameForBreakdown && rendererFrameForBreakdown.cellsByType.size > 0) {
+      lines.push("");
+      lines.push(
+        `=== CELL RENDERER BREAKDOWN (${rendererFrameLabel}; calls are this frame only) ===`,
+      );
+      lines.push(`Frame ID: ${rendererFrameForBreakdown.frameId}`);
+      lines.push(
+        "Note: detail % = step total / slow-cell total; partial when only sub-steps are traced.",
+      );
+      lines.push("-".repeat(92));
+
+      const allCells: Array<{
+        type: string;
+        columnKey: string;
+        totalTime: number;
+        count: number;
+        maxTime: number;
+        maxCell?: CellRenderLocation;
+        maxCellDetail?: CellRenderDetailSnapshot;
+      }> = [];
+
+      const cellsByType = rendererFrameForBreakdown.cellsByType as Map<
+        string,
+        Map<string, CellRenderStatsSnapshot>
+      >;
+      for (const [type, byKey] of cellsByType.entries()) {
+        for (const [columnKey, stats] of byKey.entries()) {
+          allCells.push({ type, columnKey, ...stats });
+        }
+      }
+
+      allCells.sort((a, b) => b.totalTime - a.totalTime);
+
+      for (const cell of allCells) {
+        const avg = cell.count > 0 ? cell.totalTime / cell.count : 0;
+        lines.push(
+          `${`${cell.type}/${cell.columnKey}`.padEnd(30)} | ` +
+            `calls/frame: ${cell.count.toString().padStart(4)} | ` +
+            `avg: ${avg.toFixed(3).padStart(7)}ms | ` +
+            `maxCell: ${cell.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${cell.totalTime.toFixed(2).padStart(6)}ms | ` +
+            `maxAt: ${formatCellLocation(cell.maxCell)}`,
+        );
+        if (cell.maxCellDetail) {
+          lines.push(...formatCellDetail(cell.maxCellDetail, "    "));
+        }
+      }
+    }
+
+    // --- Top Slow CanvasTable Frames ---
+    if (this.ctFrameHistory.length > 0) {
+      lines.push("");
+      lines.push("=== TOP 10 SLOW CANVASTABLE FRAMES ===");
+      lines.push("-".repeat(70));
+
+      const topSlow = [...this.ctFrameHistory]
+        .sort((a, b) => b.totalTime - a.totalTime)
+        .slice(0, 10);
+
+      lines.push(
+        `${"Frame".padStart(6)} | ` +
+          `${"Total".padStart(8)} | ` +
+          `${"Renderer".padStart(8)} | ` +
+          `${"NonRender".padStart(8)} | ` +
+          `${"Overlays".padStart(8)} | ` +
+          `${"RAF int".padStart(8)} | ` +
+          `${"Coalesced".padStart(8)}`,
+      );
+      lines.push("-".repeat(70));
+
+      for (const frame of topSlow) {
+        lines.push(
+          `${frame.frameId.toString().padStart(6)} | ` +
+            `${frame.totalTime.toFixed(1).padStart(8)} | ` +
+            `${frame.rendererRenderTime.toFixed(1).padStart(8)} | ` +
+            `${frame.nonRendererTime.toFixed(1).padStart(8)} | ` +
+            `${frame.overlaysTime.toFixed(1).padStart(8)} | ` +
+            `${(frame.rafInterval === null ? "N/A" : frame.rafInterval.toFixed(1)).padStart(8)} | ` +
+            `${frame.coalescedCount.toString().padStart(8)}`,
+        );
+      }
+    }
+
+    return lines.join("\n");
   }
 
   /**
    * 打印性能统计报告到控制台
    */
   printPerformanceReport(): void {
-    this.renderer.printPerformanceReport();
+    console.log(this.getPerformanceReport());
   }
 
   /**
@@ -2452,6 +3123,51 @@ export class CanvasTable implements CanvasTableAPI {
    */
   resetPerformanceStats(): void {
     this.renderer.resetPerformanceStats();
+    this.ctFrameHistory = [];
+    this.ctFrameCount = 0;
+    this.ctLastRafTime = null;
+    this.ctScheduledAt = null;
+    this.ctCoalescedCount = 0;
+  }
+
+  /**
+   * 获取 CanvasTable 最后一帧的诊断信息
+   */
+  private getCtLastFrameDiagnostics(): any {
+    if (this.ctFrameHistory.length === 0) return null;
+    return this.ctFrameHistory[this.ctFrameHistory.length - 1] ?? null;
+  }
+
+  /**
+   * 获取 CanvasTable 最差帧的诊断信息（总时间最长的帧）
+   */
+  private getCtWorstFrameDiagnostics(): any {
+    if (this.ctFrameHistory.length === 0) return null;
+    return this.ctFrameHistory.reduce((worst, frame) =>
+      frame.totalTime > worst.totalTime ? frame : worst,
+    );
+  }
+
+  /**
+   * 获取慢帧数组（总时间超过阈值的帧，默认 16ms）
+   */
+  private getCtSlowFrames(threshold: number = 16): any {
+    return this.ctFrameHistory.filter((frame) => frame.totalTime > threshold);
+  }
+
+  /**
+   * 获取完整的性能诊断信息（包含 CanvasTable 和 Renderer）
+   */
+  getPerformanceDiagnostics(): any {
+    return {
+      canvasTable: {
+        frameHistory: [...this.ctFrameHistory],
+        lastFrame: this.getCtLastFrameDiagnostics(),
+        worstFrame: this.getCtWorstFrameDiagnostics(),
+        slowFrames: this.getCtSlowFrames(),
+      },
+      renderer: this.renderer.getPerformanceDiagnostics(),
+    };
   }
 
   // === 渲染缓存 API ===

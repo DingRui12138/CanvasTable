@@ -46,7 +46,14 @@ export declare class Renderer {
     private frameStartTime;
     private frameCount;
     private lastReportTime;
+    private frameHistory;
+    private static readonly MAX_FRAME_HISTORY;
+    private static readonly SLOW_CELL_DETAIL_THRESHOLD_MS;
+    private static readonly DETAILED_CELL_TYPES;
+    private static readonly MAX_DETAIL_STEPS_PER_CELL;
     private currentFrameStats;
+    private currentFramePhases;
+    private currentFrameRowBandDetails;
     private lastFrameStats;
     private currentVisibleRange;
     private currentRows;
@@ -206,6 +213,18 @@ export declare class Renderer {
         failed: number;
     };
     /**
+     * 获取最后一帧的诊断信息
+     */
+    getLastFrameDiagnostics(): any;
+    /**
+     * 获取最差帧的诊断信息（总时间最长的帧）
+     */
+    getWorstFrameDiagnostics(): any;
+    /**
+     * 获取完整的性能诊断信息
+     */
+    getPerformanceDiagnostics(): any;
+    /**
      * 启用或禁用性能监控
      */
     setPerformanceMonitoring(enabled: boolean): void;
@@ -224,7 +243,12 @@ export declare class Renderer {
     /**
      * 结束帧计时
      */
-    endFrame(): void;
+    endFrame(visibleRange: VisibleRange, scrollTop: number, scrollLeft: number, columns: Column[]): void;
+    private formatCellLocation;
+    private copyCellDetail;
+    private copyCellStats;
+    private createRenderDetailRecorder;
+    private finalizeRenderDetail;
     /**
      * 测量渲染类型的时间
      */
@@ -233,6 +257,13 @@ export declare class Renderer {
      * 记录单次渲染耗时（用于内联性能采样的场景，如 image 热路径）
      */
     private recordRenderTiming;
+    /**
+     * 测量渲染阶段的时间
+     */
+    private measurePhase;
+    private recordRowBandDetail;
+    private measureRowBandDetail;
+    private measureRowBandCellDetail;
     /**
      * 获取性能统计（按类型聚合，丢失列粒度，仅供向后兼容）
      */
