@@ -58,28 +58,11 @@ type CellRenderLocation = {
   height: number;
 };
 
-type CellRenderSubStepStats = {
-  name: string;
-  totalTime: number;
-  count: number;
-  maxTime: number;
-};
-
-type CellRenderDetailSnapshot = {
-  type: string;
-  columnKey: string;
-  totalTime: number;
-  location: CellRenderLocation;
-  branch?: string;
-  steps: CellRenderSubStepStats[];
-};
-
 type CellRenderStatsSnapshot = {
   totalTime: number;
   count: number;
   maxTime: number;
   maxCell?: CellRenderLocation;
-  maxCellDetail?: CellRenderDetailSnapshot;
 };
 
 type RendererFrameSnapshot = {
@@ -2652,29 +2635,6 @@ export class CanvasTable implements CanvasTableAPI {
       `Status: ${this.ctPerformanceEnabled ? "Enabled" : "Disabled"}`,
     ];
 
-    // Helper to format cell detail steps
-    const formatCellDetail = (detail: CellRenderDetailSnapshot, indent: string = "    ") => {
-      const detailLines: string[] = [];
-      if (detail.branch) {
-        detailLines.push(`${indent}Branch: ${detail.branch}`);
-      }
-      // Take top 8 steps
-      const topSteps = detail.steps.slice(0, 8);
-      for (const step of topSteps) {
-        const percentage = detail.totalTime > 0 ? (step.totalTime / detail.totalTime) * 100 : 0;
-        const stepAvg = step.count > 0 ? step.totalTime / step.count : 0;
-        detailLines.push(
-          `${indent}${step.name.padEnd(35)} | ` +
-            `total: ${step.totalTime.toFixed(3).padStart(8)}ms | ` +
-            `count: ${step.count.toString().padStart(3)} | ` +
-            `avg: ${stepAvg.toFixed(3).padStart(7)}ms | ` +
-            `max: ${step.maxTime.toFixed(3).padStart(7)}ms | ` +
-            `${percentage.toFixed(1).padStart(5)}%`,
-        );
-      }
-      return detailLines;
-    };
-
     const rendererDiagnostics = this.renderer.getPerformanceDiagnostics();
     const hasData = this.ctFrameHistory.length > 0 || rendererDiagnostics.frameHistory.length > 0;
 
@@ -2922,13 +2882,6 @@ export class CanvasTable implements CanvasTableAPI {
           if (stats.maxTime > aggregate.maxTime) {
             aggregate.maxTime = stats.maxTime;
             aggregate.maxCell = stats.maxCell ? { ...stats.maxCell } : undefined;
-            aggregate.maxCellDetail = stats.maxCellDetail
-              ? {
-                  ...stats.maxCellDetail,
-                  location: { ...stats.maxCellDetail.location },
-                  steps: stats.maxCellDetail.steps.map((s) => ({ ...s })),
-                }
-              : undefined;
           }
           aggregateByKey.set(columnKey, aggregate);
         }
@@ -2941,9 +2894,6 @@ export class CanvasTable implements CanvasTableAPI {
         "=== AGGREGATE CELL RENDERER BREAKDOWN (All Retained Renderer Frames; last 120 max) ===",
       );
       lines.push(`Retained Renderer Frames: ${rendererFrames.length}`);
-      lines.push(
-        "Note: detail % = step total / slow-cell total; partial when only sub-steps are traced.",
-      );
       lines.push("-".repeat(92));
 
       const allCells: Array<{
@@ -2953,7 +2903,6 @@ export class CanvasTable implements CanvasTableAPI {
         count: number;
         maxTime: number;
         maxCell?: CellRenderLocation;
-        maxCellDetail?: CellRenderDetailSnapshot;
       }> = [];
 
       for (const [type, byKey] of aggregateCells.entries()) {
@@ -2974,9 +2923,6 @@ export class CanvasTable implements CanvasTableAPI {
             `total: ${cell.totalTime.toFixed(2).padStart(8)}ms | ` +
             `maxAt: ${formatCellLocation(cell.maxCell)}`,
         );
-        if (cell.maxCellDetail) {
-          lines.push(...formatCellDetail(cell.maxCellDetail, "    "));
-        }
       }
     }
 
@@ -3043,9 +2989,6 @@ export class CanvasTable implements CanvasTableAPI {
         `=== CELL RENDERER BREAKDOWN (${rendererFrameLabel}; calls are this frame only) ===`,
       );
       lines.push(`Frame ID: ${rendererFrameForBreakdown.frameId}`);
-      lines.push(
-        "Note: detail % = step total / slow-cell total; partial when only sub-steps are traced.",
-      );
       lines.push("-".repeat(92));
 
       const allCells: Array<{
@@ -3055,7 +2998,6 @@ export class CanvasTable implements CanvasTableAPI {
         count: number;
         maxTime: number;
         maxCell?: CellRenderLocation;
-        maxCellDetail?: CellRenderDetailSnapshot;
       }> = [];
 
       const cellsByType = rendererFrameForBreakdown.cellsByType as Map<
@@ -3080,9 +3022,6 @@ export class CanvasTable implements CanvasTableAPI {
             `total: ${cell.totalTime.toFixed(2).padStart(6)}ms | ` +
             `maxAt: ${formatCellLocation(cell.maxCell)}`,
         );
-        if (cell.maxCellDetail) {
-          lines.push(...formatCellDetail(cell.maxCellDetail, "    "));
-        }
       }
     }
 

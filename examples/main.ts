@@ -2280,33 +2280,6 @@ document.getElementById("hideAgeColumn")!.addEventListener("click", () => {
   console.log("Hide age column");
 });
 
-// 性能检测按钮
-let perfMonitoringEnabled = false;
-const perfButton = document.getElementById("perfMonitor")!;
-perfButton.addEventListener("click", () => {
-  if (!perfMonitoringEnabled) {
-    // 开始检测
-    perfMonitoringEnabled = true;
-    table.setPerformanceMonitoring(true);
-    table.resetPerformanceStats();
-    perfButton.textContent = "End Perf Monitor";
-    perfButton.style.background = "#ff4d4f";
-    perfButton.style.borderColor = "#ff4d4f";
-    perfButton.style.color = "white";
-    console.log("Performance monitoring started. Scroll the table data to test it...");
-  } else {
-    // 先打印报告，再禁用监控
-    perfMonitoringEnabled = false;
-    console.log("\n========== 性能检测报告 ==========\n");
-    table.printPerformanceReport();
-    console.log("\n==================================\n");
-    // 打印完报告后再禁用
-    table.setPerformanceMonitoring(false);
-    perfButton.textContent = "Start Perf Monitor";
-    perfButton.style = "";
-  }
-});
-
 // 缓存开关按钮
 let cacheEnabled = false;
 const cacheButton = document.getElementById("cacheToggle")!;

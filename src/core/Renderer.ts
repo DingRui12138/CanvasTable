@@ -46,12 +46,7 @@ import {
   CellRendererRegistry,
   type CellRenderResult as StrategyCellRenderResult,
 } from "./renderers";
-import type {
-  CellRenderer,
-  CellRendererContext,
-  ImageRuntime,
-  CellRenderTrace,
-} from "./renderers/CellRenderer";
+import type { CellRenderer, CellRendererContext, ImageRuntime } from "./renderers/CellRenderer";
 import {
   truncateText,
   getDevicePixelRatio,
@@ -79,26 +74,8 @@ type PhaseStats = {
   maxTime: number;
 };
 
-type CellRenderSubStepStats = {
-  name: string;
-  totalTime: number;
-  count: number;
-  maxTime: number;
-};
-
-type CellRenderDetailSnapshot = {
-  type: string;
-  columnKey: string;
-  totalTime: number;
-  location: CellRenderLocation;
-  branch?: string;
-  steps: CellRenderSubStepStats[];
-};
-
 type CellRenderStats = PhaseStats & {
   maxCell?: CellRenderLocation;
-  maxCellDetail?: CellRenderDetailSnapshot;
-  stepTotals?: Map<string, CellRenderSubStepStats>;
 };
 
 type RowBandDetailStats = PhaseStats & {
@@ -117,52 +94,6 @@ type JSXUpdateHandlers = {
   updateField: (rowIndex: number, field: string, value: unknown) => Promise<void>;
   updateRow: (rowIndex: number, data: Record<string, unknown>) => Promise<void>;
 };
-
-class CellRenderDetailRecorder implements CellRenderTrace {
-  private steps: Map<string, CellRenderSubStepStats> = new Map();
-  private branch?: string;
-
-  measure<T>(name: string, fn: () => T): T {
-    const start = performance.now();
-    try {
-      return fn();
-    } finally {
-      this.add(name, performance.now() - start);
-    }
-  }
-
-  add(name: string, duration: number): void {
-    const stats = this.steps.get(name) ?? { name, totalTime: 0, count: 0, maxTime: 0 };
-    stats.totalTime += duration;
-    stats.count++;
-    stats.maxTime = Math.max(stats.maxTime, duration);
-    this.steps.set(name, stats);
-  }
-
-  markBranch(name: string): void {
-    this.branch = name;
-  }
-
-  toSnapshot(
-    type: string,
-    columnKey: string,
-    totalTime: number,
-    location: CellRenderLocation,
-    maxSteps: number,
-  ): CellRenderDetailSnapshot {
-    return {
-      type,
-      columnKey,
-      totalTime,
-      location: { ...location },
-      branch: this.branch,
-      steps: Array.from(this.steps.values())
-        .map((step) => ({ ...step }))
-        .sort((a, b) => b.totalTime - a.totalTime)
-        .slice(0, maxSteps),
-    };
-  }
-}
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -261,10 +192,6 @@ export class Renderer {
     scrollLeft: number;
   }> = [];
   private static readonly MAX_FRAME_HISTORY = 120;
-  private static readonly SLOW_CELL_DETAIL_THRESHOLD_MS = 8;
-  private static readonly DETAILED_CELL_THRESHOLD_MS = new Map<string, number>([["jsx", 0]]);
-  private static readonly DETAILED_CELL_TYPES = new Set(["image", "jsx"]);
-  private static readonly MAX_DETAIL_STEPS_PER_CELL = 24;
 
   // 当前帧统计 (type -> columnKey -> stats)
   private currentFrameStats: Map<string, Map<string, CellRenderStats>> = new Map();
@@ -2884,28 +2811,9 @@ export class Renderer {
         imageCtx.isHovered = !!isHovered;
         imageCtx.hoveredImageIndex = this.currentHoveredImageIndex;
 
-        if (this.performanceEnabled) {
-          const imageLocation = cellLocation ?? { rowIndex, colIndex, x, y, width, height };
-          const detailRecorder = this.createRenderDetailRecorder("image");
-          const start = performance.now();
-          try {
-            imageCtx.renderTrace = detailRecorder;
-            this.imageRenderer.render(imageCtx);
-          } finally {
-            imageCtx.renderTrace = undefined;
-          }
-          const duration = performance.now() - start;
-          const detail = this.finalizeRenderDetail(
-            detailRecorder,
-            "image",
-            ck,
-            duration,
-            imageLocation,
-          );
-          this.recordRenderTiming("image", ck, duration, imageLocation, detail);
-        } else {
+        this.measureRender("image", ck, cellLocation, () => {
           this.imageRenderer.render(imageCtx);
-        }
+        });
         return;
       }
 
@@ -2974,19 +2882,10 @@ export class Renderer {
       // 渲染出错时仅跳过本单元格，不影响其它列的渲染。
 
       if (renderResult.type === "custom" && renderResult.jsxRender) {
-        this.measureRender("jsx", ck, cellLocation, (trace) => {
-          if (trace) {
-            trace.markBranch("jsx.render");
-          }
+        this.measureRender("jsx", ck, cellLocation, () => {
           // 强制保存完整 Canvas 状态，JSX 渲染完全隔离
-          if (trace) {
-            trace.measure("jsx.ctx.save", () => this.ctx.save());
-          } else {
-            this.ctx.save();
-          }
+          this.ctx.save();
           try {
-            const traceValue = <T>(name: string, fn: () => T): T =>
-              trace ? trace.measure(name, fn) : fn();
             const contextRow = row ?? Renderer.SHARED_PLACEHOLDER_ROW;
             const contextColumn = column ?? Renderer.SHARED_PLACEHOLDER_COLUMN;
             const jsxContext = this.createJSXRenderContext(
@@ -2996,21 +2895,15 @@ export class Renderer {
               colIndex ?? -1,
               value,
             );
-            const elementTree = traceValue("jsx.jsxRender", () =>
-              renderResult.jsxRender!(jsxContext),
-            );
+            const elementTree = renderResult.jsxRender!(jsxContext);
             const jsxLayoutKey = renderResult.jsxLayoutKey;
             const layoutCacheKey =
               typeof jsxLayoutKey === "function"
-                ? traceValue("jsx.layoutKey", () => jsxLayoutKey(jsxContext) ?? null)
+                ? (jsxLayoutKey(jsxContext) ?? null)
                 : (jsxLayoutKey ?? null);
-            this.jsxMeasurementEngine.setTrace(trace);
-            this.jsxLayoutEngine.setTrace(trace);
-            this.jsxRenderer.setTrace(trace);
             this.jsxRenderer.setRenderContext({
               ctx: this.ctx,
               theme: this.theme,
-              trace,
               imageRuntime: this.imageRuntime,
               row: contextRow,
               column: contextColumn,
@@ -3029,11 +2922,7 @@ export class Renderer {
             console.error(`[Renderer] JSX render error at row ${rowIndex}, col ${colIndex}:`, e);
           } finally {
             // 强制恢复 Canvas 状态，不管 JSX 内部发生了什么
-            if (trace) {
-              trace.measure("jsx.ctx.restore", () => this.ctx.restore());
-            } else {
-              this.ctx.restore();
-            }
+            this.ctx.restore();
           }
         });
         return;
@@ -3486,11 +3375,9 @@ export class Renderer {
         const stats = totalByKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
         stats.totalTime += frameStat.totalTime;
         stats.count += frameStat.count;
-        stats.stepTotals = this.mergeStepTotalsMap(stats.stepTotals, frameStat.stepTotals);
         if (frameStat.maxTime > stats.maxTime) {
           stats.maxTime = frameStat.maxTime;
           stats.maxCell = frameStat.maxCell ? { ...frameStat.maxCell } : undefined;
-          stats.maxCellDetail = this.copyCellDetail(frameStat.maxCellDetail);
         }
         totalByKey.set(columnKey, stats);
       }
@@ -3563,95 +3450,11 @@ export class Renderer {
     return `row: ${location.rowIndex ?? "N/A"} col: ${location.colIndex ?? "N/A"} xy: (${location.x.toFixed(0)},${location.y.toFixed(0)}) size: ${location.width.toFixed(0)}x${location.height.toFixed(0)}`;
   }
 
-  private copyCellDetail(detail?: CellRenderDetailSnapshot): CellRenderDetailSnapshot | undefined {
-    if (!detail) return undefined;
-    return {
-      ...detail,
-      location: { ...detail.location },
-      steps: detail.steps.map((step) => ({ ...step })),
-    };
-  }
-
-  private mergeStepTotals(
-    target: Map<string, CellRenderSubStepStats> | undefined,
-    detail: CellRenderDetailSnapshot | undefined,
-  ): Map<string, CellRenderSubStepStats> | undefined {
-    if (!detail) return target;
-    const totals = target ?? new Map<string, CellRenderSubStepStats>();
-    for (const step of detail.steps) {
-      const stats = totals.get(step.name) ?? {
-        name: step.name,
-        totalTime: 0,
-        count: 0,
-        maxTime: 0,
-      };
-      stats.totalTime += step.totalTime;
-      stats.count += step.count;
-      stats.maxTime = Math.max(stats.maxTime, step.maxTime);
-      totals.set(step.name, stats);
-    }
-    return totals;
-  }
-
-  private mergeStepTotalsMap(
-    target: Map<string, CellRenderSubStepStats> | undefined,
-    source: Map<string, CellRenderSubStepStats> | undefined,
-  ): Map<string, CellRenderSubStepStats> | undefined {
-    if (!source) return target;
-    const totals = target ?? new Map<string, CellRenderSubStepStats>();
-    for (const step of source.values()) {
-      const stats = totals.get(step.name) ?? {
-        name: step.name,
-        totalTime: 0,
-        count: 0,
-        maxTime: 0,
-      };
-      stats.totalTime += step.totalTime;
-      stats.count += step.count;
-      stats.maxTime = Math.max(stats.maxTime, step.maxTime);
-      totals.set(step.name, stats);
-    }
-    return totals;
-  }
-
-  private copyStepTotals(
-    stepTotals: Map<string, CellRenderSubStepStats> | undefined,
-  ): Map<string, CellRenderSubStepStats> | undefined {
-    if (!stepTotals) return undefined;
-    return new Map(Array.from(stepTotals, ([name, step]) => [name, { ...step }]));
-  }
-
   private copyCellStats(stats: CellRenderStats): CellRenderStats {
     return {
       ...stats,
       maxCell: stats.maxCell ? { ...stats.maxCell } : undefined,
-      maxCellDetail: this.copyCellDetail(stats.maxCellDetail),
-      stepTotals: this.copyStepTotals(stats.stepTotals),
     };
-  }
-
-  private createRenderDetailRecorder(type: string): CellRenderDetailRecorder | undefined {
-    if (!this.performanceEnabled || !Renderer.DETAILED_CELL_TYPES.has(type)) return undefined;
-    return new CellRenderDetailRecorder();
-  }
-
-  private finalizeRenderDetail(
-    recorder: CellRenderDetailRecorder | undefined,
-    type: string,
-    columnKey: string,
-    duration: number,
-    location: CellRenderLocation,
-  ): CellRenderDetailSnapshot | undefined {
-    const threshold =
-      Renderer.DETAILED_CELL_THRESHOLD_MS.get(type) ?? Renderer.SLOW_CELL_DETAIL_THRESHOLD_MS;
-    if (!recorder || duration < threshold) return undefined;
-    return recorder.toSnapshot(
-      type,
-      columnKey,
-      duration,
-      location,
-      Renderer.MAX_DETAIL_STEPS_PER_CELL,
-    );
   }
 
   /**
@@ -3661,7 +3464,7 @@ export class Renderer {
     type: string,
     columnKey: string,
     location: CellRenderLocation | undefined,
-    fn: (trace?: CellRenderDetailRecorder) => void,
+    fn: () => void,
   ): void {
     if (!this.performanceEnabled) {
       fn();
@@ -3669,19 +3472,11 @@ export class Renderer {
     }
 
     const renderLocation = location ?? { x: 0, y: 0, width: 0, height: 0 };
-    const detailRecorder = this.createRenderDetailRecorder(type);
     const start = performance.now();
-    fn(detailRecorder);
+    fn();
     const duration = performance.now() - start;
-    const detail = this.finalizeRenderDetail(
-      detailRecorder,
-      type,
-      columnKey,
-      duration,
-      renderLocation,
-    );
 
-    this.recordRenderTiming(type, columnKey, duration, renderLocation, detail);
+    this.recordRenderTiming(type, columnKey, duration, renderLocation);
   }
 
   /**
@@ -3692,7 +3487,6 @@ export class Renderer {
     columnKey: string,
     duration: number,
     location: CellRenderLocation,
-    detail?: CellRenderDetailSnapshot,
   ): void {
     let byKey = this.currentFrameStats.get(type);
     if (!byKey) {
@@ -3702,11 +3496,9 @@ export class Renderer {
     const frameStats = byKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
     frameStats.totalTime += duration;
     frameStats.count++;
-    frameStats.stepTotals = this.mergeStepTotals(frameStats.stepTotals, detail);
     if (duration > frameStats.maxTime) {
       frameStats.maxTime = duration;
       frameStats.maxCell = { ...location };
-      frameStats.maxCellDetail = this.copyCellDetail(detail);
     }
     byKey.set(columnKey, frameStats);
   }
@@ -3835,7 +3627,6 @@ export class Renderer {
       MaxAt: string;
     };
     const rows: Row[] = [];
-    const detailRows: Array<{ type: string; key: string; detail: CellRenderDetailSnapshot }> = [];
     for (const [type, byKey] of this.performanceStats) {
       const keyEntries = Array.from(byKey.entries())
         .map(([columnKey, stats]) => ({
@@ -3854,52 +3645,11 @@ export class Renderer {
           "Total(ms)": e.totalTime.toFixed(1),
           MaxAt: formatCellLocation(e.maxCell),
         });
-        if (e.maxCellDetail) {
-          detailRows.push({ type, key: e.columnKey, detail: e.maxCellDetail });
-        }
       }
     }
 
     console.group(`🎯 Renderer Performance (Frame ${this.frameCount})`);
     console.table(rows);
-
-    // Output detail for slow cells
-    if (detailRows.length > 0) {
-      console.group("🔍 Slow Cell Details");
-      for (const { type, key, detail } of detailRows) {
-        console.group(`${type}/${key} - ${detail.totalTime.toFixed(3)}ms`);
-        if (detail.branch) {
-          console.log(`Branch: ${detail.branch}`);
-        }
-        // Top 8 steps
-        const topSteps = detail.steps.slice(0, 8);
-        type DetailRow = {
-          Step: string;
-          "Total(ms)": string;
-          Count: number;
-          "Avg(ms)": string;
-          "Max(ms)": string;
-          "%": string;
-        };
-        const detailTableRows: DetailRow[] = [];
-        for (const step of topSteps) {
-          const percent =
-            detail.totalTime > 0 ? ((step.totalTime / detail.totalTime) * 100).toFixed(1) : "0.0";
-          const avg = step.count > 0 ? step.totalTime / step.count : 0;
-          detailTableRows.push({
-            Step: step.name,
-            "Total(ms)": step.totalTime.toFixed(3),
-            Count: step.count,
-            "Avg(ms)": avg.toFixed(3),
-            "Max(ms)": step.maxTime.toFixed(3),
-            "%": percent,
-          });
-        }
-        console.table(detailTableRows);
-        console.groupEnd();
-      }
-      console.groupEnd();
-    }
 
     const lastFrame = this.getLastFrameDiagnostics();
     const rowBandDetails = lastFrame?.rowBandDetails as Map<string, RowBandDetailStats> | undefined;
@@ -3941,30 +3691,6 @@ export class Renderer {
         `(last ${Renderer.MAX_FRAME_HISTORY} max)`,
     ];
 
-    // Helper to format cell detail steps
-    const formatCellDetail = (detail: CellRenderDetailSnapshot, indent: string = "    ") => {
-      const detailLines: string[] = [];
-      if (detail.branch) {
-        detailLines.push(`${indent}Branch: ${detail.branch}`);
-      }
-      // Take top 8 steps
-      const topSteps = detail.steps.slice(0, 8);
-      for (const step of topSteps) {
-        const percent =
-          detail.totalTime > 0 ? ((step.totalTime / detail.totalTime) * 100).toFixed(1) : "0.0";
-        const avg = step.count > 0 ? step.totalTime / step.count : 0;
-        detailLines.push(
-          `${indent}${step.name.padEnd(35)} | ` +
-            `total: ${step.totalTime.toFixed(3).padStart(8)}ms | ` +
-            `count: ${step.count.toString().padStart(3)} | ` +
-            `avg: ${avg.toFixed(3).padStart(7)}ms | ` +
-            `max: ${step.maxTime.toFixed(3).padStart(7)}ms | ` +
-            `${percent.padStart(5)}%`,
-        );
-      }
-      return detailLines;
-    };
-
     const formatRowBandDetails = (
       details: Map<string, RowBandDetailStats> | undefined,
       totalTime: number,
@@ -3996,31 +3722,6 @@ export class Renderer {
         });
     };
 
-    const formatStepTotals = (
-      stepTotals: Map<string, CellRenderSubStepStats> | undefined,
-      totalTime: number,
-      indent = "  ",
-    ) => {
-      if (!stepTotals || stepTotals.size === 0) return [];
-      return Array.from(stepTotals.values())
-        .map((step) => ({
-          ...step,
-          avg: step.count > 0 ? step.totalTime / step.count : 0,
-          percentage: totalTime > 0 ? (step.totalTime / totalTime) * 100 : 0,
-        }))
-        .sort((a, b) => b.totalTime - a.totalTime)
-        .slice(0, 24)
-        .map(
-          (step) =>
-            `${indent}${step.name.padEnd(35)} | ` +
-            `calls: ${step.count.toString().padStart(5)} | ` +
-            `avg: ${step.avg.toFixed(3).padStart(7)}ms | ` +
-            `max: ${step.maxTime.toFixed(3).padStart(7)}ms | ` +
-            `total: ${step.totalTime.toFixed(2).padStart(8)}ms | ` +
-            `${step.percentage.toFixed(1).padStart(5)}%`,
-        );
-    };
-
     const frameCount = this.frameCount || 1;
 
     // 检查是否有数据
@@ -4047,7 +3748,6 @@ export class Renderer {
               avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
               maxTime: stats.maxTime,
               maxCell: stats.maxCell,
-              maxCellDetail: stats.maxCellDetail,
             }))
             .sort((a, b) => b.totalTime - a.totalTime);
           const totalTime = keyEntries.reduce((s, e) => s + e.totalTime, 0);
@@ -4067,10 +3767,6 @@ export class Renderer {
               `total: ${e.totalTime.toFixed(2).padStart(6)}ms | ` +
               `maxAt: ${this.formatCellLocation(e.maxCell)}`,
           );
-          // Add detail lines if available
-          if (e.maxCellDetail) {
-            lines.push(...formatCellDetail(e.maxCellDetail, "    "));
-          }
         }
         const typeAvg = bucket.totalCount > 0 ? bucket.totalTime / bucket.totalCount : 0;
         let typeMax = 0;
@@ -4120,7 +3816,6 @@ export class Renderer {
             totalTime: stats.totalTime,
             maxTime: stats.maxTime,
             maxCell: stats.maxCell,
-            stepTotals: stats.stepTotals,
             avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
             callsPerFrame: Math.round(stats.count / frameCount),
             avgFrameTime: stats.totalTime / frameCount,
@@ -4158,18 +3853,6 @@ export class Renderer {
     }
 
     const avgFrameTotal = typeBuckets.reduce((sum, b) => sum + b.totalTime / frameCount, 0);
-
-    const jsxBucket = typeBuckets.find((bucket) => bucket.type === "jsx");
-    const jsxStepEntries = jsxBucket?.keyEntries.filter((entry) => entry.stepTotals?.size);
-    if (jsxStepEntries && jsxStepEntries.length > 0) {
-      lines.push("");
-      lines.push("=== JSX STEP TOTALS (all frames) ===");
-      lines.push("-".repeat(70));
-      for (const entry of jsxStepEntries) {
-        lines.push(`[${entry.columnKey}]`);
-        lines.push(...formatStepTotals(entry.stepTotals, entry.totalTime, "  "));
-      }
-    }
 
     lines.push("");
     lines.push(`Average frame render time: ${avgFrameTotal.toFixed(2)}ms`);

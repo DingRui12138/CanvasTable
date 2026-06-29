@@ -12,20 +12,12 @@ import {
   CellRendererContext,
   CellRenderResult,
   ImageRuntime,
-  CellRenderTrace,
 } from "./CellRenderer";
 
 const STANDARD_ROW_HEIGHT = 32;
 
 export class ImageRenderer extends BaseCellRenderer {
   readonly type: CellType = "image";
-
-  private traceStep<T>(trace: CellRenderTrace | undefined, name: string, fn: () => T): T {
-    if (trace) {
-      return trace.measure(name, fn);
-    }
-    return fn();
-  }
 
   render(context: CellRendererContext): CellRenderResult {
     const {
@@ -40,7 +32,6 @@ export class ImageRenderer extends BaseCellRenderer {
       hoveredImageIndex,
       rowIndex,
       imageRuntime,
-      renderTrace,
     } = context;
 
     const config = value as ImageConfig;
@@ -59,7 +50,6 @@ export class ImageRenderer extends BaseCellRenderer {
         isHovered,
         hoveredImageIndex,
         imageRuntime,
-        renderTrace,
       );
       return { type: "image", config };
     }
@@ -70,167 +60,125 @@ export class ImageRenderer extends BaseCellRenderer {
     }
     const src = config.src;
 
-    const layout = this.traceStep(renderTrace, "image.layout", () => {
-      const padding = 4;
-      const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
-      const configWidth = config.width ?? 32;
-      const configHeight = config.height ?? 32;
-      const imgWidth = Math.min(configWidth, maxImgSize);
-      const imgHeight = Math.min(configHeight, maxImgSize);
-      const borderRadius = config.circle
-        ? Math.min(imgWidth, imgHeight) / 2
-        : (config.borderRadius ?? 0);
-      const imgX = x + (cellWidth - imgWidth) / 2;
-      const imgY = y + (cellHeight - imgHeight) / 2;
-      return { imgWidth, imgHeight, borderRadius, imgX, imgY };
-    });
-    const { imgWidth, imgHeight, borderRadius, imgX, imgY } = layout;
+    const padding = 4;
+    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
+    const configWidth = config.width ?? 32;
+    const configHeight = config.height ?? 32;
+    const imgWidth = Math.min(configWidth, maxImgSize);
+    const imgHeight = Math.min(configHeight, maxImgSize);
+    const borderRadius = config.circle
+      ? Math.min(imgWidth, imgHeight) / 2
+      : (config.borderRadius ?? 0);
+    const imgX = x + (cellWidth - imgWidth) / 2;
+    const imgY = y + (cellHeight - imgHeight) / 2;
 
     // Placeholder background
-    this.traceStep(renderTrace, "image.placeholder.background", () => {
-      ctx.fillStyle = theme.colors.image.placeholderBg;
+    ctx.fillStyle = theme.colors.image.placeholderBg;
+    ctx.beginPath();
+    if (borderRadius > 0) {
+      ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
+    } else {
+      ctx.rect(imgX, imgY, imgWidth, imgHeight);
+    }
+    ctx.fill();
+
+    // Lazy load gating
+    const lazyEnabled = config.lazy !== false;
+    const threshold = config.lazyThreshold ?? 200;
+    const inLazyRange = !(
+      lazyEnabled &&
+      rowIndex !== undefined &&
+      rowIndex >= 0 &&
+      imageRuntime &&
+      !imageRuntime.isInLazyLoadRange(rowIndex, threshold)
+    );
+    if (!inLazyRange) {
+      this.renderImagePlaceholder(
+        ctx,
+        theme,
+        imgX,
+        imgY,
+        imgWidth,
+        imgHeight,
+        borderRadius,
+        config.placeholder,
+        imageRuntime,
+      );
+      if (isHovered && config.hoverable !== false) {
+        this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
+      }
+      return { type: "image", config };
+    }
+
+    if (imageRuntime?.isFailed(src)) {
+      this.renderImageError(
+        ctx,
+        theme,
+        imgX,
+        imgY,
+        imgWidth,
+        imgHeight,
+        borderRadius,
+        config.errorImage,
+        imageRuntime,
+      );
+      return { type: "image", config };
+    }
+
+    const cachedImage = imageRuntime?.get(src, Math.max(imgWidth, imgHeight)) ?? null;
+
+    if (cachedImage) {
+      ctx.save();
       ctx.beginPath();
       if (borderRadius > 0) {
         ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
       } else {
         ctx.rect(imgX, imgY, imgWidth, imgHeight);
       }
-      ctx.fill();
-    });
-
-    // Lazy load gating
-    const lazyEnabled = config.lazy !== false;
-    const threshold = config.lazyThreshold ?? 200;
-    const inLazyRange = this.traceStep(
-      renderTrace,
-      "image.lazy.check",
-      () =>
-        !(
-          lazyEnabled &&
-          rowIndex !== undefined &&
-          rowIndex >= 0 &&
-          imageRuntime &&
-          !imageRuntime.isInLazyLoadRange(rowIndex, threshold)
-        ),
-    );
-    if (!inLazyRange) {
-      renderTrace?.markBranch("single.lazy-placeholder");
-      this.traceStep(renderTrace, "image.placeholder", () =>
-        this.renderImagePlaceholder(
-          ctx,
-          theme,
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-          imageRuntime,
-        ),
+      ctx.clip();
+      this.drawImageWithFit(
+        ctx,
+        cachedImage,
+        imgX,
+        imgY,
+        imgWidth,
+        imgHeight,
+        config.fit ?? "cover",
       );
-      if (isHovered && config.hoverable !== false) {
-        this.traceStep(renderTrace, "image.hover", () =>
-          this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius),
-        );
-      }
-      return { type: "image", config };
-    }
-
-    const isFailed = this.traceStep(renderTrace, "image.failed.check", () =>
-      imageRuntime?.isFailed(src),
-    );
-    if (isFailed) {
-      renderTrace?.markBranch("single.error");
-      this.traceStep(renderTrace, "image.error", () =>
-        this.renderImageError(
-          ctx,
-          theme,
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.errorImage,
-          imageRuntime,
-        ),
-      );
-      return { type: "image", config };
-    }
-
-    const cachedImage = this.traceStep(
-      renderTrace,
-      "image.cache.get",
-      () => imageRuntime?.get(src, Math.max(imgWidth, imgHeight)) ?? null,
-    );
-
-    if (cachedImage) {
-      renderTrace?.markBranch("single.cached");
-      this.traceStep(renderTrace, "image.draw.cached", () => {
-        ctx.save();
-        ctx.beginPath();
-        if (borderRadius > 0) {
-          ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
-        } else {
-          ctx.rect(imgX, imgY, imgWidth, imgHeight);
-        }
-        ctx.clip();
-        this.drawImageWithFit(
-          ctx,
-          cachedImage,
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          config.fit ?? "cover",
-        );
-        ctx.restore();
-      });
-      this.traceStep(renderTrace, "image.visible.collect", () => imageRuntime?.collectVisible(src));
-    } else if (
-      imageRuntime &&
-      !this.traceStep(renderTrace, "image.loading.check", () => imageRuntime.isLoading(src))
-    ) {
-      renderTrace?.markBranch("single.request-load");
-      this.traceStep(renderTrace, "image.visible.collect", () => imageRuntime.collectVisible(src));
-      this.traceStep(renderTrace, "image.load.request", () =>
-        imageRuntime.load(src, Math.max(imgWidth, imgHeight)),
-      );
-      this.traceStep(renderTrace, "image.placeholder", () =>
-        this.renderImagePlaceholder(
-          ctx,
-          theme,
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-          imageRuntime,
-        ),
+      ctx.restore();
+      imageRuntime?.collectVisible(src);
+    } else if (imageRuntime && !imageRuntime.isLoading(src)) {
+      imageRuntime.collectVisible(src);
+      imageRuntime.load(src, Math.max(imgWidth, imgHeight));
+      this.renderImagePlaceholder(
+        ctx,
+        theme,
+        imgX,
+        imgY,
+        imgWidth,
+        imgHeight,
+        borderRadius,
+        config.placeholder,
+        imageRuntime,
       );
     } else {
-      renderTrace?.markBranch("single.loading-placeholder");
       // Loading in progress — keep marking visible so it isn't cancelled
-      this.traceStep(renderTrace, "image.visible.collect", () => imageRuntime?.collectVisible(src));
-      this.traceStep(renderTrace, "image.placeholder", () =>
-        this.renderImagePlaceholder(
-          ctx,
-          theme,
-          imgX,
-          imgY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          config.placeholder,
-          imageRuntime,
-        ),
+      imageRuntime?.collectVisible(src);
+      this.renderImagePlaceholder(
+        ctx,
+        theme,
+        imgX,
+        imgY,
+        imgWidth,
+        imgHeight,
+        borderRadius,
+        config.placeholder,
+        imageRuntime,
       );
     }
 
     if (isHovered && config.hoverable !== false) {
-      this.traceStep(renderTrace, "image.hover", () =>
-        this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius),
-      );
+      this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
     }
 
     return { type: "image", config };
@@ -248,14 +196,10 @@ export class ImageRenderer extends BaseCellRenderer {
     isHovered: boolean | undefined,
     hoveredImageIndex: number | undefined,
     imageRuntime: ImageRuntime | undefined,
-    renderTrace: CellRenderTrace | undefined,
   ): void {
     const images = config.images!;
-    renderTrace?.markBranch("multi.mixed");
     const padding = 4;
-    const maxImgSize = this.traceStep(renderTrace, "image.multi.layout", () =>
-      this.getMaxImageSize(cellWidth, cellHeight, padding, config),
-    );
+    const maxImgSize = this.getMaxImageSize(cellWidth, cellHeight, padding, config);
     const configWidth = config.width ?? 32;
     const configHeight = config.height ?? 32;
     const imgWidth = Math.min(configWidth, maxImgSize);
@@ -308,138 +252,103 @@ export class ImageRenderer extends BaseCellRenderer {
       const imgY = startY + row * (imgHeight + gap);
       const isCurrentHovered = !!isHovered && config.hoverable !== false && hoveredImageIndex === i;
 
-      this.traceStep(renderTrace, "image.multi.item.background", () => {
-        ctx.fillStyle = theme.colors.image.placeholderBg;
+      ctx.fillStyle = theme.colors.image.placeholderBg;
+      ctx.beginPath();
+      if (borderRadius > 0) {
+        ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
+      } else {
+        ctx.rect(imgX, imgY, imgWidth, imgHeight);
+      }
+      ctx.fill();
+
+      if (!inLazyRange) {
+        this.renderImagePlaceholder(
+          ctx,
+          theme,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          borderRadius,
+          config.placeholder,
+          imageRuntime,
+        );
+        if (isCurrentHovered) {
+          this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
+        }
+        continue;
+      }
+
+      if (imageRuntime?.isFailed(src)) {
+        this.renderImageError(
+          ctx,
+          theme,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          borderRadius,
+          config.errorImage,
+          imageRuntime,
+        );
+        if (isCurrentHovered) {
+          this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
+        }
+        continue;
+      }
+
+      const cachedImage = imageRuntime?.get(src, Math.max(imgWidth, imgHeight)) ?? null;
+      if (cachedImage) {
+        ctx.save();
         ctx.beginPath();
         if (borderRadius > 0) {
           ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
         } else {
           ctx.rect(imgX, imgY, imgWidth, imgHeight);
         }
-        ctx.fill();
-      });
-
-      if (!inLazyRange) {
-        this.traceStep(renderTrace, "image.multi.placeholder", () =>
-          this.renderImagePlaceholder(
-            ctx,
-            theme,
-            imgX,
-            imgY,
-            imgWidth,
-            imgHeight,
-            borderRadius,
-            config.placeholder,
-            imageRuntime,
-          ),
+        ctx.clip();
+        this.drawImageWithFit(
+          ctx,
+          cachedImage,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          config.fit ?? "cover",
         );
-        if (isCurrentHovered) {
-          this.traceStep(renderTrace, "image.multi.hover", () =>
-            this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius),
-          );
-        }
-        continue;
-      }
-
-      if (
-        this.traceStep(renderTrace, "image.multi.failed.check", () => imageRuntime?.isFailed(src))
-      ) {
-        this.traceStep(renderTrace, "image.multi.error", () =>
-          this.renderImageError(
-            ctx,
-            theme,
-            imgX,
-            imgY,
-            imgWidth,
-            imgHeight,
-            borderRadius,
-            config.errorImage,
-            imageRuntime,
-          ),
-        );
-        if (isCurrentHovered) {
-          this.traceStep(renderTrace, "image.multi.hover", () =>
-            this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius),
-          );
-        }
-        continue;
-      }
-
-      const cachedImage = this.traceStep(
-        renderTrace,
-        "image.multi.cache.get",
-        () => imageRuntime?.get(src, Math.max(imgWidth, imgHeight)) ?? null,
-      );
-      if (cachedImage) {
-        this.traceStep(renderTrace, "image.multi.draw.cached", () => {
-          ctx.save();
-          ctx.beginPath();
-          if (borderRadius > 0) {
-            ctx.roundRect(imgX, imgY, imgWidth, imgHeight, borderRadius);
-          } else {
-            ctx.rect(imgX, imgY, imgWidth, imgHeight);
-          }
-          ctx.clip();
-          this.drawImageWithFit(
-            ctx,
-            cachedImage,
-            imgX,
-            imgY,
-            imgWidth,
-            imgHeight,
-            config.fit ?? "cover",
-          );
-          ctx.restore();
-        });
-        this.traceStep(renderTrace, "image.multi.visible.collect", () =>
-          imageRuntime?.collectVisible(src),
-        );
-      } else if (
-        imageRuntime &&
-        !this.traceStep(renderTrace, "image.multi.loading.check", () => imageRuntime.isLoading(src))
-      ) {
-        this.traceStep(renderTrace, "image.multi.visible.collect", () =>
-          imageRuntime.collectVisible(src),
-        );
-        this.traceStep(renderTrace, "image.multi.load.request", () =>
-          imageRuntime.load(src, Math.max(imgWidth, imgHeight)),
-        );
-        this.traceStep(renderTrace, "image.multi.placeholder", () =>
-          this.renderImagePlaceholder(
-            ctx,
-            theme,
-            imgX,
-            imgY,
-            imgWidth,
-            imgHeight,
-            borderRadius,
-            config.placeholder,
-            imageRuntime,
-          ),
+        ctx.restore();
+        imageRuntime?.collectVisible(src);
+      } else if (imageRuntime && !imageRuntime.isLoading(src)) {
+        imageRuntime.collectVisible(src);
+        imageRuntime.load(src, Math.max(imgWidth, imgHeight));
+        this.renderImagePlaceholder(
+          ctx,
+          theme,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          borderRadius,
+          config.placeholder,
+          imageRuntime,
         );
       } else {
-        this.traceStep(renderTrace, "image.multi.visible.collect", () =>
-          imageRuntime?.collectVisible(src),
-        );
-        this.traceStep(renderTrace, "image.multi.placeholder", () =>
-          this.renderImagePlaceholder(
-            ctx,
-            theme,
-            imgX,
-            imgY,
-            imgWidth,
-            imgHeight,
-            borderRadius,
-            config.placeholder,
-            imageRuntime,
-          ),
+        imageRuntime?.collectVisible(src);
+        this.renderImagePlaceholder(
+          ctx,
+          theme,
+          imgX,
+          imgY,
+          imgWidth,
+          imgHeight,
+          borderRadius,
+          config.placeholder,
+          imageRuntime,
         );
       }
 
       if (isCurrentHovered) {
-        this.traceStep(renderTrace, "image.multi.hover", () =>
-          this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius),
-        );
+        this.renderImageHover(ctx, theme, imgX, imgY, imgWidth, imgHeight, borderRadius);
       }
     }
 
@@ -450,18 +359,16 @@ export class ImageRenderer extends BaseCellRenderer {
       const countY = startY + lastRow * (imgHeight + gap);
       const isMoreHovered =
         !!isHovered && config.hoverable !== false && hoveredImageIndex === displayCount;
-      this.traceStep(renderTrace, "image.multi.more-count", () =>
-        this.renderMoreCount(
-          ctx,
-          theme,
-          countX,
-          countY,
-          imgWidth,
-          imgHeight,
-          borderRadius,
-          moreCount,
-          isMoreHovered,
-        ),
+      this.renderMoreCount(
+        ctx,
+        theme,
+        countX,
+        countY,
+        imgWidth,
+        imgHeight,
+        borderRadius,
+        moreCount,
+        isMoreHovered,
       );
     }
   }

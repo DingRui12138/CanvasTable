@@ -10,7 +10,6 @@ import type {
   CTRenderContext,
 } from "./types";
 import type { TableTheme } from "../../types/index";
-import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { LayoutEngine } from "./LayoutEngine";
 
 /**
@@ -28,7 +27,6 @@ export class CTRenderer {
   private ctx: CanvasRenderingContext2D;
   private layoutEngine: LayoutEngine;
   private theme: TableTheme;
-  private trace?: CellRenderTrace;
   private renderContext?: CTRenderContext;
   private layouts: CTLayoutInfo[] | undefined;
   private layoutTree: CTLayoutNode | undefined;
@@ -37,18 +35,12 @@ export class CTRenderer {
     ctx: CanvasRenderingContext2D,
     layoutEngine: LayoutEngine,
     theme: TableTheme,
-    trace?: CellRenderTrace,
     renderContext?: CTRenderContext,
   ) {
     this.ctx = ctx;
     this.layoutEngine = layoutEngine;
     this.theme = theme;
-    this.trace = trace;
     this.renderContext = renderContext;
-  }
-
-  private traceStep<T>(name: string, fn: () => T): T {
-    return this.trace ? this.trace.measure(name, fn) : fn();
   }
 
   render(
@@ -58,24 +50,20 @@ export class CTRenderer {
     parentSize?: { width: number; height: number },
     layoutCacheKey?: string | null,
   ): void {
-    const layoutTree = this.traceStep("jsx.ctRenderer.layoutTree", () =>
-      this.layoutEngine.layoutTree(root, x, y, parentSize, layoutCacheKey),
-    );
+    const layoutTree = this.layoutEngine.layoutTree(root, x, y, parentSize, layoutCacheKey);
     this.layoutTree = layoutTree;
     this.layouts = undefined;
-    this.traceStep("jsx.ctRenderer.ctx.save", () => this.ctx.save());
+    this.ctx.save();
     try {
       this.renderLayoutNode(layoutTree);
     } finally {
-      this.traceStep("jsx.ctRenderer.ctx.restore", () => this.ctx.restore());
+      this.ctx.restore();
     }
   }
 
   getLayouts(): CTLayoutInfo[] {
     if (!this.layouts && this.layoutTree) {
-      this.layouts = this.traceStep("jsx.ctRenderer.flattenLayoutTree", () =>
-        this.flattenLayoutTree(this.layoutTree!),
-      );
+      this.layouts = this.flattenLayoutTree(this.layoutTree!);
     }
     return this.layouts ?? [];
   }
@@ -90,10 +78,6 @@ export class CTRenderer {
 
   setRenderContext(renderContext?: CTRenderContext): void {
     this.renderContext = renderContext;
-  }
-
-  setTrace(trace?: CellRenderTrace): void {
-    this.trace = trace;
   }
 
   private flattenLayoutTree(node: CTLayoutNode, offsetX = 0, offsetY = 0): CTLayoutInfo[] {
@@ -138,16 +122,16 @@ export class CTRenderer {
         this.renderBoxNode(node, currentElement, x, y, offsetX, offsetY);
         break;
       case "CTCircle":
-        this.traceStep("jsx.ctRenderer.circle", () => this.renderCircle(currentElement, x, y));
+        this.renderCircle(currentElement, x, y);
         break;
       case "CTText":
         this.renderText(currentElement, x, y, node.width);
         break;
       case "CTImage":
-        this.traceStep("jsx.ctRenderer.image", () => this.renderImage(currentElement, x, y));
+        this.renderImage(currentElement, x, y);
         break;
       case "CTLine":
-        this.traceStep("jsx.ctRenderer.line", () => this.renderLine(currentElement, x, y));
+        this.renderLine(currentElement, x, y);
         break;
       case "CTTooltip":
       case "CTDropdown":
@@ -497,25 +481,21 @@ export class CTRenderer {
     const textDecoration = props.textDecoration ?? "none";
     const letterSpacing = props.letterSpacing ?? 0;
 
-    this.traceStep("jsx.ctRenderer.text.setup", () => {
-      this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
-      this.ctx.fillStyle = color;
-    });
+    this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+    this.ctx.fillStyle = color;
 
     // ─── Text Alignment ───
     let textX = x;
-    this.traceStep("jsx.ctRenderer.text.align", () => {
-      if (textAlign === "center") {
-        textX = x + layoutWidth / 2;
-        this.ctx.textAlign = "center";
-      } else if (textAlign === "right") {
-        textX = x + layoutWidth;
-        this.ctx.textAlign = "right";
-      } else {
-        this.ctx.textAlign = "left";
-      }
-      this.ctx.textBaseline = "middle";
-    });
+    if (textAlign === "center") {
+      textX = x + layoutWidth / 2;
+      this.ctx.textAlign = "center";
+    } else if (textAlign === "right") {
+      textX = x + layoutWidth;
+      this.ctx.textAlign = "right";
+    } else {
+      this.ctx.textAlign = "left";
+    }
+    this.ctx.textBaseline = "middle";
     const textY = y + lineHeight / 2;
 
     // ─── Letter Spacing ───
@@ -550,24 +530,20 @@ export class CTRenderer {
 
       for (let i = 0; i < props.text.length; i++) {
         const ch = props.text[i]!;
-        this.traceStep("jsx.ctRenderer.text.fillChar", () => {
-          if (props.maxWidth) {
-            this.ctx.fillText(ch, charX, textY, props.maxWidth);
-          } else {
-            this.ctx.fillText(ch, charX, textY);
-          }
-        });
+        if (props.maxWidth) {
+          this.ctx.fillText(ch, charX, textY, props.maxWidth);
+        } else {
+          this.ctx.fillText(ch, charX, textY);
+        }
         const charWidth = this.measureCharWidth(ch, fontSize, fontFamily, fontWeight, fontStyle);
         charX += charWidth + letterSpacing;
       }
     } else {
-      this.traceStep("jsx.ctRenderer.text.fillText", () => {
-        if (props.maxWidth) {
-          this.ctx.fillText(props.text, textX, textY, props.maxWidth);
-        } else {
-          this.ctx.fillText(props.text, textX, textY);
-        }
-      });
+      if (props.maxWidth) {
+        this.ctx.fillText(props.text, textX, textY, props.maxWidth);
+      } else {
+        this.ctx.fillText(props.text, textX, textY);
+      }
     }
 
     // ─── Text Decoration ───

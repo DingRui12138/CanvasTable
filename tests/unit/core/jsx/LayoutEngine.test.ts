@@ -284,58 +284,44 @@ describe('LayoutEngine', () => {
       expect(secondNode.currentElement?.props.onChange).not.toBe(firstOnChange);
     });
 
-    it('uses explicit cache keys without building tree signatures', () => {
-      const measuredSteps: string[] = [];
-      const trace = {
-        measure<T>(name: string, fn: () => T): T {
-          measuredSteps.push(name);
-          return fn();
-        },
-        add() {},
-        markBranch() {},
-      };
-      const tracedEngine = new LayoutEngine(new MeasurementEngine(mockCtx), trace);
+    it('uses explicit cache keys for stable cached layout offsets', () => {
       const tree = createCTElement(
         'CTBox',
         { display: 'flex', width: 100, height: 40, gap: 4 },
         createCTElement('CTBox', { width: 20, height: 20 }),
       );
 
-      tracedEngine.layoutTree(tree, 0, 0, { width: 100, height: 40 }, 'stable-status-layout');
-      tracedEngine.layoutTree(tree, 10, 10, { width: 100, height: 40 }, 'stable-status-layout');
+      const firstNode = engine.layoutTree(tree, 0, 0, { width: 100, height: 40 }, 'stable-status-layout');
+      const secondNode = engine.layoutTree(tree, 10, 10, { width: 100, height: 40 }, 'stable-status-layout');
 
-      expect(measuredSteps).toContain('jsx.layout.explicitCacheKey');
-      expect(measuredSteps).not.toContain('jsx.layout.cacheKey');
-      expect(measuredSteps).toContain('jsx.layout.cacheHit');
+      expect(firstNode.x).toBe(0);
+      expect(firstNode.y).toBe(0);
+      expect(secondNode.x).toBe(10);
+      expect(secondNode.y).toBe(10);
+      expect(secondNode.children[0]?.x).toBe(0);
+      expect(secondNode.children[0]?.y).toBe(0);
+      expect(secondNode.offsetX).toBe(10);
+      expect(secondNode.offsetY).toBe(10);
     });
 
-    it('traces layout cache key, lookup, clone, layout, and write phases', () => {
-      const measuredSteps: string[] = [];
-      const trace = {
-        measure<T>(name: string, fn: () => T): T {
-          measuredSteps.push(name);
-          return fn();
-        },
-        add() {},
-        markBranch() {},
-      };
-      const tracedEngine = new LayoutEngine(new MeasurementEngine(mockCtx), trace);
+    it('reuses relative layout cache with updated offsets', () => {
       const tree = createCTElement(
         'CTBox',
         { display: 'flex', width: 100, height: 40, gap: 4 },
         createCTElement('CTBox', { width: 20, height: 20 }),
       );
 
-      tracedEngine.layoutTree(tree, 0, 0, { width: 100, height: 40 });
-      tracedEngine.layoutTree(tree, 10, 10, { width: 100, height: 40 });
+      const firstNode = engine.layoutTree(tree, 0, 0, { width: 100, height: 40 });
+      const secondNode = engine.layoutTree(tree, 10, 10, { width: 100, height: 40 });
 
-      expect(measuredSteps).toEqual(expect.arrayContaining([
-        'jsx.layout.cacheKey',
-        'jsx.layout.cacheLookup',
-        'jsx.layout.layoutNode.root',
-        'jsx.layout.cacheWrite',
-        'jsx.layout.cacheHit',
-      ]));
+      expect(firstNode.x).toBe(0);
+      expect(firstNode.y).toBe(0);
+      expect(secondNode.x).toBe(10);
+      expect(secondNode.y).toBe(10);
+      expect(secondNode.children[0]?.x).toBe(0);
+      expect(secondNode.children[0]?.y).toBe(0);
+      expect(secondNode.offsetX).toBe(10);
+      expect(secondNode.offsetY).toBe(10);
     });
 
     it('handles leaf elements without children', () => {

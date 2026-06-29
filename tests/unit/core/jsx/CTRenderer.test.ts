@@ -85,32 +85,15 @@ describe('CTRenderer', () => {
   });
 
   it('defers layout flattening until layouts are requested', () => {
-    const measuredSteps: string[] = [];
-    const trace = {
-      measure<T>(name: string, fn: () => T): T {
-        measuredSteps.push(name);
-        return fn();
-      },
-      add() {},
-      markBranch() {},
-    };
-    const measurementEngine = new MeasurementEngine(mockCtx);
-    const layoutEngine = new LayoutEngine(measurementEngine, trace);
-    const tracedRenderer = new CTRenderer(mockCtx, layoutEngine, theme, trace);
     const tree = createCTElement(
       'CTBox',
       { display: 'flex', width: 100, height: 40 },
       createCTElement('CTText', { text: 'hello' }),
     );
 
-    tracedRenderer.render(tree, 0, 0, { width: 100, height: 40 });
+    renderer.render(tree, 0, 0, { width: 100, height: 40 });
 
-    expect(measuredSteps).not.toContain('jsx.ctRenderer.flattenLayoutTree');
-
-    const layouts = tracedRenderer.getLayouts();
-
-    expect(layouts.length).toBeGreaterThan(0);
-    expect(measuredSteps).toContain('jsx.ctRenderer.flattenLayoutTree');
+    expect(renderer.getLayouts().length).toBeGreaterThan(0);
   });
 
   it('applies cache-hit offsets to nested clipped children', () => {
@@ -141,20 +124,8 @@ describe('CTRenderer', () => {
   });
 
   it('renders cache hits without cloning while rebinding interactive props', () => {
-    const measuredSteps: string[] = [];
-    const trace = {
-      measure<T>(name: string, fn: () => T): T {
-        measuredSteps.push(name);
-        return fn();
-      },
-      add() {},
-      markBranch() {},
-    };
-    const measurementEngine = new MeasurementEngine(mockCtx);
-    const layoutEngine = new LayoutEngine(measurementEngine, trace);
-    const tracedRenderer = new CTRenderer(mockCtx, layoutEngine, theme, trace);
     const regions: CTInteractiveRegion[] = [];
-    tracedRenderer.setRenderContext({
+    renderer.setRenderContext({
       ctx: mockCtx,
       theme,
       collectInteractiveRegion: (region) => regions.push(region),
@@ -165,8 +136,7 @@ describe('CTRenderer', () => {
       { config: { options: [] }, onChange: firstOnChange },
       createCTElement('CTBox', { width: 20, height: 20 }),
     );
-    tracedRenderer.render(firstTree, 0, 0, { width: 100, height: 40 }, 'stable-dropdown');
-    measuredSteps.length = 0;
+    renderer.render(firstTree, 0, 0, { width: 100, height: 40 }, 'stable-dropdown');
 
     const secondOnChange = () => undefined;
     const secondTree = createCTElement(
@@ -174,10 +144,8 @@ describe('CTRenderer', () => {
       { config: { options: [] }, onChange: secondOnChange },
       createCTElement('CTBox', { width: 20, height: 20 }),
     );
-    tracedRenderer.render(secondTree, 50, 30, { width: 100, height: 40 }, 'stable-dropdown');
+    renderer.render(secondTree, 50, 30, { width: 100, height: 40 }, 'stable-dropdown');
 
-    expect(measuredSteps).toContain('jsx.layout.cacheHit');
-    expect(measuredSteps).not.toContain('jsx.layout.cacheClone');
     expect(regions.at(-1)?.rect).toMatchObject({ x: 50, y: 30, width: 20, height: 20 });
     expect(regions.at(-1)?.props.onChange).toBe(secondOnChange);
     expect(regions.at(-1)?.props.onChange).not.toBe(firstOnChange);

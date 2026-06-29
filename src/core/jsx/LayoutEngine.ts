@@ -1,6 +1,5 @@
 // src/core/jsx/LayoutEngine.ts
 import type { CTElement, CTLayoutInfo, CTLayoutNode, CTBoxProps } from "./types";
-import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { MeasurementEngine } from "./MeasurementEngine";
 
 /**
@@ -36,24 +35,14 @@ const RELATIVE_TREE_CACHE_MAX = 500;
 
 export class LayoutEngine {
   private measurementEngine: MeasurementEngine;
-  private trace?: CellRenderTrace;
   private layoutResults: CTLayoutInfo[] = [];
   /** 当前根元素的父容器尺寸（通常是单元格尺寸），用于解析根元素百分比 */
   private rootParentSize: { width: number; height: number } | undefined;
   /** 单次 layout/layoutTree 调用内的 measureChildSize 缓存 */
   private measureCache: Map<CTElement, MeasureCacheEntry[]> = new Map();
 
-  constructor(measurementEngine: MeasurementEngine, trace?: CellRenderTrace) {
+  constructor(measurementEngine: MeasurementEngine) {
     this.measurementEngine = measurementEngine;
-    this.trace = trace;
-  }
-
-  setTrace(trace?: CellRenderTrace): void {
-    this.trace = trace;
-  }
-
-  private traceStep<T>(name: string, fn: () => T): T {
-    return this.trace ? this.trace.measure(name, fn) : fn();
   }
 
   /**
@@ -92,18 +81,11 @@ export class LayoutEngine {
   ): CTLayoutNode {
     // 1) 尝试跨单元格缓存（基于 0,0 的相对布局）
     const cacheKey = explicitCacheKey
-      ? this.traceStep("jsx.layout.explicitCacheKey", () =>
-          this.buildExplicitCacheKey(explicitCacheKey, parentSize),
-        )
-      : this.traceStep("jsx.layout.cacheKey", () => this.buildRelativeCacheKey(root, parentSize));
+      ? this.buildExplicitCacheKey(explicitCacheKey, parentSize)
+      : this.buildRelativeCacheKey(root, parentSize);
     if (cacheKey !== null) {
-      const cached = this.traceStep("jsx.layout.cacheLookup", () =>
-        RELATIVE_TREE_CACHE.get(cacheKey),
-      );
+      const cached = RELATIVE_TREE_CACHE.get(cacheKey);
       if (cached) {
-        if (this.trace) {
-          this.trace.measure("jsx.layout.cacheHit", () => undefined);
-        }
         // LRU 行为：最近命中放回末尾
         RELATIVE_TREE_CACHE.delete(cacheKey);
         RELATIVE_TREE_CACHE.set(cacheKey, cached);
@@ -120,12 +102,10 @@ export class LayoutEngine {
     let node: CTLayoutNode;
     try {
       // 2) 计算相对布局（startX/startY = 0），便于缓存
-      const relative = this.traceStep("jsx.layout.layoutNode.root", () =>
-        this.layoutNode(root, 0, 0, parentSize),
-      );
+      const relative = this.layoutNode(root, 0, 0, parentSize);
       // 3) 写入缓存（如果可缓存）
       if (cacheKey !== null) {
-        this.traceStep("jsx.layout.cacheWrite", () => this.cacheRelativeTree(cacheKey, relative));
+        this.cacheRelativeTree(cacheKey, relative);
       }
       // 4) 偏移到目标位置
       node =
@@ -444,9 +424,7 @@ export class LayoutEngine {
       groupHeight = resolved.height;
     } else {
       // 需要内容尺寸 fallback：先测量子元素
-      const tempSizes: CTLayoutInfo[] = this.traceStep("jsx.layout.measureTempChildren", () =>
-        children.map((child) => this.measureChildSize(child)),
-      );
+      const tempSizes: CTLayoutInfo[] = children.map((child) => this.measureChildSize(child));
       const contentWidth = this.calculateContentSize(tempSizes, props);
       const contentHeight = this.calculateContentHeight(tempSizes, props);
       const fallbackW = contentWidth + padding.left + padding.right;
@@ -461,8 +439,8 @@ export class LayoutEngine {
       width: groupWidth - padding.left - padding.right,
       height: groupHeight - padding.top - padding.bottom,
     };
-    const childSizes: CTLayoutInfo[] = this.traceStep("jsx.layout.measureChildren", () =>
-      children.map((child) => this.measureChildSize(child, childContentSize)),
+    const childSizes: CTLayoutInfo[] = children.map((child) =>
+      this.measureChildSize(child, childContentSize),
     );
 
     const contentX = x + padding.left;
@@ -517,9 +495,7 @@ export class LayoutEngine {
       groupHeight = resolved.height;
     } else {
       // 需要内容尺寸 fallback：测量一次子元素（无 parentSize），并通过 measureCache 复用
-      const tempSizes: CTLayoutInfo[] = this.traceStep("jsx.layout.measureTempChildren", () =>
-        children.map((child) => this.measureChildSize(child)),
-      );
+      const tempSizes: CTLayoutInfo[] = children.map((child) => this.measureChildSize(child));
       const contentWidth = this.calculateContentSize(tempSizes, props);
       const contentHeight = this.calculateContentHeight(tempSizes, props);
       const fallbackW = contentWidth + padding.left + padding.right;
@@ -535,9 +511,7 @@ export class LayoutEngine {
     };
 
     // 测量子元素（带 measureCache，重复键命中复用）
-    childSizes = this.traceStep("jsx.layout.measureChildren", () =>
-      children.map((child) => this.measureChildSize(child, childContentSize)),
-    );
+    childSizes = children.map((child) => this.measureChildSize(child, childContentSize));
 
     const contentX = x + padding.left;
     const contentY = y + padding.top;
