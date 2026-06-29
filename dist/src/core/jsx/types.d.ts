@@ -1,5 +1,5 @@
 import type { Column, Row, SelectConfig, SelectOption, TableTheme } from "../../types";
-import type { ImageRuntime, CellRenderTrace } from "../renderers/CellRenderer";
+import type { ImageRuntime } from "../renderers/CellRenderer";
 export interface CTRect {
     x: number;
     y: number;
@@ -30,7 +30,6 @@ export interface JSXRenderContext {
 export interface CTRenderContext {
     ctx: CanvasRenderingContext2D;
     theme: TableTheme;
-    trace?: CellRenderTrace;
     imageRuntime?: ImageRuntime;
     row?: Row;
     column?: Column;

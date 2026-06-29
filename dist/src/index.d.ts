@@ -12,7 +12,7 @@ export { RenderCache, RowIdManager, ColumnIdManager, RowVersionManager } from ".
 export { createCTElement } from "./core/jsx/createCTElement";
 export { LayoutEngine } from "./core/jsx/LayoutEngine";
 export { MeasurementEngine } from "./core/jsx/MeasurementEngine";
-export { CTRenderer } from "./core/jsx/CTRenderer";
+export { CTElementRenderer } from "./core/jsx/CTElementRenderer";
 export { Box, Row, Column, Stack, Text, Circle, Image, Line } from "./core/jsx/components";
 export type { BoxProps, TextProps, CircleProps, ImageProps, LineProps, BorderShortcut, } from "./core/jsx/props";
 export { normalizeBoxProps, getTextFromChildren } from "./core/jsx/props";

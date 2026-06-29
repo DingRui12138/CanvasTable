@@ -22,7 +22,6 @@ export declare class Renderer {
     private imageOverlayRenderer;
     private overlayRenderer;
     private dirtyRegions;
-    private watermarkConfig;
     private expandColumnKey;
     private currentSwitchAnimations;
     private currentButtonHoverStates;
@@ -56,13 +55,8 @@ export declare class Renderer {
     private performanceStats;
     private frameStartTime;
     private frameCount;
-    private lastReportTime;
     private frameHistory;
     private static readonly MAX_FRAME_HISTORY;
-    private static readonly SLOW_CELL_DETAIL_THRESHOLD_MS;
-    private static readonly DETAILED_CELL_THRESHOLD_MS;
-    private static readonly DETAILED_CELL_TYPES;
-    private static readonly MAX_DETAIL_STEPS_PER_CELL;
     private currentFrameStats;
     private currentFramePhases;
     private currentFrameRowBandDetails;
@@ -260,13 +254,7 @@ export declare class Renderer {
      */
     endFrame(visibleRange: VisibleRange, scrollTop: number, scrollLeft: number, columns: Column[]): void;
     private formatCellLocation;
-    private copyCellDetail;
-    private mergeStepTotals;
-    private mergeStepTotalsMap;
-    private copyStepTotals;
     private copyCellStats;
-    private createRenderDetailRecorder;
-    private finalizeRenderDetail;
     /**
      * 测量渲染类型的时间
      */

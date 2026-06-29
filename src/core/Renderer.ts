@@ -55,7 +55,7 @@ import {
   calculateMaxTextRows,
   layoutWrappedText,
 } from "../utils";
-import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
+import { CTElementRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
 import type { CTInteractiveRegion, JSXRenderContext } from "./jsx";
 import { zhCN } from "../locale";
 
@@ -112,7 +112,6 @@ export class Renderer {
   private overlayRenderer: OverlayRenderer;
 
   private dirtyRegions: Array<{ x: number; y: number; width: number; height: number }> = [];
-  private watermarkConfig: WatermarkConfig | null = null;
   private expandColumnKey: string | null = null;
   private currentSwitchAnimations: Map<string, SwitchAnimationState> | undefined;
   private currentButtonHoverStates: Map<string, ButtonHoverState> | undefined;
@@ -134,7 +133,7 @@ export class Renderer {
   private imageRenderContext!: CellRendererContext;
   private jsxMeasurementEngine!: MeasurementEngine;
   private jsxLayoutEngine!: LayoutEngine;
-  private jsxRenderer!: CTRenderer;
+  private jsxRenderer!: CTElementRenderer;
   private jsxInteractiveRegions: CTInteractiveRegion[] = [];
   private jsxUpdateHandlers: JSXUpdateHandlers | null = null;
   private static readonly SHARED_PLACEHOLDER_COLUMN = {
@@ -172,7 +171,6 @@ export class Renderer {
   private performanceStats: Map<string, Map<string, CellRenderStats>> = new Map();
   private frameStartTime: number = 0;
   private frameCount: number = 0;
-  private lastReportTime: number = 0;
 
   // 帧历史记录（保留最近 120 帧）
   private frameHistory: Array<{
@@ -268,7 +266,7 @@ export class Renderer {
     );
     this.jsxMeasurementEngine = new MeasurementEngine(this.ctx);
     this.jsxLayoutEngine = new LayoutEngine(this.jsxMeasurementEngine);
-    this.jsxRenderer = new CTRenderer(this.ctx, this.jsxLayoutEngine, this.theme);
+    this.jsxRenderer = new CTElementRenderer(this.ctx, this.jsxLayoutEngine, this.theme);
 
     // 初始化图片加载队列（使用默认配置）
     this.imageLoadQueue = new ImageLoadQueue();
@@ -360,7 +358,6 @@ export class Renderer {
   }
 
   setWatermarkConfig(config: WatermarkConfig | null): void {
-    this.watermarkConfig = config;
     this.overlayRenderer.setWatermarkConfig(config);
   }
 
@@ -3311,7 +3308,6 @@ export class Renderer {
     this.lastFrameStats.clear();
     this.frameHistory = [];
     this.frameCount = 0;
-    this.lastReportTime = 0;
   }
 
   /**

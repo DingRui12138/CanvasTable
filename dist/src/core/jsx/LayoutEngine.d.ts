@@ -1,17 +1,13 @@
 import type { CTElement, CTLayoutInfo, CTLayoutNode } from "./types";
-import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { MeasurementEngine } from "./MeasurementEngine";
 export declare class LayoutEngine {
     private measurementEngine;
-    private trace?;
     private layoutResults;
     /** 当前根元素的父容器尺寸（通常是单元格尺寸），用于解析根元素百分比 */
     private rootParentSize;
     /** 单次 layout/layoutTree 调用内的 measureChildSize 缓存 */
     private measureCache;
-    constructor(measurementEngine: MeasurementEngine, trace?: CellRenderTrace);
-    setTrace(trace?: CellRenderTrace): void;
-    private traceStep;
+    constructor(measurementEngine: MeasurementEngine);
     /**
      * 计算元素树布局，返回所有元素的绝对坐标
      * @param parentSize 父容器尺寸，用于解析根元素的百分比 width/height

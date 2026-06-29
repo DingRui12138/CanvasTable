@@ -15,8 +15,7 @@ export class NumberRenderer extends BaseCellRenderer {
   readonly type: CellType = "number";
 
   render(context: CellRendererContext): CellRenderResult {
-    const { ctx, theme, x, y, width, height, column, row, value, isSelected, isHovered, locale } =
-      context;
+    const { ctx, theme, x, y, width, height, column, row, value, locale } = context;
 
     const padding = 8;
     const align = this.getTextAlign(column);

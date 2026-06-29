@@ -1,5 +1,5 @@
-// tests/unit/core/jsx/CTRenderer.test.ts
-import { CTRenderer } from '@/core/jsx/CTRenderer';
+// tests/unit/core/jsx/CTElementRenderer.test.ts
+import { CTElementRenderer } from '@/core/jsx/CTElementRenderer';
 import { LayoutEngine } from '@/core/jsx/LayoutEngine';
 import { MeasurementEngine } from '@/core/jsx/MeasurementEngine';
 import { createCTElement } from '@/core/jsx/createCTElement';
@@ -25,8 +25,8 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
   };
 }
 
-describe('CTRenderer', () => {
-  let renderer: CTRenderer;
+describe('CTElementRenderer', () => {
+  let renderer: CTElementRenderer;
   let mockCtx: CanvasRenderingContext2D;
   let theme: TableTheme;
 
@@ -81,7 +81,7 @@ describe('CTRenderer', () => {
 
     const measurementEngine = new MeasurementEngine(mockCtx);
     const layoutEngine = new LayoutEngine(measurementEngine);
-    renderer = new CTRenderer(mockCtx, layoutEngine, theme);
+    renderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
   });
 
   it('defers layout flattening until layouts are requested', () => {
@@ -99,7 +99,7 @@ describe('CTRenderer', () => {
   it('applies cache-hit offsets to nested clipped children', () => {
     const measurementEngine = new MeasurementEngine(mockCtx);
     const layoutEngine = new LayoutEngine(measurementEngine);
-    const tracedRenderer = new CTRenderer(mockCtx, layoutEngine, theme);
+    const tracedRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
     const createTree = () =>
       createCTElement(
         'CTBox',

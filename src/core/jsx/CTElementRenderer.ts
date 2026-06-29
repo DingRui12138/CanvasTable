@@ -1,4 +1,4 @@
-// src/core/jsx/CTRenderer.ts
+// src/core/jsx/CTElementRenderer.ts
 import type {
   CTElement,
   CTLayoutInfo,
@@ -23,7 +23,7 @@ import { LayoutEngine } from "./LayoutEngine";
  *
  * - 定位模式 (position='relative')：子元素的 x, y 是相对于父容器的位置
  */
-export class CTRenderer {
+export class CTElementRenderer {
   private ctx: CanvasRenderingContext2D;
   private layoutEngine: LayoutEngine;
   private theme: TableTheme;

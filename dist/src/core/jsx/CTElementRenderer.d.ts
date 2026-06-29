@@ -1,6 +1,5 @@
 import type { CTElement, CTLayoutInfo, CTRenderContext } from "./types";
 import type { TableTheme } from "../../types/index";
-import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { LayoutEngine } from "./LayoutEngine";
 /**
  * CTElement Canvas Renderer
@@ -13,16 +12,14 @@ import { LayoutEngine } from "./LayoutEngine";
  *
  * - 定位模式 (position='relative')：子元素的 x, y 是相对于父容器的位置
  */
-export declare class CTRenderer {
+export declare class CTElementRenderer {
     private ctx;
     private layoutEngine;
     private theme;
-    private trace?;
     private renderContext?;
     private layouts;
     private layoutTree;
-    constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme, trace?: CellRenderTrace, renderContext?: CTRenderContext);
-    private traceStep;
+    constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme, renderContext?: CTRenderContext);
     render(root: CTElement, x: number, y: number, parentSize?: {
         width: number;
         height: number;
@@ -31,7 +28,6 @@ export declare class CTRenderer {
     setContext(ctx: CanvasRenderingContext2D): void;
     setTheme(theme: TableTheme): void;
     setRenderContext(renderContext?: CTRenderContext): void;
-    setTrace(trace?: CellRenderTrace): void;
     private flattenLayoutTree;
     private getLayoutOrderedChildren;
     private renderLayoutNode;
@@ -52,4 +48,4 @@ export declare class CTRenderer {
     private drawImageWithFit;
     private renderLine;
 }
-//# sourceMappingURL=CTRenderer.d.ts.map
+//# sourceMappingURL=CTElementRenderer.d.ts.map
