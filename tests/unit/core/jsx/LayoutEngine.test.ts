@@ -259,6 +259,85 @@ describe('LayoutEngine', () => {
       expect(innerText.y).toBe(15);
     });
 
+    it('keeps layout cache enabled for event callback props', () => {
+      const firstOnChange = () => undefined;
+      const firstTree = createCTElement(
+        'CTDropdown',
+        { config: { options: [] }, onChange: firstOnChange },
+        createCTElement('CTBox', { width: 20, height: 20 }),
+      );
+      const firstNode = engine.layoutTree(firstTree, 0, 0);
+
+      const secondOnChange = () => undefined;
+      const secondTree = createCTElement(
+        'CTDropdown',
+        { config: { options: [] }, onChange: secondOnChange },
+        createCTElement('CTBox', { width: 20, height: 20 }),
+      );
+      const secondNode = engine.layoutTree(secondTree, 50, 30);
+
+      expect(firstNode.width).toBe(20);
+      expect(secondNode.width).toBe(20);
+      expect(secondNode.x).toBe(50);
+      expect(secondNode.y).toBe(30);
+      expect(secondNode.currentElement?.props.onChange).toBe(secondOnChange);
+      expect(secondNode.currentElement?.props.onChange).not.toBe(firstOnChange);
+    });
+
+    it('uses explicit cache keys without building tree signatures', () => {
+      const measuredSteps: string[] = [];
+      const trace = {
+        measure<T>(name: string, fn: () => T): T {
+          measuredSteps.push(name);
+          return fn();
+        },
+        add() {},
+        markBranch() {},
+      };
+      const tracedEngine = new LayoutEngine(new MeasurementEngine(mockCtx), trace);
+      const tree = createCTElement(
+        'CTBox',
+        { display: 'flex', width: 100, height: 40, gap: 4 },
+        createCTElement('CTBox', { width: 20, height: 20 }),
+      );
+
+      tracedEngine.layoutTree(tree, 0, 0, { width: 100, height: 40 }, 'stable-status-layout');
+      tracedEngine.layoutTree(tree, 10, 10, { width: 100, height: 40 }, 'stable-status-layout');
+
+      expect(measuredSteps).toContain('jsx.layout.explicitCacheKey');
+      expect(measuredSteps).not.toContain('jsx.layout.cacheKey');
+      expect(measuredSteps).toContain('jsx.layout.cacheHit');
+    });
+
+    it('traces layout cache key, lookup, clone, layout, and write phases', () => {
+      const measuredSteps: string[] = [];
+      const trace = {
+        measure<T>(name: string, fn: () => T): T {
+          measuredSteps.push(name);
+          return fn();
+        },
+        add() {},
+        markBranch() {},
+      };
+      const tracedEngine = new LayoutEngine(new MeasurementEngine(mockCtx), trace);
+      const tree = createCTElement(
+        'CTBox',
+        { display: 'flex', width: 100, height: 40, gap: 4 },
+        createCTElement('CTBox', { width: 20, height: 20 }),
+      );
+
+      tracedEngine.layoutTree(tree, 0, 0, { width: 100, height: 40 });
+      tracedEngine.layoutTree(tree, 10, 10, { width: 100, height: 40 });
+
+      expect(measuredSteps).toEqual(expect.arrayContaining([
+        'jsx.layout.cacheKey',
+        'jsx.layout.cacheLookup',
+        'jsx.layout.layoutNode.root',
+        'jsx.layout.cacheWrite',
+        'jsx.layout.cacheHit',
+      ]));
+    });
+
     it('handles leaf elements without children', () => {
       const text = createCTElement('CTText', { text: 'hello' });
       const node = engine.layoutTree(text, 50, 30);

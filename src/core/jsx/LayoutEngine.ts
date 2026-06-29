@@ -42,12 +42,13 @@ export class LayoutEngine {
   private rootParentSize: { width: number; height: number } | undefined;
   /** 单次 layout/layoutTree 调用内的 measureChildSize 缓存 */
   private measureCache: Map<CTElement, MeasureCacheEntry[]> = new Map();
-  /** 跨单元格缓存命中计数（用于 trace） */
-  private static cacheHits = 0;
-  private static cacheMisses = 0;
 
   constructor(measurementEngine: MeasurementEngine, trace?: CellRenderTrace) {
     this.measurementEngine = measurementEngine;
+    this.trace = trace;
+  }
+
+  setTrace(trace?: CellRenderTrace): void {
     this.trace = trace;
   }
 
@@ -87,13 +88,19 @@ export class LayoutEngine {
     startX: number,
     startY: number,
     parentSize?: { width: number; height: number },
+    explicitCacheKey?: string | null,
   ): CTLayoutNode {
     // 1) 尝试跨单元格缓存（基于 0,0 的相对布局）
-    const cacheKey = this.buildRelativeCacheKey(root, parentSize);
+    const cacheKey = explicitCacheKey
+      ? this.traceStep("jsx.layout.explicitCacheKey", () =>
+          this.buildExplicitCacheKey(explicitCacheKey, parentSize),
+        )
+      : this.traceStep("jsx.layout.cacheKey", () => this.buildRelativeCacheKey(root, parentSize));
     if (cacheKey !== null) {
-      const cached = RELATIVE_TREE_CACHE.get(cacheKey);
+      const cached = this.traceStep("jsx.layout.cacheLookup", () =>
+        RELATIVE_TREE_CACHE.get(cacheKey),
+      );
       if (cached) {
-        LayoutEngine.cacheHits++;
         if (this.trace) {
           this.trace.measure("jsx.layout.cacheHit", () => undefined);
         }
@@ -101,12 +108,11 @@ export class LayoutEngine {
         RELATIVE_TREE_CACHE.delete(cacheKey);
         RELATIVE_TREE_CACHE.set(cacheKey, cached);
         try {
-          return this.cloneTreeWithOffset(cached.tree, root, startX, startY);
+          return this.createOffsetLayoutTree(cached.tree, root, startX, startY);
         } catch {
           RELATIVE_TREE_CACHE.delete(cacheKey);
         }
       }
-      LayoutEngine.cacheMisses++;
     }
 
     this.rootParentSize = parentSize;
@@ -119,13 +125,13 @@ export class LayoutEngine {
       );
       // 3) 写入缓存（如果可缓存）
       if (cacheKey !== null) {
-        this.cacheRelativeTree(cacheKey, relative);
+        this.traceStep("jsx.layout.cacheWrite", () => this.cacheRelativeTree(cacheKey, relative));
       }
       // 4) 偏移到目标位置
       node =
         startX === 0 && startY === 0
           ? relative
-          : this.cloneTreeWithOffset(relative, root, startX, startY);
+          : this.createOffsetLayoutTree(relative, root, startX, startY);
     } finally {
       this.rootParentSize = undefined;
       this.measureCache.clear();
@@ -166,6 +172,10 @@ export class LayoutEngine {
       return this.layoutPositionedGroupNode(element, x, y, parentSize, presetSize);
     }
 
+    if (element.type === "CTTooltip" || element.type === "CTDropdown") {
+      return this.layoutTransparentWrapperNode(element, x, y, parentSize, presetSize);
+    }
+
     // 非容器元素：直接测量尺寸
     let width: number;
     let height: number;
@@ -194,6 +204,56 @@ export class LayoutEngine {
     };
   }
 
+  private layoutTransparentWrapperNode(
+    element: CTElement,
+    x: number,
+    y: number,
+    parentSize?: { width: number; height: number },
+    presetSize?: { width: number; height: number; margin?: Margin },
+  ): CTLayoutNode {
+    const child = element.children[0];
+    if (!child) {
+      const width = presetSize?.width ?? 0;
+      const height = presetSize?.height ?? 0;
+      return {
+        element,
+        x,
+        y,
+        width,
+        height,
+        margin: presetSize?.margin ?? ZERO_MARGIN,
+        children: [],
+      };
+    }
+
+    const childNode = this.layoutNode(child, x, y, parentSize, presetSize);
+    return {
+      element,
+      x: childNode.x,
+      y: childNode.y,
+      width: childNode.width,
+      height: childNode.height,
+      zIndex: childNode.zIndex,
+      margin: childNode.margin,
+      children: [childNode],
+    };
+  }
+
+  private layoutTransparentWrapper(
+    element: CTElement,
+    x: number,
+    y: number,
+    parentSize?: { width: number; height: number },
+  ): CTLayoutInfo {
+    const child = element.children[0];
+    if (!child) {
+      const layout = { x, y, width: 0, height: 0, margin: ZERO_MARGIN };
+      this.layoutResults.push(layout);
+      return layout;
+    }
+    return this.layoutElement(child, x, y, parentSize);
+  }
+
   private layoutElement(
     element: CTElement,
     x: number,
@@ -210,12 +270,23 @@ export class LayoutEngine {
       return this.layoutPositionedGroup(element, x, y, parentSize);
     }
 
+    if (element.type === "CTTooltip" || element.type === "CTDropdown") {
+      return this.layoutTransparentWrapper(element, x, y, parentSize);
+    }
+
     // 非容器元素：直接测量尺寸
     const size = this.measurementEngine.measureElement(element);
     const clampedSize = this.clampSize(size, element.props, parentSize);
     const zIndex = element.props.zIndex as number | undefined;
     const margin = this.parseMargin(element.props.margin as CTBoxProps["margin"]);
-    const layout = { x, y, width: clampedSize.width, height: clampedSize.height, zIndex, margin };
+    const layout = {
+      x,
+      y,
+      width: clampedSize.width,
+      height: clampedSize.height,
+      zIndex,
+      margin,
+    };
     this.layoutResults.push(layout);
     return layout;
   }
@@ -906,7 +977,12 @@ export class LayoutEngine {
     for (let i = 0; i < children.length; i++) {
       const child = children[i]!;
       const size = sizes[i]!;
-      const childMargin = size.margin ?? { top: 0, right: 0, bottom: 0, left: 0 };
+      const childMargin = size.margin ?? {
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+      };
       const childWidth = size.width - childMargin.left - childMargin.right;
       const childHeight = size.height - childMargin.top - childMargin.bottom;
 
@@ -955,7 +1031,13 @@ export class LayoutEngine {
     );
   }
 
-  // ─── Cross-cell relative tree cache ───
+  private buildExplicitCacheKey(
+    explicitCacheKey: string,
+    parentSize?: { width: number; height: number },
+  ): string {
+    const ps = parentSize ? `${parentSize.width}x${parentSize.height}` : "_";
+    return `${ps}|explicit:${explicitCacheKey}`;
+  }
 
   private buildRelativeCacheKey(
     root: CTElement,
@@ -972,8 +1054,8 @@ export class LayoutEngine {
   }
 
   /**
-   * 生成元素树签名。遇到无法序列化的值（函数、Symbol、循环引用等）返回 null
-   * 以放弃缓存而不是冒着错误命中渲染的风险。
+   * 生成元素树签名。遇到会影响布局但无法序列化的值（Symbol、循环引用等）返回 null，
+   * 以放弃缓存而不是冒着错误命中渲染的风险。事件回调不参与布局签名。
    */
   private elementSignature(element: CTElement): string | null {
     const out: string[] = [];
@@ -990,7 +1072,7 @@ export class LayoutEngine {
     if (seen.has(element)) return false;
     seen.add(element);
     out.push("[", element.type);
-    const propsOk = this.appendValueSignature(element.props, out, seen);
+    const propsOk = this.appendPropsSignature(element.props, out, seen);
     if (!propsOk) return false;
     const children = element.children || [];
     out.push("(", String(children.length));
@@ -1001,6 +1083,28 @@ export class LayoutEngine {
     }
     out.push(")]");
     return true;
+  }
+
+  private appendPropsSignature(
+    props: Record<string, unknown>,
+    out: string[],
+    seen: WeakSet<object>,
+  ): boolean {
+    const keys = Object.keys(props)
+      .filter((key) => !this.isEventCallbackProp(key, props[key]))
+      .sort();
+    out.push("o(", String(keys.length));
+    for (const key of keys) {
+      out.push(",", key, "=");
+      const ok = this.appendValueSignature(props[key], out, seen);
+      if (!ok) return false;
+    }
+    out.push(")");
+    return true;
+  }
+
+  private isEventCallbackProp(key: string, value: unknown): boolean {
+    return typeof value === "function" && /^on[A-Z]/.test(key);
   }
 
   private appendValueSignature(value: unknown, out: string[], seen: WeakSet<object>): boolean {
@@ -1076,58 +1180,21 @@ export class LayoutEngine {
     };
   }
 
-  /**
-   * 克隆缓存的相对布局树，将坐标偏移到 (offsetX, offsetY)，
-   * 并按当前元素树的布局顺序重新绑定 element 引用。
-   */
-  private cloneTreeWithOffset(
-    cached: CTLayoutNode,
+  private createOffsetLayoutTree(
+    tree: CTLayoutNode,
     currentElement: CTElement,
     offsetX: number,
     offsetY: number,
   ): CTLayoutNode {
-    return this.cloneNode(cached, currentElement, offsetX, offsetY);
-  }
-
-  private cloneNode(
-    cached: CTLayoutNode,
-    currentElement: CTElement,
-    offsetX: number,
-    offsetY: number,
-  ): CTLayoutNode {
-    const cachedChildren = cached.children;
-    const currentChildren = this.getLayoutOrderedChildren(currentElement);
-    const childCount = cachedChildren.length;
-    if (currentChildren.length !== childCount) {
-      throw new Error("Cached layout tree shape mismatch");
-    }
-    const children: CTLayoutNode[] = new Array(childCount);
-    for (let i = 0; i < childCount; i++) {
-      const childCached = cachedChildren[i]!;
-      const childElement = currentChildren[i]!;
-      children[i] = this.cloneNode(childCached, childElement, offsetX, offsetY);
-    }
+    if (offsetX === 0 && offsetY === 0 && currentElement === tree.element) return tree;
     return {
+      ...tree,
       element: currentElement,
-      x: cached.x + offsetX,
-      y: cached.y + offsetY,
-      width: cached.width,
-      height: cached.height,
-      zIndex: cached.zIndex,
-      margin: cached.margin,
-      children,
+      currentElement,
+      x: tree.x + offsetX,
+      y: tree.y + offsetY,
+      offsetX,
+      offsetY,
     };
-  }
-
-  private getLayoutOrderedChildren(element: CTElement): CTElement[] {
-    const children = element.children || [];
-    if (element.type === "CTBox" && element.props.position === "relative") {
-      return [...children].sort((a, b) => {
-        const aZ = (a.props.zIndex as number | undefined) ?? 0;
-        const bZ = (b.props.zIndex as number | undefined) ?? 0;
-        return aZ - bZ;
-      });
-    }
-    return children;
   }
 }

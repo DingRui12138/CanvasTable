@@ -15,6 +15,9 @@ import {
   Column as CTColumn,
   Text as CTText,
   Circle as CTCircle,
+  Image as CTImage,
+  Tooltip as CTTooltip,
+  Dropdown as CTDropdown,
 } from "../src/core/jsx/components";
 import { getFPSMonitor } from "./FPSMonitor";
 
@@ -1348,9 +1351,10 @@ const columns: Column[] = [
     title: "状态卡片(JsxRender)",
     fixed: "right",
     width: 180,
+    editable: false,
     render: (_value, row) => ({
       type: "custom" as CellType,
-      jsxRender: () => {
+      jsxRender: (ctx) => {
         const statusColors: Record<string, string> = {
           active: "#52c41a",
           inactive: "#ff4d4f",
@@ -1365,6 +1369,14 @@ const columns: Column[] = [
         const color = statusColors[s] || "#8c8c8c";
         const label = statusLabels[s] || s;
         const progress = row.data.progress as number;
+        const dropdownConfig = {
+          value: s,
+          options: [
+            { label: "在职", value: "active" },
+            { label: "离职", value: "inactive" },
+            { label: "待定", value: "pending" },
+          ],
+        };
 
         return createCTElement(
           CTBox,
@@ -1383,7 +1395,7 @@ const columns: Column[] = [
           createCTElement(
             CTBox,
             {
-              width: 168,
+              width: 160,
               height: 26,
               bgColor: "rgba(255,255,255,0.9)",
               radius: 8,
@@ -1392,23 +1404,24 @@ const columns: Column[] = [
             },
             createCTElement(
               CTRow,
-              { gap: 5, align: "center" },
+              { gap: 4, align: "center" },
               createCTElement(
                 CTColumn,
                 { gap: 1, align: "center" },
                 createCTElement(
-                  CTBox,
+                  CTTooltip,
                   {
-                    width: 14,
-                    height: 14,
-                    radius: 7,
-                    bgColor: "#ffffff",
-                    justify: "center",
-                    align: "center",
-                    borderColor: color,
-                    borderWidth: 1,
+                    content: `姓名：${row.data.name}\n状态：${label}\n进度：${progress}%`,
+                    width: 120,
                   },
-                  createCTElement(CTCircle, { radius: 3.5, bgColor: color }),
+                  createCTElement(CTImage, {
+                    src: row.data.avatar as string,
+                    width: 16,
+                    height: 16,
+                    circle: true,
+                    fit: "cover",
+                    lazy: false,
+                  }),
                 ),
                 createCTElement(
                   CTRow,
@@ -1521,12 +1534,32 @@ const columns: Column[] = [
                 ),
               ),
               createCTElement(
-                CTColumn,
-                { gap: 1, align: "center" },
-                createCTElement(CTCircle, { radius: 1.3, bgColor: color }),
-                createCTElement(CTCircle, { radius: 1.3, bgColor: "#d9d9d9" }),
-                createCTElement(CTCircle, { radius: 1.3, bgColor: color }),
-                createCTElement(CTCircle, { radius: 1.3, bgColor: "#d9d9d9" }),
+                CTDropdown,
+                {
+                  config: dropdownConfig,
+                  width: 96,
+                  onChange: (value: unknown) => ctx.updateField("status", value),
+                },
+                createCTElement(
+                  CTBox,
+                  {
+                    width: 18,
+                    height: 18,
+                    radius: 9,
+                    bgColor: color,
+                    justify: "center",
+                    align: "center",
+                    borderColor: "rgba(255,255,255,0.85)",
+                    borderWidth: 1,
+                  },
+                  createCTElement(
+                    CTColumn,
+                    { gap: 1, align: "center" },
+                    createCTElement(CTCircle, { radius: 1.2, bgColor: "#ffffff" }),
+                    createCTElement(CTCircle, { radius: 1.2, bgColor: "#ffffff" }),
+                    createCTElement(CTCircle, { radius: 1.2, bgColor: "#ffffff" }),
+                  ),
+                ),
               ),
             ),
           ),
@@ -1534,6 +1567,7 @@ const columns: Column[] = [
       },
     }),
   },
+
   {
     key: "score",
     title: "评分",

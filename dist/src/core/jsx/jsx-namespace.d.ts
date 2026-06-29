@@ -1,4 +1,4 @@
-import type { CTElement, CTCircleProps, CTBoxProps, CTImageProps, CTLineProps, CTTextProps } from "./types";
+import type { CTElement, CTCircleProps, CTBoxProps, CTImageProps, CTLineProps, CTTextProps, CTTooltipProps, CTDropdownProps } from "./types";
 declare global {
     namespace JSX {
         type Element = CTElement;
@@ -11,6 +11,8 @@ declare global {
             CTText: CTTextProps;
             CTImage: CTImageProps;
             CTLine: CTLineProps;
+            CTTooltip: CTTooltipProps;
+            CTDropdown: CTDropdownProps;
         }
     }
 }

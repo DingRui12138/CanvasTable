@@ -1,4 +1,4 @@
-import type { CTElement } from "../core/jsx/types";
+import type { CTDropdownOnChange, CTElement, JSXRenderContext } from "../core/jsx/types";
 export type CellType = "text" | "number" | "boolean" | "link" | "tag" | "date" | "custom" | "checkbox" | "radio" | "button" | "input" | "select" | "switch" | "image" | "progress" | "rating" | "color";
 export declare const CellTypes: {
     TEXT: CellType;
@@ -139,7 +139,9 @@ export interface RenderResult {
     color?: ColorPickerConfig;
     customRender?: (context: CustomRenderContext) => void;
     /** JSX 渲染函数，返回 CTElement 树 */
-    jsxRender?: () => CTElement;
+    jsxRender?: (context: JSXRenderContext) => CTElement;
+    /** JSX layout cache key. Use only for layout-affecting inputs; identical keys reuse layout trees. */
+    jsxLayoutKey?: string | ((context: JSXRenderContext) => string | null | undefined);
     /** Star bounds for rating click detection */
     starBounds?: Array<{
         index: number;
@@ -1132,6 +1134,12 @@ export interface DropdownState {
     type?: "select" | "tags";
     tagsConfig?: TagsConfig;
     showAbove?: boolean;
+    source?: "cell" | "jsx";
+    onChange?: CTDropdownOnChange;
+    row?: Row;
+    column?: Column;
+    rowIndex?: number;
+    colIndex?: number;
 }
 export interface FilterDropdownState {
     columnKey: string;

@@ -124,6 +124,18 @@
 - [ ] **图片实际渲染** - CTImage src 加载真实图片
 - [ ] **交互事件** - JSX 元素点击、hover 等交互回调
 
+#### JSX 内置组件设计规范
+
+- [ ] **组件分层** - 基础绘制组件继续由 `CTRenderer` 直接绘制；数据展示组件优先复用基础组件或现有 renderer；交互浮层组件只在 cell 内绘制 trigger，浮层交给 overlay/handler 处理。
+- [ ] **统一 props 风格** - 内置组件统一支持 `width`、`height`、`margin`、`padding`、`color`、`bgColor`、`radius`、`borderColor`、`borderWidth`、`disabled`、`opacity` 等通用属性，并在 `props.ts` 内归一化别名。
+- [ ] **展示型组件优先降级为基础组件树** - `CTDate`、`CTBadge`、`CTTag` 等优先在组件函数内组合 `CTBox` / `CTText` / `CTCircle`，减少 `CTRenderer` 分支。
+- [ ] **资源型组件复用现有运行时** - `CTImage` 不重新实现图片加载，应复用现有 `ImageRenderer`、图片缓存、加载队列、失败态、懒加载和可视区收集逻辑。
+- [ ] **交互型组件登记命中区域** - `CTTooltip`、`CTDropdown` 等通过 layout 结果派生 `CTInteractiveRegion`，由 `InteractionManager` / 对应 handler 处理 hover、click、outside click、滚动关闭和 overlay 绘制。
+- [ ] **统一渲染上下文** - 为 JSX 渲染引入 `CTRenderContext`，集中提供 `ctx`、`theme`、`trace`、`imageRuntime`、当前行列信息、cell rect 和交互区域收集回调。
+- [ ] **绘制边界清晰** - cell 内内容由 `CTRenderer` 绘制；cell 外 tooltip、dropdown、图片预览等浮层由 renderer overlay 或现有 handler 绘制，避免普通 cell render 流程直接画浮层。
+- [ ] **缓存安全规则** - layout cache 只接受 primitive、plain object、array 等可稳定序列化 props；包含 function、symbol、bigint、Date 实例、DOM 对象或 class instance 的 JSX 树应绕过跨 cell layout cache。
+- [ ] **推荐实现顺序** - 先补 `CTRenderContext` / `CTInteractiveRegion` 基础设施，再实现 `CTDate`，随后接入真实 `CTImage`，最后实现 `CTTooltip` 和 `CTDropdown`。
+
 ### 编辑功能
 
 - [x] **编辑校验提示** - 显示校验错误信息，校验失败不写入数据，支持同步和异步校验

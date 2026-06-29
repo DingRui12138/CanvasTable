@@ -7,6 +7,7 @@ import type {
   CTBoxShadow,
   CTBorderSide,
   CTBackgroundGradient,
+  CTRenderContext,
 } from "./types";
 import type { TableTheme } from "../../types/index";
 import type { CellRenderTrace } from "../renderers/CellRenderer";
@@ -28,18 +29,22 @@ export class CTRenderer {
   private layoutEngine: LayoutEngine;
   private theme: TableTheme;
   private trace?: CellRenderTrace;
-  private layouts: CTLayoutInfo[] = [];
+  private renderContext?: CTRenderContext;
+  private layouts: CTLayoutInfo[] | undefined;
+  private layoutTree: CTLayoutNode | undefined;
 
   constructor(
     ctx: CanvasRenderingContext2D,
     layoutEngine: LayoutEngine,
     theme: TableTheme,
     trace?: CellRenderTrace,
+    renderContext?: CTRenderContext,
   ) {
     this.ctx = ctx;
     this.layoutEngine = layoutEngine;
     this.theme = theme;
     this.trace = trace;
+    this.renderContext = renderContext;
   }
 
   private traceStep<T>(name: string, fn: () => T): T {
@@ -51,13 +56,13 @@ export class CTRenderer {
     x: number,
     y: number,
     parentSize?: { width: number; height: number },
+    layoutCacheKey?: string | null,
   ): void {
     const layoutTree = this.traceStep("jsx.ctRenderer.layoutTree", () =>
-      this.layoutEngine.layoutTree(root, x, y, parentSize),
+      this.layoutEngine.layoutTree(root, x, y, parentSize, layoutCacheKey),
     );
-    this.layouts = this.traceStep("jsx.ctRenderer.flattenLayoutTree", () =>
-      this.flattenLayoutTree(layoutTree),
-    );
+    this.layoutTree = layoutTree;
+    this.layouts = undefined;
     this.traceStep("jsx.ctRenderer.ctx.save", () => this.ctx.save());
     try {
       this.renderLayoutNode(layoutTree);
@@ -67,14 +72,35 @@ export class CTRenderer {
   }
 
   getLayouts(): CTLayoutInfo[] {
-    return this.layouts;
+    if (!this.layouts && this.layoutTree) {
+      this.layouts = this.traceStep("jsx.ctRenderer.flattenLayoutTree", () =>
+        this.flattenLayoutTree(this.layoutTree!),
+      );
+    }
+    return this.layouts ?? [];
   }
 
-  private flattenLayoutTree(node: CTLayoutNode): CTLayoutInfo[] {
+  setContext(ctx: CanvasRenderingContext2D): void {
+    this.ctx = ctx;
+  }
+
+  setTheme(theme: TableTheme): void {
+    this.theme = theme;
+  }
+
+  setRenderContext(renderContext?: CTRenderContext): void {
+    this.renderContext = renderContext;
+  }
+
+  setTrace(trace?: CellRenderTrace): void {
+    this.trace = trace;
+  }
+
+  private flattenLayoutTree(node: CTLayoutNode, offsetX = 0, offsetY = 0): CTLayoutInfo[] {
     const result: CTLayoutInfo[] = [
       {
-        x: node.x,
-        y: node.y,
+        x: node.x + offsetX,
+        y: node.y + offsetY,
         width: node.width,
         height: node.height,
         zIndex: node.zIndex,
@@ -82,32 +108,87 @@ export class CTRenderer {
       },
     ];
     for (const child of node.children) {
-      result.push(...this.flattenLayoutTree(child));
+      result.push(...this.flattenLayoutTree(child, offsetX, offsetY));
     }
     return result;
   }
 
-  private renderLayoutNode(node: CTLayoutNode): void {
-    switch (node.element.type) {
+  private getLayoutOrderedChildren(element: CTElement): CTElement[] {
+    const children = element.children || [];
+    if (element.type === "CTBox" && element.props.position === "relative") {
+      return [...children].sort((a, b) => {
+        const aZ = (a.props.zIndex as number | undefined) ?? 0;
+        const bZ = (b.props.zIndex as number | undefined) ?? 0;
+        return aZ - bZ;
+      });
+    }
+    return children;
+  }
+
+  private renderLayoutNode(
+    node: CTLayoutNode,
+    currentElement: CTElement = node.currentElement ?? node.element,
+    offsetX = 0,
+    offsetY = 0,
+  ): void {
+    const x = node.x + offsetX;
+    const y = node.y + offsetY;
+    switch (currentElement.type) {
       case "CTBox":
-        this.renderBoxNode(node);
+        this.renderBoxNode(node, currentElement, x, y, offsetX, offsetY);
         break;
       case "CTCircle":
-        this.traceStep("jsx.ctRenderer.circle", () =>
-          this.renderCircle(node.element, node.x, node.y),
-        );
+        this.traceStep("jsx.ctRenderer.circle", () => this.renderCircle(currentElement, x, y));
         break;
       case "CTText":
-        this.renderText(node.element, node.x, node.y, node.width);
+        this.renderText(currentElement, x, y, node.width);
         break;
       case "CTImage":
-        this.traceStep("jsx.ctRenderer.image", () =>
-          this.renderImage(node.element, node.x, node.y),
-        );
+        this.traceStep("jsx.ctRenderer.image", () => this.renderImage(currentElement, x, y));
         break;
       case "CTLine":
-        this.traceStep("jsx.ctRenderer.line", () => this.renderLine(node.element, node.x, node.y));
+        this.traceStep("jsx.ctRenderer.line", () => this.renderLine(currentElement, x, y));
         break;
+      case "CTTooltip":
+      case "CTDropdown":
+        this.renderInteractiveWrapperNode(node, currentElement, x, y, offsetX, offsetY);
+        break;
+    }
+  }
+
+  private renderInteractiveWrapperNode(
+    node: CTLayoutNode,
+    element: CTElement,
+    x: number,
+    y: number,
+    offsetX: number,
+    offsetY: number,
+  ): void {
+    const regionType = element.type === "CTTooltip" ? "tooltip" : "dropdown";
+    this.renderContext?.collectInteractiveRegion?.({
+      type: regionType,
+      rect: {
+        x,
+        y,
+        width: node.width,
+        height: node.height,
+      },
+      element,
+      props: element.props,
+      row: this.renderContext.row,
+      column: this.renderContext.column,
+      rowIndex: this.renderContext.rowIndex,
+      colIndex: this.renderContext.colIndex,
+    });
+
+    const currentChildren = this.getLayoutOrderedChildren(element);
+    const childOffsetX = offsetX + (node.offsetX ?? 0);
+    const childOffsetY = offsetY + (node.offsetY ?? 0);
+    for (let index = 0; index < node.children.length; index++) {
+      const childNode = node.children[index]!;
+      const childElement = currentChildren[index];
+      if (!childElement) continue;
+      this.renderLayoutNode(childNode, childElement, childOffsetX, childOffsetY);
     }
   }
 
@@ -185,10 +266,14 @@ export class CTRenderer {
     return undefined;
   }
 
-  private renderBoxNode(node: CTLayoutNode): void {
-    const element = node.element;
-    const x = node.x;
-    const y = node.y;
+  private renderBoxNode(
+    node: CTLayoutNode,
+    element: CTElement = node.element,
+    x = node.x,
+    y = node.y,
+    offsetX = 0,
+    offsetY = 0,
+  ): void {
     const props = element.props as CTBoxProps & Record<string, unknown>;
 
     const boxWidth = node.width;
@@ -316,8 +401,14 @@ export class CTRenderer {
 
       // ─── Render Children ───
       try {
-        for (const childNode of node.children) {
-          this.renderLayoutNode(childNode);
+        const currentChildren = this.getLayoutOrderedChildren(element);
+        const childOffsetX = offsetX + (node.offsetX ?? 0);
+        const childOffsetY = offsetY + (node.offsetY ?? 0);
+        for (let index = 0; index < node.children.length; index++) {
+          const childNode = node.children[index]!;
+          const childElement = currentChildren[index];
+          if (!childElement) continue;
+          this.renderLayoutNode(childNode, childElement, childOffsetX, childOffsetY);
         }
       } finally {
         // ─── Restore Clip ───
@@ -566,10 +657,159 @@ export class CTRenderer {
   }
 
   private renderImage(element: CTElement, x: number, y: number): void {
-    const props = element.props as { width: number; height: number };
+    const props = element.props as {
+      src?: string;
+      width: number;
+      height: number;
+      borderRadius?: number;
+      radius?: number;
+      objectFit?: "fill" | "contain" | "cover" | "none";
+      fit?: "fill" | "contain" | "cover" | "none";
+      circle?: boolean;
+      placeholder?: string;
+      errorImage?: string;
+      lazy?: boolean;
+      lazyThreshold?: number;
+    };
+    const width = props.width;
+    const height = props.height;
+    const radius = props.circle
+      ? Math.min(width, height) / 2
+      : (props.radius ?? props.borderRadius ?? 0);
+    const imageRuntime = this.renderContext?.imageRuntime;
+    const src = props.src;
+
+    this.drawImagePlaceholder(x, y, width, height, radius);
+    if (!src || !imageRuntime) return;
+
+    const lazyEnabled = props.lazy !== false;
+    const rowIndex = this.renderContext?.rowIndex;
+    const threshold = props.lazyThreshold ?? 200;
+    if (
+      lazyEnabled &&
+      rowIndex !== undefined &&
+      rowIndex >= 0 &&
+      !imageRuntime.isInLazyLoadRange(rowIndex, threshold)
+    ) {
+      return;
+    }
+
+    const targetSize = Math.max(width, height);
+    imageRuntime.collectVisible(src);
+
+    if (imageRuntime.isFailed(src)) {
+      this.renderImageFallback(
+        props.errorImage,
+        x,
+        y,
+        width,
+        height,
+        radius,
+        props.fit ?? props.objectFit,
+      );
+      return;
+    }
+
+    const cached = imageRuntime.get(src, targetSize);
+    if (cached) {
+      this.drawImageWithFit(
+        cached,
+        x,
+        y,
+        width,
+        height,
+        radius,
+        props.fit ?? props.objectFit ?? "cover",
+      );
+      return;
+    }
+
+    if (!imageRuntime.isLoading(src)) {
+      imageRuntime.load(src, targetSize);
+    }
+    this.renderImageFallback(
+      props.placeholder,
+      x,
+      y,
+      width,
+      height,
+      radius,
+      props.fit ?? props.objectFit,
+    );
+  }
+
+  private drawImagePlaceholder(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number,
+  ): void {
+    this.ctx.fillStyle = "#f5f5f5";
+    this.drawRoundedRect(x, y, width, height, radius);
+    this.ctx.fill();
     this.ctx.strokeStyle = "#d9d9d9";
     this.ctx.lineWidth = 1;
-    this.ctx.strokeRect(x, y, props.width, props.height);
+    this.drawRoundedRect(x, y, width, height, radius);
+    this.ctx.stroke();
+  }
+
+  private renderImageFallback(
+    src: string | undefined,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number,
+    fit: "fill" | "contain" | "cover" | "none" | undefined,
+  ): void {
+    if (!src || !this.renderContext?.imageRuntime) return;
+    const image = this.renderContext.imageRuntime.get(src, Math.max(width, height));
+    if (image) {
+      this.drawImageWithFit(image, x, y, width, height, radius, fit ?? "cover");
+    } else if (!this.renderContext.imageRuntime.isLoading(src)) {
+      this.renderContext.imageRuntime.load(src, Math.max(width, height));
+    }
+  }
+
+  private drawImageWithFit(
+    image: HTMLImageElement | HTMLCanvasElement,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number,
+    fit: "fill" | "contain" | "cover" | "none",
+  ): void {
+    this.ctx.save();
+    this.drawRoundedRect(x, y, width, height, radius);
+    this.ctx.clip();
+
+    const imageWidth = image.width;
+    const imageHeight = image.height;
+    let drawX = x;
+    let drawY = y;
+    let drawWidth = width;
+    let drawHeight = height;
+
+    if (fit === "contain" || fit === "cover") {
+      const scale =
+        fit === "contain"
+          ? Math.min(width / imageWidth, height / imageHeight)
+          : Math.max(width / imageWidth, height / imageHeight);
+      drawWidth = imageWidth * scale;
+      drawHeight = imageHeight * scale;
+      drawX = x + (width - drawWidth) / 2;
+      drawY = y + (height - drawHeight) / 2;
+    } else if (fit === "none") {
+      drawWidth = imageWidth;
+      drawHeight = imageHeight;
+      drawX = x + (width - drawWidth) / 2;
+      drawY = y + (height - drawHeight) / 2;
+    }
+
+    this.ctx.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+    this.ctx.restore();
   }
 
   private renderLine(element: CTElement, x: number, y: number): void {

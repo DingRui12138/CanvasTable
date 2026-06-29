@@ -1,6 +1,12 @@
 import { Column, Row, TableTheme, VisibleRange, CellPosition, CellRange, SortConfig, TooltipState, DropdownState, ScrollbarState, FilterConfig, FilterDropdownState, WatermarkConfig, SwitchAnimationState, ButtonsDropdownState, ImageTooltipState, ImageEditorState, ButtonHoverState, DateDropdownState, ContextMenuState, HeaderContextMenuState, ColorPickerDropdownState, ImageLoadConfig, CanvasTableLocale, ValidationError } from "../types";
 import { LayoutManager } from "./LayoutManager";
 import { RenderCache, RowIdManager, ColumnIdManager } from "./RenderCache";
+import type { CTInteractiveRegion } from "./jsx";
+type JSXUpdateHandlers = {
+    updateValue: (rowIndex: number, column: Column, value: unknown) => Promise<void>;
+    updateField: (rowIndex: number, field: string, value: unknown) => Promise<void>;
+    updateRow: (rowIndex: number, data: Record<string, unknown>) => Promise<void>;
+};
 export declare class Renderer {
     private canvas;
     private ctx;
@@ -27,6 +33,11 @@ export declare class Renderer {
     private imageRuntime;
     private imageRenderer;
     private imageRenderContext;
+    private jsxMeasurementEngine;
+    private jsxLayoutEngine;
+    private jsxRenderer;
+    private jsxInteractiveRegions;
+    private jsxUpdateHandlers;
     private static readonly SHARED_PLACEHOLDER_COLUMN;
     private static readonly SHARED_PLACEHOLDER_ROW;
     /** 当前帧收集的可见图片 URL */
@@ -49,6 +60,7 @@ export declare class Renderer {
     private frameHistory;
     private static readonly MAX_FRAME_HISTORY;
     private static readonly SLOW_CELL_DETAIL_THRESHOLD_MS;
+    private static readonly DETAILED_CELL_THRESHOLD_MS;
     private static readonly DETAILED_CELL_TYPES;
     private static readonly MAX_DETAIL_STEPS_PER_CELL;
     private currentFrameStats;
@@ -102,6 +114,9 @@ export declare class Renderer {
     updateTheme(theme: TableTheme): void;
     markDirty(x: number, y: number, width: number, height: number): void;
     markFullRedraw(): void;
+    getJSXInteractiveRegions(): CTInteractiveRegion[];
+    setJSXUpdateHandlers(handlers: JSXUpdateHandlers | null): void;
+    private createJSXRenderContext;
     render(columns: Column[], rows: Row[], visibleRange: VisibleRange, scrollLeft: number, scrollTop: number, options: {
         hoveredCell: CellPosition | null;
         selectedCells: CellRange[];
@@ -246,6 +261,9 @@ export declare class Renderer {
     endFrame(visibleRange: VisibleRange, scrollTop: number, scrollLeft: number, columns: Column[]): void;
     private formatCellLocation;
     private copyCellDetail;
+    private mergeStepTotals;
+    private mergeStepTotalsMap;
+    private copyStepTotals;
     private copyCellStats;
     private createRenderDetailRecorder;
     private finalizeRenderDetail;
@@ -360,4 +378,5 @@ export declare class Renderer {
     } | null;
     destroy(): void;
 }
+export {};
 //# sourceMappingURL=Renderer.d.ts.map

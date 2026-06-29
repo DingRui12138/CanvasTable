@@ -10,6 +10,7 @@ export declare class DropdownHandler extends BaseHandler {
     private static readonly DROPDOWN_ITEM_HEIGHT;
     private static readonly DROPDOWN_MAX_VISIBLE;
     constructor(context: HandlerContext, eventEmitter: EventEmitter<InteractionEvents>);
+    private invokeJSXDropdownChange;
     /**
      * Handle dropdown click
      */

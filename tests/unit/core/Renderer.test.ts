@@ -1,6 +1,7 @@
 import { Renderer } from '@/core/Renderer';
 import { LayoutManager } from '@/core/LayoutManager';
 import { RowPinManager } from '@/core/RowPinManager';
+import { createCTElement } from '@/core/jsx/createCTElement';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { ComputedSummaryRow, VisibleRange, SortConfig, InteractionState, Column } from '@/types';
 
@@ -524,6 +525,64 @@ describe('Renderer', () => {
         mockTheme.row.height - 2,
       );
       expect(validationStrokeStyles).toContain('#ff4d4f');
+    });
+
+
+    it('keeps JSX cell detail for sub-threshold render timings', () => {
+      const columns: Column[] = [{ key: 'jsx', title: 'JSX', width: 120 }];
+      const rows = createTestRows(1);
+      columns[0]!.render = () => ({
+        type: 'custom',
+        jsxRender: () => createCTElement('CTBox', { width: 20, height: 20 }),
+      });
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setViewportSize(800, 600);
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
+      const nowSpy = jest.spyOn(performance, 'now');
+      let now = 0;
+      nowSpy.mockImplementation(() => {
+        now += 0.01;
+        return now;
+      });
+
+      try {
+        renderer.setPerformanceMonitoring(true);
+        renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      expect(renderer.getPerformanceReport()).toContain('jsx.ctRenderer.layoutTree');
+    });
+
+    it('aggregates JSX detail steps across rendered cells', () => {
+      const columns: Column[] = [{ key: 'jsx', title: 'JSX', width: 120 }];
+      const rows = createTestRows(2);
+      columns[0]!.render = () => ({
+        type: 'custom',
+        jsxRender: () => createCTElement('CTBox', { width: 20, height: 20 }),
+      });
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setViewportSize(800, 600);
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
+      const nowSpy = jest.spyOn(performance, 'now');
+      let now = 0;
+      nowSpy.mockImplementation(() => {
+        now += 0.01;
+        return now;
+      });
+
+      try {
+        renderer.setPerformanceMonitoring(true);
+        renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      const report = renderer.getPerformanceReport();
+      expect(report).toContain('=== JSX STEP TOTALS (all frames) ===');
+      expect(report).toContain('jsx.ctRenderer.layoutTree');
+      expect(report).toContain('calls:     2');
     });
 
     it('should render with sort config', () => {

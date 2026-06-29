@@ -1,4 +1,4 @@
-import type { CTElement, CTLayoutInfo } from "./types";
+import type { CTElement, CTLayoutInfo, CTRenderContext } from "./types";
 import type { TableTheme } from "../../types/index";
 import type { CellRenderTrace } from "../renderers/CellRenderer";
 import { LayoutEngine } from "./LayoutEngine";
@@ -18,16 +18,24 @@ export declare class CTRenderer {
     private layoutEngine;
     private theme;
     private trace?;
+    private renderContext?;
     private layouts;
-    constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme, trace?: CellRenderTrace);
+    private layoutTree;
+    constructor(ctx: CanvasRenderingContext2D, layoutEngine: LayoutEngine, theme: TableTheme, trace?: CellRenderTrace, renderContext?: CTRenderContext);
     private traceStep;
     render(root: CTElement, x: number, y: number, parentSize?: {
         width: number;
         height: number;
-    }): void;
+    }, layoutCacheKey?: string | null): void;
     getLayouts(): CTLayoutInfo[];
+    setContext(ctx: CanvasRenderingContext2D): void;
+    setTheme(theme: TableTheme): void;
+    setRenderContext(renderContext?: CTRenderContext): void;
+    setTrace(trace?: CellRenderTrace): void;
     private flattenLayoutTree;
+    private getLayoutOrderedChildren;
     private renderLayoutNode;
+    private renderInteractiveWrapperNode;
     private getBorderRadiusArray;
     private drawRoundedRect;
     private createGradientFill;
@@ -39,6 +47,9 @@ export declare class CTRenderer {
     private measureCharWidth;
     private getTextWidthWithSpacing;
     private renderImage;
+    private drawImagePlaceholder;
+    private renderImageFallback;
+    private drawImageWithFit;
     private renderLine;
 }
 //# sourceMappingURL=CTRenderer.d.ts.map

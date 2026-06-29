@@ -61,6 +61,7 @@ import {
   layoutWrappedText,
 } from "../utils";
 import { CTRenderer, LayoutEngine, MeasurementEngine } from "./jsx";
+import type { CTInteractiveRegion, JSXRenderContext } from "./jsx";
 import { zhCN } from "../locale";
 
 type CellRenderLocation = {
@@ -97,6 +98,7 @@ type CellRenderDetailSnapshot = {
 type CellRenderStats = PhaseStats & {
   maxCell?: CellRenderLocation;
   maxCellDetail?: CellRenderDetailSnapshot;
+  stepTotals?: Map<string, CellRenderSubStepStats>;
 };
 
 type RowBandDetailStats = PhaseStats & {
@@ -108,6 +110,12 @@ type RowBandCellTrace = {
   prefix: string;
   location: CellRenderLocation;
   columnKey: string;
+};
+
+type JSXUpdateHandlers = {
+  updateValue: (rowIndex: number, column: Column, value: unknown) => Promise<void>;
+  updateField: (rowIndex: number, field: string, value: unknown) => Promise<void>;
+  updateRow: (rowIndex: number, data: Record<string, unknown>) => Promise<void>;
 };
 
 class CellRenderDetailRecorder implements CellRenderTrace {
@@ -193,6 +201,11 @@ export class Renderer {
   // 避免在滚动热路径上每个单元格都分配 options/context 对象。
   private imageRenderer!: CellRenderer;
   private imageRenderContext!: CellRendererContext;
+  private jsxMeasurementEngine!: MeasurementEngine;
+  private jsxLayoutEngine!: LayoutEngine;
+  private jsxRenderer!: CTRenderer;
+  private jsxInteractiveRegions: CTInteractiveRegion[] = [];
+  private jsxUpdateHandlers: JSXUpdateHandlers | null = null;
   private static readonly SHARED_PLACEHOLDER_COLUMN = {
     key: "image",
     title: "image",
@@ -249,6 +262,7 @@ export class Renderer {
   }> = [];
   private static readonly MAX_FRAME_HISTORY = 120;
   private static readonly SLOW_CELL_DETAIL_THRESHOLD_MS = 8;
+  private static readonly DETAILED_CELL_THRESHOLD_MS = new Map<string, number>([["jsx", 0]]);
   private static readonly DETAILED_CELL_TYPES = new Set(["image", "jsx"]);
   private static readonly MAX_DETAIL_STEPS_PER_CELL = 24;
 
@@ -325,6 +339,9 @@ export class Renderer {
       this.dpr,
       locale,
     );
+    this.jsxMeasurementEngine = new MeasurementEngine(this.ctx);
+    this.jsxLayoutEngine = new LayoutEngine(this.jsxMeasurementEngine);
+    this.jsxRenderer = new CTRenderer(this.ctx, this.jsxLayoutEngine, this.theme);
 
     // 初始化图片加载队列（使用默认配置）
     this.imageLoadQueue = new ImageLoadQueue();
@@ -379,6 +396,8 @@ export class Renderer {
     this.filterDropdownRenderer.setContext(this.ctx);
     this.imageOverlayRenderer.setContext(this.ctx);
     this.overlayRenderer.setCanvas(this.canvas, this.ctx);
+    this.jsxMeasurementEngine.setContext(this.ctx);
+    this.jsxRenderer.setContext(this.ctx);
   }
 
   setTheme(theme: TableTheme): void {
@@ -387,6 +406,7 @@ export class Renderer {
     this.filterDropdownRenderer.setTheme(theme);
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
+    this.jsxRenderer.setTheme(theme);
   }
 
   setLocale(locale: CanvasTableLocale): void {
@@ -473,6 +493,7 @@ export class Renderer {
     this.filterDropdownRenderer.setTheme(theme);
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
+    this.jsxRenderer.setTheme(theme);
   }
 
   markDirty(x: number, y: number, width: number, height: number): void {
@@ -480,6 +501,39 @@ export class Renderer {
   }
 
   markFullRedraw(): void {}
+
+  getJSXInteractiveRegions(): CTInteractiveRegion[] {
+    return this.jsxInteractiveRegions;
+  }
+
+  setJSXUpdateHandlers(handlers: JSXUpdateHandlers | null): void {
+    this.jsxUpdateHandlers = handlers;
+  }
+
+  private createJSXRenderContext(
+    row: Row,
+    column: Column,
+    rowIndex: number,
+    colIndex: number,
+    value: unknown,
+  ): JSXRenderContext {
+    return {
+      value,
+      row,
+      column,
+      rowIndex,
+      colIndex,
+      updateValue: async (nextValue) => {
+        await this.jsxUpdateHandlers?.updateValue(rowIndex, column, nextValue);
+      },
+      updateField: async (field, nextValue) => {
+        await this.jsxUpdateHandlers?.updateField(rowIndex, field, nextValue);
+      },
+      updateRow: async (data) => {
+        await this.jsxUpdateHandlers?.updateRow(rowIndex, data);
+      },
+    };
+  }
 
   render(
     columns: Column[],
@@ -525,6 +579,7 @@ export class Renderer {
     this.currentRowResizeState = options.rowResizeState;
     this.currentValidationErrors = options.validationErrors ?? new Map();
     this.currentPendingValidations = options.pendingValidations ?? new Set();
+    this.jsxInteractiveRegions = [];
 
     // 开始性能监控帧
     this.beginFrame();
@@ -2402,6 +2457,9 @@ export class Renderer {
             colIndex,
             isDisabled,
             column.key,
+            row,
+            column,
+            value,
           );
         });
       } else {
@@ -2419,6 +2477,9 @@ export class Renderer {
             colIndex,
             isDisabled,
             column.key,
+            row,
+            column,
+            value,
           );
         });
       }
@@ -2548,6 +2609,9 @@ export class Renderer {
     colIndex?: number,
     isDisabled?: boolean,
     columnKey?: string,
+    row?: Row,
+    column?: Column,
+    value?: unknown,
   ): void {
     try {
       this.renderCellContentInternal(
@@ -2562,6 +2626,9 @@ export class Renderer {
         colIndex,
         isDisabled,
         columnKey,
+        row,
+        column,
+        value,
       );
     } catch (error) {
       console.error(`Error rendering cell content at row ${rowIndex}, col ${colIndex}:`, error);
@@ -2640,6 +2707,9 @@ export class Renderer {
     colIndex?: number,
     isDisabled?: boolean,
     columnKey?: string,
+    row?: Row,
+    column?: Column,
+    value?: unknown,
   ): void {
     // 保存 canvas 状态，确保所有渲染操作不会影响后续单元格
     this.ctx.save();
@@ -2917,20 +2987,44 @@ export class Renderer {
           try {
             const traceValue = <T>(name: string, fn: () => T): T =>
               trace ? trace.measure(name, fn) : fn();
-            const elementTree = traceValue("jsx.jsxRender", () => renderResult.jsxRender!());
-            const measurementEngine = traceValue(
-              "jsx.measurementEngine.create",
-              () => new MeasurementEngine(this.ctx, trace),
+            const contextRow = row ?? Renderer.SHARED_PLACEHOLDER_ROW;
+            const contextColumn = column ?? Renderer.SHARED_PLACEHOLDER_COLUMN;
+            const jsxContext = this.createJSXRenderContext(
+              contextRow,
+              contextColumn,
+              rowIndex ?? -1,
+              colIndex ?? -1,
+              value,
             );
-            const layoutEngine = traceValue(
-              "jsx.layoutEngine.create",
-              () => new LayoutEngine(measurementEngine, trace),
+            const elementTree = traceValue("jsx.jsxRender", () =>
+              renderResult.jsxRender!(jsxContext),
             );
-            const ctRenderer = traceValue(
-              "jsx.ctRenderer.create",
-              () => new CTRenderer(this.ctx, layoutEngine, this.theme, trace),
-            );
-            ctRenderer.render(elementTree, x, y, { width, height });
+            const jsxLayoutKey = renderResult.jsxLayoutKey;
+            const layoutCacheKey =
+              typeof jsxLayoutKey === "function"
+                ? traceValue("jsx.layoutKey", () => jsxLayoutKey(jsxContext) ?? null)
+                : (jsxLayoutKey ?? null);
+            this.jsxMeasurementEngine.setTrace(trace);
+            this.jsxLayoutEngine.setTrace(trace);
+            this.jsxRenderer.setTrace(trace);
+            this.jsxRenderer.setRenderContext({
+              ctx: this.ctx,
+              theme: this.theme,
+              trace,
+              imageRuntime: this.imageRuntime,
+              row: contextRow,
+              column: contextColumn,
+              rowIndex,
+              colIndex,
+              cellRect: { x, y, width, height },
+              updateValue: jsxContext.updateValue,
+              updateField: jsxContext.updateField,
+              updateRow: jsxContext.updateRow,
+              collectInteractiveRegion: (region) => {
+                this.jsxInteractiveRegions.push(region);
+              },
+            });
+            this.jsxRenderer.render(elementTree, x, y, { width, height }, layoutCacheKey);
           } catch (e) {
             console.error(`[Renderer] JSX render error at row ${rowIndex}, col ${colIndex}:`, e);
           } finally {
@@ -3392,6 +3486,7 @@ export class Renderer {
         const stats = totalByKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
         stats.totalTime += frameStat.totalTime;
         stats.count += frameStat.count;
+        stats.stepTotals = this.mergeStepTotalsMap(stats.stepTotals, frameStat.stepTotals);
         if (frameStat.maxTime > stats.maxTime) {
           stats.maxTime = frameStat.maxTime;
           stats.maxCell = frameStat.maxCell ? { ...frameStat.maxCell } : undefined;
@@ -3477,11 +3572,61 @@ export class Renderer {
     };
   }
 
+  private mergeStepTotals(
+    target: Map<string, CellRenderSubStepStats> | undefined,
+    detail: CellRenderDetailSnapshot | undefined,
+  ): Map<string, CellRenderSubStepStats> | undefined {
+    if (!detail) return target;
+    const totals = target ?? new Map<string, CellRenderSubStepStats>();
+    for (const step of detail.steps) {
+      const stats = totals.get(step.name) ?? {
+        name: step.name,
+        totalTime: 0,
+        count: 0,
+        maxTime: 0,
+      };
+      stats.totalTime += step.totalTime;
+      stats.count += step.count;
+      stats.maxTime = Math.max(stats.maxTime, step.maxTime);
+      totals.set(step.name, stats);
+    }
+    return totals;
+  }
+
+  private mergeStepTotalsMap(
+    target: Map<string, CellRenderSubStepStats> | undefined,
+    source: Map<string, CellRenderSubStepStats> | undefined,
+  ): Map<string, CellRenderSubStepStats> | undefined {
+    if (!source) return target;
+    const totals = target ?? new Map<string, CellRenderSubStepStats>();
+    for (const step of source.values()) {
+      const stats = totals.get(step.name) ?? {
+        name: step.name,
+        totalTime: 0,
+        count: 0,
+        maxTime: 0,
+      };
+      stats.totalTime += step.totalTime;
+      stats.count += step.count;
+      stats.maxTime = Math.max(stats.maxTime, step.maxTime);
+      totals.set(step.name, stats);
+    }
+    return totals;
+  }
+
+  private copyStepTotals(
+    stepTotals: Map<string, CellRenderSubStepStats> | undefined,
+  ): Map<string, CellRenderSubStepStats> | undefined {
+    if (!stepTotals) return undefined;
+    return new Map(Array.from(stepTotals, ([name, step]) => [name, { ...step }]));
+  }
+
   private copyCellStats(stats: CellRenderStats): CellRenderStats {
     return {
       ...stats,
       maxCell: stats.maxCell ? { ...stats.maxCell } : undefined,
       maxCellDetail: this.copyCellDetail(stats.maxCellDetail),
+      stepTotals: this.copyStepTotals(stats.stepTotals),
     };
   }
 
@@ -3497,7 +3642,9 @@ export class Renderer {
     duration: number,
     location: CellRenderLocation,
   ): CellRenderDetailSnapshot | undefined {
-    if (!recorder || duration < Renderer.SLOW_CELL_DETAIL_THRESHOLD_MS) return undefined;
+    const threshold =
+      Renderer.DETAILED_CELL_THRESHOLD_MS.get(type) ?? Renderer.SLOW_CELL_DETAIL_THRESHOLD_MS;
+    if (!recorder || duration < threshold) return undefined;
     return recorder.toSnapshot(
       type,
       columnKey,
@@ -3555,6 +3702,7 @@ export class Renderer {
     const frameStats = byKey.get(columnKey) || { totalTime: 0, count: 0, maxTime: 0 };
     frameStats.totalTime += duration;
     frameStats.count++;
+    frameStats.stepTotals = this.mergeStepTotals(frameStats.stepTotals, detail);
     if (duration > frameStats.maxTime) {
       frameStats.maxTime = duration;
       frameStats.maxCell = { ...location };
@@ -3848,6 +3996,31 @@ export class Renderer {
         });
     };
 
+    const formatStepTotals = (
+      stepTotals: Map<string, CellRenderSubStepStats> | undefined,
+      totalTime: number,
+      indent = "  ",
+    ) => {
+      if (!stepTotals || stepTotals.size === 0) return [];
+      return Array.from(stepTotals.values())
+        .map((step) => ({
+          ...step,
+          avg: step.count > 0 ? step.totalTime / step.count : 0,
+          percentage: totalTime > 0 ? (step.totalTime / totalTime) * 100 : 0,
+        }))
+        .sort((a, b) => b.totalTime - a.totalTime)
+        .slice(0, 24)
+        .map(
+          (step) =>
+            `${indent}${step.name.padEnd(35)} | ` +
+            `calls: ${step.count.toString().padStart(5)} | ` +
+            `avg: ${step.avg.toFixed(3).padStart(7)}ms | ` +
+            `max: ${step.maxTime.toFixed(3).padStart(7)}ms | ` +
+            `total: ${step.totalTime.toFixed(2).padStart(8)}ms | ` +
+            `${step.percentage.toFixed(1).padStart(5)}%`,
+        );
+    };
+
     const frameCount = this.frameCount || 1;
 
     // 检查是否有数据
@@ -3947,6 +4120,7 @@ export class Renderer {
             totalTime: stats.totalTime,
             maxTime: stats.maxTime,
             maxCell: stats.maxCell,
+            stepTotals: stats.stepTotals,
             avgTime: stats.count > 0 ? stats.totalTime / stats.count : 0,
             callsPerFrame: Math.round(stats.count / frameCount),
             avgFrameTime: stats.totalTime / frameCount,
@@ -3984,6 +4158,19 @@ export class Renderer {
     }
 
     const avgFrameTotal = typeBuckets.reduce((sum, b) => sum + b.totalTime / frameCount, 0);
+
+    const jsxBucket = typeBuckets.find((bucket) => bucket.type === "jsx");
+    const jsxStepEntries = jsxBucket?.keyEntries.filter((entry) => entry.stepTotals?.size);
+    if (jsxStepEntries && jsxStepEntries.length > 0) {
+      lines.push("");
+      lines.push("=== JSX STEP TOTALS (all frames) ===");
+      lines.push("-".repeat(70));
+      for (const entry of jsxStepEntries) {
+        lines.push(`[${entry.columnKey}]`);
+        lines.push(...formatStepTotals(entry.stepTotals, entry.totalTime, "  "));
+      }
+    }
+
     lines.push("");
     lines.push(`Average frame render time: ${avgFrameTotal.toFixed(2)}ms`);
 

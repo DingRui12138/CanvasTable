@@ -6,12 +6,23 @@ import type { CellRenderTrace } from "../renderers/CellRenderer";
  * CTText: 自动测量宽度，高度由 fontSize/lineHeight 决定
  * 其他图元: 直接读取 width/height 属性
  */
+const TEXT_WIDTH_CACHE = new Map<string, number>();
+const TEXT_WIDTH_CACHE_MAX = 2000;
+
 export class MeasurementEngine {
   private ctx: CanvasRenderingContext2D;
   private trace?: CellRenderTrace;
 
   constructor(ctx: CanvasRenderingContext2D, trace?: CellRenderTrace) {
     this.ctx = ctx;
+    this.trace = trace;
+  }
+
+  setContext(ctx: CanvasRenderingContext2D): void {
+    this.ctx = ctx;
+  }
+
+  setTrace(trace?: CellRenderTrace): void {
     this.trace = trace;
   }
 
@@ -26,11 +37,27 @@ export class MeasurementEngine {
     fontWeight?: string,
     fontStyle?: string,
   ): number {
-    this.ctx.font = `${fontStyle ?? "normal"} ${fontWeight ?? "normal"} ${fontSize}px ${fontFamily}`;
-    return this.traceStep(
+    const normalizedFontStyle = fontStyle ?? "normal";
+    const normalizedFontWeight = fontWeight ?? "normal";
+    const cacheKey = `${normalizedFontStyle}|${normalizedFontWeight}|${fontSize}|${fontFamily}|${text}`;
+    const cached = TEXT_WIDTH_CACHE.get(cacheKey);
+    if (cached !== undefined) {
+      TEXT_WIDTH_CACHE.delete(cacheKey);
+      TEXT_WIDTH_CACHE.set(cacheKey, cached);
+      return cached;
+    }
+
+    this.ctx.font = `${normalizedFontStyle} ${normalizedFontWeight} ${fontSize}px ${fontFamily}`;
+    const width = this.traceStep(
       "jsx.measurement.measureTextWidth",
       () => this.ctx.measureText(text).width,
     );
+    if (TEXT_WIDTH_CACHE.size >= TEXT_WIDTH_CACHE_MAX) {
+      const oldestKey = TEXT_WIDTH_CACHE.keys().next().value;
+      if (oldestKey !== undefined) TEXT_WIDTH_CACHE.delete(oldestKey);
+    }
+    TEXT_WIDTH_CACHE.set(cacheKey, width);
+    return width;
   }
 
   measureElement(element: CTElement): CTLayoutInfo {
@@ -46,6 +73,11 @@ export class MeasurementEngine {
           return this.measureImage(element);
         case "CTLine":
           return this.measureLine(element);
+        case "CTTooltip":
+        case "CTDropdown":
+          return element.children[0]
+            ? this.measureElement(element.children[0])
+            : { x: 0, y: 0, width: 0, height: 0 };
         default:
           return { x: 0, y: 0, width: 0, height: 0 };
       }

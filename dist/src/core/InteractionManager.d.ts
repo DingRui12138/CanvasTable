@@ -3,6 +3,7 @@ import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
 import { EventEmitter } from "./EventEmitter";
 import { EditorRegistry } from "./editors";
+import type { CTInteractiveRegion } from "./jsx";
 interface InteractionEvents {
     cellClick: [CellInfo, MouseEvent];
     cellDblClick: [CellInfo, MouseEvent];
@@ -109,6 +110,7 @@ export declare class InteractionManager {
     private locale;
     private handlerContext;
     private editorRegistry;
+    private jsxInteractiveRegions;
     /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
     private shouldBlockDropdownClose;
     /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
@@ -207,6 +209,8 @@ export declare class InteractionManager {
     clearEditingState(): void;
     isEditing(): boolean;
     getDropdown(): DropdownState | null;
+    setJSXInteractiveRegions(regions: CTInteractiveRegion[]): void;
+    private getJSXInteractiveRegionAt;
     private toggleRowExpand;
     clearSelection(): void;
     resetState(): void;

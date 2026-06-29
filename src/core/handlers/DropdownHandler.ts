@@ -8,6 +8,7 @@
 import { BaseHandler, HandlerContext, InteractionEvents } from "./BaseHandler";
 import { EventEmitter } from "../EventEmitter";
 import { TableEvents } from "../../constants/events";
+import type { SelectOption } from "../../types";
 
 export class DropdownHandler extends BaseHandler {
   private static readonly DROPDOWN_ITEM_HEIGHT = 32;
@@ -15,6 +16,29 @@ export class DropdownHandler extends BaseHandler {
 
   constructor(context: HandlerContext, eventEmitter: EventEmitter<InteractionEvents>) {
     super(context, eventEmitter);
+  }
+
+  private invokeJSXDropdownChange(value: unknown, option: SelectOption, multiple: boolean): void {
+    const dropdown = this.state.dropdown;
+    const onChange = dropdown?.onChange;
+    if (!dropdown || !onChange) return;
+
+    try {
+      const result = onChange(value, option, {
+        config: dropdown.config,
+        multiple,
+        row: dropdown.row,
+        column: dropdown.column,
+        rowIndex: dropdown.rowIndex,
+        colIndex: dropdown.colIndex,
+      });
+
+      Promise.resolve(result).catch((error) => {
+        console.error("[DropdownHandler] JSX dropdown onChange error:", error);
+      });
+    } catch (error) {
+      console.error("[DropdownHandler] JSX dropdown onChange error:", error);
+    }
   }
 
   /**
@@ -116,6 +140,16 @@ export class DropdownHandler extends BaseHandler {
               currentValues.push(optionValue);
             }
 
+            if (this.state.dropdown.source === "jsx" || this.state.dropdown.onChange) {
+              this.invokeJSXDropdownChange(currentValues, option, true);
+              this.state.dropdown.config = {
+                ...config,
+                value: currentValues,
+              };
+              this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
+              return true;
+            }
+
             this.eventEmitter.emit(
               TableEvents.SELECT_CHANGE,
               this.getCellInfo(this.state.dropdown.cell)!,
@@ -129,6 +163,14 @@ export class DropdownHandler extends BaseHandler {
             };
             this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
           } else {
+            if (this.state.dropdown.source === "jsx" || this.state.dropdown.onChange) {
+              const dropdownCell = this.state.dropdown.cell;
+              this.invokeJSXDropdownChange(option.value, option, false);
+              this.state.dropdown = null;
+              this.eventEmitter.emit(TableEvents.DROPDOWN_CLOSE, dropdownCell);
+              return true;
+            }
+
             this.eventEmitter.emit(
               TableEvents.SELECT_CHANGE,
               this.getCellInfo(this.state.dropdown.cell)!,

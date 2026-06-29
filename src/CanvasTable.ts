@@ -311,6 +311,17 @@ export class CanvasTable implements CanvasTableAPI {
     this.layoutManager.setRowHeightFn(props.rowHeight);
     this.renderer = new Renderer(this.canvas, this.theme, this.layoutManager, this.locale);
     this.renderer.setMultipleSelectSeparator(props.multipleSelectSeparator ?? ", ");
+    this.renderer.setJSXUpdateHandlers({
+      updateValue: async (rowIndex, column, value) => {
+        await this.updateCell(rowIndex, getColumnField(column), value);
+      },
+      updateField: async (rowIndex, field, value) => {
+        await this.updateCell(rowIndex, field, value);
+      },
+      updateRow: async (rowIndex, data) => {
+        await this.updateRow(rowIndex, data);
+      },
+    });
 
     // 初始化渲染缓存相关管理器
     this.rowIdManager = this.renderer.getRowIdManager();
@@ -1568,6 +1579,7 @@ export class CanvasTable implements CanvasTableAPI {
           pendingValidations: this.pendingValidationCells,
         },
       );
+      this.interactionManager.setJSXInteractiveRegions(this.renderer.getJSXInteractiveRegions());
     });
 
     this.measureCanvasPhase("overlays", () => {

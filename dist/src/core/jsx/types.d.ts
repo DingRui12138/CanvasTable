@@ -1,3 +1,47 @@
+import type { Column, Row, SelectConfig, SelectOption, TableTheme } from "../../types";
+import type { ImageRuntime, CellRenderTrace } from "../renderers/CellRenderer";
+export interface CTRect {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+}
+export type CTInteractiveRegionType = "tooltip" | "dropdown" | "image";
+export interface CTInteractiveRegion {
+    type: CTInteractiveRegionType;
+    rect: CTRect;
+    element: CTElement;
+    props: Record<string, unknown>;
+    row?: Row;
+    column?: Column;
+    rowIndex?: number;
+    colIndex?: number;
+}
+export interface JSXRenderContext {
+    value: unknown;
+    row: Row;
+    column: Column;
+    rowIndex: number;
+    colIndex: number;
+    updateValue: (value: unknown) => Promise<void>;
+    updateField: (field: string, value: unknown) => Promise<void>;
+    updateRow: (data: Record<string, unknown>) => Promise<void>;
+}
+export interface CTRenderContext {
+    ctx: CanvasRenderingContext2D;
+    theme: TableTheme;
+    trace?: CellRenderTrace;
+    imageRuntime?: ImageRuntime;
+    row?: Row;
+    column?: Column;
+    rowIndex?: number;
+    colIndex?: number;
+    cellRect?: CTRect;
+    updateValue?: (value: unknown) => Promise<void>;
+    updateField?: (field: string, value: unknown) => Promise<void>;
+    updateRow?: (data: Record<string, unknown>) => Promise<void>;
+    collectInteractiveRegion?: (region: CTInteractiveRegion) => void;
+}
 /** CTElement 样式状态 */
 export interface CTStyles {
     default: Partial<CTElementProps>;
@@ -139,11 +183,18 @@ export interface CTTextProps extends CTBaseProps, CTPositionProps {
 }
 /** CTImage 图片属性 */
 export interface CTImageProps extends CTBaseProps, CTPositionProps {
-    src: string;
+    src?: string;
     width: number;
     height: number;
     borderRadius?: number;
-    objectFit?: "fill" | "contain" | "cover";
+    radius?: number;
+    objectFit?: "fill" | "contain" | "cover" | "none";
+    fit?: "fill" | "contain" | "cover" | "none";
+    circle?: boolean;
+    placeholder?: string;
+    errorImage?: string;
+    lazy?: boolean;
+    lazyThreshold?: number;
 }
 /** CTLine 线条属性 */
 export interface CTLineProps extends CTBaseProps, CTPositionProps {
@@ -155,11 +206,32 @@ export interface CTLineProps extends CTBaseProps, CTPositionProps {
     strokeColor?: string;
     strokeLinecap?: "butt" | "round" | "square";
 }
+export interface CTTooltipProps extends CTBaseProps {
+    content: string;
+    placement?: "top" | "right" | "bottom" | "left";
+    width?: number;
+}
+export interface CTDropdownChangeContext {
+    config: SelectConfig;
+    multiple: boolean;
+    row?: Row;
+    column?: Column;
+    rowIndex?: number;
+    colIndex?: number;
+}
+export type CTDropdownOnChange = (value: unknown, option: SelectOption, context: CTDropdownChangeContext) => void | Promise<void>;
+export interface CTDropdownProps extends CTBaseProps {
+    config: SelectConfig;
+    width?: number;
+    placement?: "bottom" | "top";
+    onChange?: CTDropdownOnChange;
+}
 /** 元素属性联合类型 */
-export type CTElementProps = CTBoxProps | CTCircleProps | CTTextProps | CTImageProps | CTLineProps;
+export type CTElementProps = CTBoxProps | CTCircleProps | CTTextProps | CTImageProps | CTLineProps | CTTooltipProps | CTDropdownProps;
+export type CTElementType = "CTBox" | "CTCircle" | "CTText" | "CTImage" | "CTLine" | "CTTooltip" | "CTDropdown";
 /** CTElement 树节点 */
 export interface CTElement {
-    type: "CTBox" | "CTCircle" | "CTText" | "CTImage" | "CTLine";
+    type: CTElementType;
     props: Record<string, unknown>;
     children: CTElement[];
 }
@@ -191,6 +263,9 @@ export interface CTLayoutInfo {
 /** 布局树节点（用于渲染时直接定位，避免重复 layout 计算） */
 export interface CTLayoutNode extends CTLayoutInfo {
     element: CTElement;
+    currentElement?: CTElement;
     children: CTLayoutNode[];
+    offsetX?: number;
+    offsetY?: number;
 }
 //# sourceMappingURL=types.d.ts.map

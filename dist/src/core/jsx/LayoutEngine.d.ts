@@ -9,10 +9,8 @@ export declare class LayoutEngine {
     private rootParentSize;
     /** 单次 layout/layoutTree 调用内的 measureChildSize 缓存 */
     private measureCache;
-    /** 跨单元格缓存命中计数（用于 trace） */
-    private static cacheHits;
-    private static cacheMisses;
     constructor(measurementEngine: MeasurementEngine, trace?: CellRenderTrace);
+    setTrace(trace?: CellRenderTrace): void;
     private traceStep;
     /**
      * 计算元素树布局，返回所有元素的绝对坐标
@@ -29,10 +27,12 @@ export declare class LayoutEngine {
     layoutTree(root: CTElement, startX: number, startY: number, parentSize?: {
         width: number;
         height: number;
-    }): CTLayoutNode;
+    }, explicitCacheKey?: string | null): CTLayoutNode;
     /** 解析尺寸值（支持百分比字符串和数字） */
     private resolveSize;
     private layoutNode;
+    private layoutTransparentWrapperNode;
+    private layoutTransparentWrapper;
     private layoutElement;
     /**
      * 解析容器自身尺寸：优先使用 width/height（支持百分比），否则用 fallback（内容尺寸）
@@ -70,22 +70,19 @@ export declare class LayoutEngine {
     private calculateContentHeight;
     private layoutChildren;
     private parentSizeMatches;
+    private buildExplicitCacheKey;
     private buildRelativeCacheKey;
     /**
-     * 生成元素树签名。遇到无法序列化的值（函数、Symbol、循环引用等）返回 null
-     * 以放弃缓存而不是冒着错误命中渲染的风险。
+     * 生成元素树签名。遇到会影响布局但无法序列化的值（Symbol、循环引用等）返回 null，
+     * 以放弃缓存而不是冒着错误命中渲染的风险。事件回调不参与布局签名。
      */
     private elementSignature;
     private appendElementSignature;
+    private appendPropsSignature;
+    private isEventCallbackProp;
     private appendValueSignature;
     private cacheRelativeTree;
     private cloneTreeForCache;
-    /**
-     * 克隆缓存的相对布局树，将坐标偏移到 (offsetX, offsetY)，
-     * 并按当前元素树的布局顺序重新绑定 element 引用。
-     */
-    private cloneTreeWithOffset;
-    private cloneNode;
-    private getLayoutOrderedChildren;
+    private createOffsetLayoutTree;
 }
 //# sourceMappingURL=LayoutEngine.d.ts.map

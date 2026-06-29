@@ -1,4 +1,4 @@
-import type { CTCircleProps, CTComponentProps, CTBoxProps, CTBoxShadow, CTBackgroundGradient, CTBorderSide, CTImageProps, CTLineProps, CTTextProps } from "./types";
+import type { CTCircleProps, CTComponentProps, CTBoxProps, CTBoxShadow, CTBackgroundGradient, CTBorderSide, CTImageProps, CTLineProps, CTTextProps, CTTooltipProps, CTDropdownProps } from "./types";
 export type BorderShortcut = string | {
     width?: number;
     color?: string;
@@ -66,11 +66,19 @@ export interface BoxProps extends CTComponentProps {
 export interface TextProps extends CTComponentProps, Omit<CTTextProps, "text"> {
     text?: string;
 }
+export interface DateProps extends CTComponentProps, Omit<CTTextProps, "text"> {
+    value?: string | number | globalThis.Date | null;
+    format?: string;
+    placeholder?: string;
+}
 export type CircleProps = CTComponentProps & CTCircleProps & {
     bgColor?: string;
 };
 export type ImageProps = CTComponentProps & CTImageProps;
 export type LineProps = CTComponentProps & CTLineProps;
+export type TooltipProps = CTComponentProps & CTTooltipProps;
+export type DropdownProps = CTComponentProps & CTDropdownProps;
 export declare function normalizeBoxProps(props: BoxProps): CTBoxProps;
 export declare function getTextFromChildren(props: TextProps): string;
+export declare function getDateText(props: DateProps): string;
 //# sourceMappingURL=props.d.ts.map

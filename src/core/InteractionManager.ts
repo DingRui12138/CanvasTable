@@ -44,9 +44,11 @@ import {
   getRenderResult,
   getColumnField,
   getColumnFilterOptions,
+  resolveDisabled,
   searchFilterOptions,
 } from "../utils";
 import { TableEvents } from "../constants/events";
+import type { CTDropdownOnChange, CTInteractiveRegion } from "./jsx";
 import {
   EditingHandler,
   DropdownHandler,
@@ -188,6 +190,7 @@ export class InteractionManager {
   private locale: CanvasTableLocale;
   private handlerContext: HandlerContext | null = null;
   private editorRegistry: EditorRegistry;
+  private jsxInteractiveRegions: CTInteractiveRegion[] = [];
   /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
   private shouldBlockDropdownClose: ((cell: CellPosition) => Promise<boolean>) | null = null;
   /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
@@ -461,7 +464,11 @@ export class InteractionManager {
       if (dropdownClick) return;
       // 校验 hook 决定是否阻止关闭下拉
       const dropdownCell = this.state.dropdown.cell;
-      if (this.shouldBlockDropdownClose && (await this.shouldBlockDropdownClose(dropdownCell))) {
+      if (
+        this.state.dropdown.source !== "jsx" &&
+        this.shouldBlockDropdownClose &&
+        (await this.shouldBlockDropdownClose(dropdownCell))
+      ) {
         return;
       }
       this.state.dropdown = null;
@@ -495,6 +502,34 @@ export class InteractionManager {
       // editorClick === "outside" - close editor
       this.imageHandler.commitImageEditorChanges();
       return;
+    }
+
+    const jsxRegion = this.getJSXInteractiveRegionAt(viewportX, viewportY);
+    if (jsxRegion?.type === "dropdown") {
+      const config = jsxRegion.props.config as SelectConfig | undefined;
+      if (config) {
+        this.state.dropdown = {
+          cell: {
+            rowIndex: jsxRegion.rowIndex ?? -1,
+            columnIndex: jsxRegion.colIndex ?? -1,
+          },
+          config,
+          x: jsxRegion.rect.x,
+          y: jsxRegion.rect.y + jsxRegion.rect.height,
+          width: (jsxRegion.props.width as number | undefined) ?? jsxRegion.rect.width,
+          scrollTop: 0,
+          hoveredIndex: -1,
+          showAbove: jsxRegion.props.placement === "top",
+          source: "jsx",
+          onChange: jsxRegion.props.onChange as CTDropdownOnChange | undefined,
+          row: jsxRegion.row,
+          column: jsxRegion.column,
+          rowIndex: jsxRegion.rowIndex,
+          colIndex: jsxRegion.colIndex,
+        };
+        this.eventEmitter.emit(TableEvents.DROPDOWN_OPEN);
+        return;
+      }
     }
 
     // 统一命中测试
@@ -1139,6 +1174,40 @@ export class InteractionManager {
       return;
     }
 
+    const jsxRegion = this.getJSXInteractiveRegionAt(viewportX, viewportY);
+    if (jsxRegion?.type === "dropdown") {
+      this.canvas.style.cursor = "pointer";
+      this.state.tooltip = null;
+      return;
+    }
+    if (jsxRegion?.type === "tooltip") {
+      this.canvas.style.cursor = "default";
+      const text = String(jsxRegion.props.content ?? "");
+      const previous = this.state.tooltip;
+      const nextTooltip = {
+        cell: {
+          rowIndex: jsxRegion.rowIndex ?? -1,
+          columnIndex: jsxRegion.colIndex ?? -1,
+        },
+        x: jsxRegion.rect.x,
+        y: jsxRegion.rect.y,
+        width: (jsxRegion.props.width as number | undefined) ?? jsxRegion.rect.width,
+        content: { type: "text" as const, text },
+      };
+      this.state.tooltip = nextTooltip;
+      const changed =
+        !previous ||
+        previous.x !== nextTooltip.x ||
+        previous.y !== nextTooltip.y ||
+        previous.width !== nextTooltip.width ||
+        previous.content.type !== "text" ||
+        previous.content.text !== text;
+      if (changed) {
+        this.eventEmitter.emit(TableEvents.CELL_HOVER, null, e);
+      }
+      return;
+    }
+
     // 统一命中测试
     const hitResult = this.layoutManager.hitTest(viewportX, viewportY, this.getScrollbarBounds());
 
@@ -1205,8 +1274,7 @@ export class InteractionManager {
       const leafColumns = this.layoutManager.getLeafColumns();
       const column = cell.columnIndex >= 0 ? leafColumns[cell.columnIndex] : undefined;
       const row = cell.rowIndex >= 0 ? this.rows[cell.rowIndex] : undefined;
-      const isDisabled =
-        column && row ? !this.editorRegistry.getStrategy(column).canEdit(cell, row, column) : false;
+      const isDisabled = column && row ? resolveDisabled(column.disabled, row, column) : false;
 
       if (isDisabled) {
         this.canvas.style.cursor = "not-allowed";
@@ -2137,7 +2205,11 @@ export class InteractionManager {
 
       // 校验 hook 决定是否阻止 dblclick 关闭下拉
       const dropdownCell = this.state.dropdown.cell;
-      if (this.shouldBlockDropdownClose && (await this.shouldBlockDropdownClose(dropdownCell))) {
+      if (
+        this.state.dropdown.source !== "jsx" &&
+        this.shouldBlockDropdownClose &&
+        (await this.shouldBlockDropdownClose(dropdownCell))
+      ) {
         return;
       }
 
@@ -3578,6 +3650,21 @@ export class InteractionManager {
 
   getDropdown(): DropdownState | null {
     return this.state.dropdown;
+  }
+
+  setJSXInteractiveRegions(regions: CTInteractiveRegion[]): void {
+    this.jsxInteractiveRegions = regions;
+  }
+
+  private getJSXInteractiveRegionAt(x: number, y: number): CTInteractiveRegion | undefined {
+    for (let i = this.jsxInteractiveRegions.length - 1; i >= 0; i--) {
+      const region = this.jsxInteractiveRegions[i]!;
+      const rect = region.rect;
+      if (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) {
+        return region;
+      }
+    }
+    return undefined;
   }
 
   private toggleRowExpand(rowIndex: number): void {

@@ -2,9 +2,13 @@ import type { CTElement } from "./types";
 import {
   BoxProps,
   CircleProps,
+  DateProps,
+  DropdownProps,
   ImageProps,
   LineProps,
   TextProps,
+  TooltipProps,
+  getDateText,
   getTextFromChildren,
   normalizeBoxProps,
 } from "./props";
@@ -39,6 +43,20 @@ export function Text(props: TextProps): CTElement {
   };
 }
 
+export function Date(props: DateProps): CTElement {
+  const {
+    children: _children,
+    value: _value,
+    format: _format,
+    placeholder: _placeholder,
+    ...textProps
+  } = props;
+  return Text({
+    ...textProps,
+    text: getDateText(props),
+  });
+}
+
 export function Circle(props: CircleProps): CTElement {
   const { children: _children, bgColor, ...rest } = props;
   return {
@@ -66,5 +84,23 @@ export function Line(props: LineProps): CTElement {
     type: "CTLine",
     props: rest as Record<string, unknown>,
     children: [],
+  };
+}
+
+export function Tooltip(props: TooltipProps): CTElement {
+  const { children, ...rest } = props;
+  return {
+    type: "CTTooltip",
+    props: rest as Record<string, unknown>,
+    children: children ?? [],
+  };
+}
+
+export function Dropdown(props: DropdownProps): CTElement {
+  const { children, ...rest } = props;
+  return {
+    type: "CTDropdown",
+    props: rest as Record<string, unknown>,
+    children: children ?? [],
   };
 }

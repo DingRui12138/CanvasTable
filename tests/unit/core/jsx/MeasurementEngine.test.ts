@@ -19,6 +19,18 @@ describe('MeasurementEngine', () => {
     expect(typeof width).toBe('number');
   });
 
+  it('caches repeated text width measurements', () => {
+    const originalMeasureText = mockCtx.measureText.bind(mockCtx);
+    const measureText = jest.fn((text: string) => originalMeasureText(text));
+    mockCtx.measureText = measureText;
+
+    const first = engine.measureTextWidth('Repeated', 14, 'Arial');
+    const second = engine.measureTextWidth('Repeated', 14, 'Arial');
+
+    expect(second).toBe(first);
+    expect(measureText).toHaveBeenCalledTimes(1);
+  });
+
   it('should measure CTText element', () => {
     const textElement: CTElement = {
       type: 'CTText',

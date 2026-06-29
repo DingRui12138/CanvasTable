@@ -5,6 +5,8 @@ import type {
   CTImageProps,
   CTLineProps,
   CTTextProps,
+  CTTooltipProps,
+  CTDropdownProps,
 } from "./types";
 
 declare global {
@@ -21,6 +23,8 @@ declare global {
       CTText: CTTextProps;
       CTImage: CTImageProps;
       CTLine: CTLineProps;
+      CTTooltip: CTTooltipProps;
+      CTDropdown: CTDropdownProps;
     }
   }
 }

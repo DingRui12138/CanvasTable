@@ -4,6 +4,7 @@ import { LayoutEngine } from '@/core/jsx/LayoutEngine';
 import { MeasurementEngine } from '@/core/jsx/MeasurementEngine';
 import { createCTElement } from '@/core/jsx/createCTElement';
 import type { TableTheme } from '@/types';
+import type { CTInteractiveRegion } from '@/core/jsx/types';
 
 // Polyfill roundRect for jest-canvas-mock
 if (!CanvasRenderingContext2D.prototype.roundRect) {
@@ -81,6 +82,134 @@ describe('CTRenderer', () => {
     const measurementEngine = new MeasurementEngine(mockCtx);
     const layoutEngine = new LayoutEngine(measurementEngine);
     renderer = new CTRenderer(mockCtx, layoutEngine, theme);
+  });
+
+  it('defers layout flattening until layouts are requested', () => {
+    const measuredSteps: string[] = [];
+    const trace = {
+      measure<T>(name: string, fn: () => T): T {
+        measuredSteps.push(name);
+        return fn();
+      },
+      add() {},
+      markBranch() {},
+    };
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine, trace);
+    const tracedRenderer = new CTRenderer(mockCtx, layoutEngine, theme, trace);
+    const tree = createCTElement(
+      'CTBox',
+      { display: 'flex', width: 100, height: 40 },
+      createCTElement('CTText', { text: 'hello' }),
+    );
+
+    tracedRenderer.render(tree, 0, 0, { width: 100, height: 40 });
+
+    expect(measuredSteps).not.toContain('jsx.ctRenderer.flattenLayoutTree');
+
+    const layouts = tracedRenderer.getLayouts();
+
+    expect(layouts.length).toBeGreaterThan(0);
+    expect(measuredSteps).toContain('jsx.ctRenderer.flattenLayoutTree');
+  });
+
+  it('applies cache-hit offsets to nested clipped children', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const tracedRenderer = new CTRenderer(mockCtx, layoutEngine, theme);
+    const createTree = () =>
+      createCTElement(
+        'CTBox',
+        { display: 'flex', width: 100, height: 40, overflow: 'hidden', backgroundColor: '#1890ff' },
+        createCTElement(
+          'CTBox',
+          { display: 'flex', width: 40, height: 20, backgroundColor: '#ffffff' },
+          createCTElement('CTText', { text: 'visible', fontSize: 12 }),
+        ),
+      );
+
+    tracedRenderer.render(createTree(), 0, 0, { width: 100, height: 40 }, 'clipped-card');
+    mockCtx.__clearDrawCalls();
+
+    tracedRenderer.render(createTree(), 50, 30, { width: 100, height: 40 }, 'clipped-card');
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    const drawTypes = drawCalls.map((call) => call.type);
+    const fillTextCall = drawCalls.find((call) => call.type === 'fillText');
+    expect(drawTypes).toContain('fillText');
+    expect(fillTextCall?.props).toEqual(expect.objectContaining({ text: 'visible' }));
+  });
+
+  it('renders cache hits without cloning while rebinding interactive props', () => {
+    const measuredSteps: string[] = [];
+    const trace = {
+      measure<T>(name: string, fn: () => T): T {
+        measuredSteps.push(name);
+        return fn();
+      },
+      add() {},
+      markBranch() {},
+    };
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine, trace);
+    const tracedRenderer = new CTRenderer(mockCtx, layoutEngine, theme, trace);
+    const regions: CTInteractiveRegion[] = [];
+    tracedRenderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      collectInteractiveRegion: (region) => regions.push(region),
+    });
+    const firstOnChange = () => undefined;
+    const firstTree = createCTElement(
+      'CTDropdown',
+      { config: { options: [] }, onChange: firstOnChange },
+      createCTElement('CTBox', { width: 20, height: 20 }),
+    );
+    tracedRenderer.render(firstTree, 0, 0, { width: 100, height: 40 }, 'stable-dropdown');
+    measuredSteps.length = 0;
+
+    const secondOnChange = () => undefined;
+    const secondTree = createCTElement(
+      'CTDropdown',
+      { config: { options: [] }, onChange: secondOnChange },
+      createCTElement('CTBox', { width: 20, height: 20 }),
+    );
+    tracedRenderer.render(secondTree, 50, 30, { width: 100, height: 40 }, 'stable-dropdown');
+
+    expect(measuredSteps).toContain('jsx.layout.cacheHit');
+    expect(measuredSteps).not.toContain('jsx.layout.cacheClone');
+    expect(regions.at(-1)?.rect).toMatchObject({ x: 50, y: 30, width: 20, height: 20 });
+    expect(regions.at(-1)?.props.onChange).toBe(secondOnChange);
+    expect(regions.at(-1)?.props.onChange).not.toBe(firstOnChange);
+  });
+
+  it('updates render context between renders', () => {
+    const regions: Array<{ rowIndex?: number; props: Record<string, unknown> }> = [];
+    const dropdown = createCTElement(
+      'CTDropdown',
+      { config: { options: [] }, onChange: () => undefined },
+      createCTElement('CTBox', { width: 20, height: 20 })
+    );
+
+    renderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      rowIndex: 1,
+      colIndex: 0,
+      collectInteractiveRegion: (region: CTInteractiveRegion) => regions.push({ rowIndex: region.rowIndex, props: region.props }),
+    });
+    renderer.render(dropdown, 0, 0);
+
+    renderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      rowIndex: 2,
+      colIndex: 0,
+      collectInteractiveRegion: (region: CTInteractiveRegion) => regions.push({ rowIndex: region.rowIndex, props: region.props }),
+    });
+    renderer.render(dropdown, 0, 0);
+
+    expect(regions.map((region) => region.rowIndex)).toEqual([1, 2]);
   });
 
   it('should render CTBox with backgroundColor', () => {

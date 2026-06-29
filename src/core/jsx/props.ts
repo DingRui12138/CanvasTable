@@ -8,6 +8,8 @@ import type {
   CTImageProps,
   CTLineProps,
   CTTextProps,
+  CTTooltipProps,
+  CTDropdownProps,
 } from "./types";
 
 export type BorderShortcut =
@@ -82,9 +84,17 @@ export interface TextProps extends CTComponentProps, Omit<CTTextProps, "text"> {
   text?: string;
 }
 
+export interface DateProps extends CTComponentProps, Omit<CTTextProps, "text"> {
+  value?: string | number | globalThis.Date | null;
+  format?: string;
+  placeholder?: string;
+}
+
 export type CircleProps = CTComponentProps & CTCircleProps & { bgColor?: string };
 export type ImageProps = CTComponentProps & CTImageProps;
 export type LineProps = CTComponentProps & CTLineProps;
+export type TooltipProps = CTComponentProps & CTTooltipProps;
+export type DropdownProps = CTComponentProps & CTDropdownProps;
 
 function normalizeBorder(border: BorderShortcut | undefined): {
   borderWidth?: number;
@@ -177,4 +187,35 @@ export function normalizeBoxProps(props: BoxProps): CTBoxProps {
 export function getTextFromChildren(props: TextProps): string {
   if (props.text !== undefined) return props.text;
   return (props.children ?? []).map((child) => String(child.props.text ?? "")).join("");
+}
+
+function formatDateValue(date: globalThis.Date, format: string): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+
+  return format
+    .replace("YYYY", String(year))
+    .replace("MM", month)
+    .replace("DD", day)
+    .replace("HH", hours)
+    .replace("mm", minutes)
+    .replace("ss", seconds);
+}
+
+export function getDateText(props: DateProps): string {
+  if (props.value === undefined || props.value === null || props.value === "") {
+    return props.placeholder ?? "";
+  }
+
+  const date =
+    props.value instanceof globalThis.Date ? props.value : new globalThis.Date(props.value);
+  if (Number.isNaN(date.getTime())) {
+    return props.placeholder ?? "";
+  }
+
+  return formatDateValue(date, props.format ?? "YYYY-MM-DD");
 }
