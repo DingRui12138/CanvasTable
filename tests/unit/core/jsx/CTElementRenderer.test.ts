@@ -387,6 +387,28 @@ describe('CTElementRenderer', () => {
     expect(drawCalls.some(c => c.type === 'fill')).toBe(true);
   });
 
+  it('reuses cached gradients for repeated same-size gradient boxes', () => {
+    const createTree = () => createCTElement(
+      'CTBox',
+      { display: 'flex', flexDirection: 'row', gap: 4 },
+      createCTElement('CTBox', {
+        width: 100,
+        height: 30,
+        backgroundGradient: { type: 'linear', angle: 90, colors: ['#ff0000', '#0000ff'] },
+      }),
+      createCTElement('CTBox', {
+        width: 100,
+        height: 30,
+        backgroundGradient: { type: 'linear', angle: 90, colors: ['#ff0000', '#0000ff'] },
+      }),
+    );
+    const gradientSpy = jest.spyOn(mockCtx, 'createLinearGradient');
+
+    renderer.render(createTree(), 0, 0);
+
+    expect(gradientSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('should render CTBox with backgroundGradient', () => {
     const rect = createCTElement('CTBox', {
       width: 100,
@@ -399,6 +421,37 @@ describe('CTElementRenderer', () => {
     const drawCalls = mockCtx.__getDrawCalls();
     // Gradient fill should exist
     expect(drawCalls.some(c => c.type === 'fill')).toBe(true);
+  });
+
+  it('does not draw image placeholder before cached images', () => {
+    const image = document.createElement('canvas');
+    image.width = 16;
+    image.height = 16;
+    renderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      imageRuntime: {
+        get: () => image,
+        isLoading: () => false,
+        isFailed: () => false,
+        load: () => undefined,
+        collectVisible: () => undefined,
+        isInLazyLoadRange: () => true,
+      },
+    });
+    const element = createCTElement('CTImage', {
+      src: 'avatar.svg',
+      width: 16,
+      height: 16,
+      circle: true,
+    });
+
+    renderer.render(element, 0, 0);
+
+    const drawCalls = mockCtx.__getDrawCalls();
+    expect(drawCalls.filter((call) => call.type === 'fill')).toHaveLength(0);
+    expect(drawCalls.filter((call) => call.type === 'stroke')).toHaveLength(0);
+    expect(drawCalls.some((call) => call.type === 'drawImage')).toBe(true);
   });
 
   it('should render CTBox with border per side', () => {

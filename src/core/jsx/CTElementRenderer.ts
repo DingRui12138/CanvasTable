@@ -30,6 +30,8 @@ export class CTElementRenderer {
   private renderContext?: CTRenderContext;
   private layouts: CTLayoutInfo[] | undefined;
   private layoutTree: CTLayoutNode | undefined;
+  private gradientCache = new Map<string, CanvasGradient>();
+  private static readonly GRADIENT_CACHE_MAX = 200;
 
   constructor(
     ctx: CanvasRenderingContext2D,
@@ -204,19 +206,38 @@ export class CTElementRenderer {
     }
   }
 
-  private createGradientFill(
-    x: number,
-    y: number,
+  private createGradientFill(w: number, h: number, gradient: CTBackgroundGradient): CanvasGradient {
+    const cacheKey = this.getGradientCacheKey(w, h, gradient);
+    const cached = this.gradientCache.get(cacheKey);
+    if (cached) {
+      this.gradientCache.delete(cacheKey);
+      this.gradientCache.set(cacheKey, cached);
+      return cached;
+    }
+
+    const created = this.createRelativeGradientFill(w, h, gradient);
+    this.gradientCache.set(cacheKey, created);
+    if (this.gradientCache.size > CTElementRenderer.GRADIENT_CACHE_MAX) {
+      const oldest = this.gradientCache.keys().next().value;
+      if (oldest) this.gradientCache.delete(oldest);
+    }
+    return created;
+  }
+
+  private getGradientCacheKey(w: number, h: number, gradient: CTBackgroundGradient): string {
+    return `${w}x${h}|${gradient.type}|${gradient.type === "linear" ? gradient.angle : "_"}|${gradient.colors.join(",")}`;
+  }
+
+  private createRelativeGradientFill(
     w: number,
     h: number,
     gradient: CTBackgroundGradient,
   ): CanvasGradient {
     if (gradient.type === "linear") {
       const angle = gradient.angle;
-      // Convert angle to start/end points
-      const rad = ((angle - 90) * Math.PI) / 180; // CSS angle: 0=up, 90=right
-      const cx = x + w / 2;
-      const cy = y + h / 2;
+      const rad = ((angle - 90) * Math.PI) / 180;
+      const cx = w / 2;
+      const cy = h / 2;
       const len = Math.max(w, h);
       const x0 = cx - (Math.cos(rad) * len) / 2;
       const y0 = cy - (Math.sin(rad) * len) / 2;
@@ -228,17 +249,16 @@ export class CTElementRenderer {
         grad.addColorStop(i / (gradient.colors.length - 1), color);
       });
       return grad;
-    } else {
-      // radial gradient
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const r = Math.max(w, h) / 2;
-      const grad = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-      gradient.colors.forEach((color, i) => {
-        grad.addColorStop(i / (gradient.colors.length - 1), color);
-      });
-      return grad;
     }
+
+    const cx = w / 2;
+    const cy = h / 2;
+    const r = Math.max(w, h) / 2;
+    const grad = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    gradient.colors.forEach((color, i) => {
+      grad.addColorStop(i / (gradient.colors.length - 1), color);
+    });
+    return grad;
   }
 
   private normalizeBorderSide(
@@ -304,15 +324,16 @@ export class CTElementRenderer {
       try {
         // ─── Background ───
         if (props.backgroundGradient) {
+          this.ctx.save();
+          this.ctx.translate(x, y);
           this.ctx.fillStyle = this.createGradientFill(
-            x,
-            y,
             boxWidth,
             boxHeight,
             props.backgroundGradient,
           );
-          this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+          this.drawRoundedRect(0, 0, boxWidth, boxHeight, borderRadiusArray);
           this.ctx.fill();
+          this.ctx.restore();
         } else if (props.backgroundColor) {
           this.ctx.fillStyle = props.backgroundColor;
           this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
@@ -655,6 +676,24 @@ export class CTElementRenderer {
     const imageRuntime = this.renderContext?.imageRuntime;
     const src = props.src;
 
+    const targetSize = Math.max(width, height);
+    if (src && imageRuntime) {
+      const cached = imageRuntime.get(src, targetSize);
+      if (cached) {
+        imageRuntime.collectVisible(src);
+        this.drawImageWithFit(
+          cached,
+          x,
+          y,
+          width,
+          height,
+          radius,
+          props.fit ?? props.objectFit ?? "cover",
+        );
+        return;
+      }
+    }
+
     this.drawImagePlaceholder(x, y, width, height, radius);
     if (!src || !imageRuntime) return;
 
@@ -670,7 +709,6 @@ export class CTElementRenderer {
       return;
     }
 
-    const targetSize = Math.max(width, height);
     imageRuntime.collectVisible(src);
 
     if (imageRuntime.isFailed(src)) {
@@ -682,20 +720,6 @@ export class CTElementRenderer {
         height,
         radius,
         props.fit ?? props.objectFit,
-      );
-      return;
-    }
-
-    const cached = imageRuntime.get(src, targetSize);
-    if (cached) {
-      this.drawImageWithFit(
-        cached,
-        x,
-        y,
-        width,
-        height,
-        radius,
-        props.fit ?? props.objectFit ?? "cover",
       );
       return;
     }

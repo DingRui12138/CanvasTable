@@ -304,6 +304,27 @@ describe('LayoutEngine', () => {
       expect(secondNode.offsetY).toBe(10);
     });
 
+    it('does not measure children again when explicit cache key is reused with changed visual props', () => {
+      const localMeasurementEngine = new MeasurementEngine(mockCtx);
+      const localEngine = new LayoutEngine(localMeasurementEngine);
+      const measureSpy = jest.spyOn(localMeasurementEngine, 'measureElement');
+      const createTree = (label: string) => createCTElement(
+        'CTBox',
+        { display: 'flex', width: 100, height: 40 },
+        createCTElement('CTText', { text: label, fontSize: 12 }),
+      );
+
+      const firstNode = localEngine.layoutTree(createTree('在职'), 0, 0, { width: 100, height: 40 }, 'status-layout');
+      measureSpy.mockClear();
+      const secondNode = localEngine.layoutTree(createTree('离职'), 10, 10, { width: 100, height: 40 }, 'status-layout');
+
+      expect(measureSpy).not.toHaveBeenCalled();
+      expect(secondNode.x).toBe(10);
+      expect(secondNode.y).toBe(10);
+      expect(secondNode.currentElement?.children[0]?.props.text).toBe('离职');
+      expect(secondNode.children[0]?.width).toBe(firstNode.children[0]?.width);
+    });
+
     it('reuses relative layout cache with updated offsets', () => {
       const tree = createCTElement(
         'CTBox',
