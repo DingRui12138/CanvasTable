@@ -3279,6 +3279,7 @@ export class Renderer {
       frameHistory: [...this.frameHistory],
       lastFrame: this.getLastFrameDiagnostics(),
       worstFrame: this.getWorstFrameDiagnostics(),
+      jsxCache: this.jsxRenderer.getRenderCacheStats(),
     };
   }
 

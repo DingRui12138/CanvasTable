@@ -47,13 +47,6 @@ describe('JSXElementSignature', () => {
     expect(JSXElementSignature.visual(first)).toBe(JSXElementSignature.visual(second));
   });
 
-  it('includes cache keys and dependencies in cache signatures', () => {
-    const first = box({ cache: true, cacheKey: 'status-card', cacheDeps: ['active', 20] });
-    const second = box({ cache: true, cacheKey: 'status-card', cacheDeps: ['inactive', 20] });
-
-    expect(JSXElementSignature.cache(first)).not.toBe(JSXElementSignature.cache(second));
-  });
-
   it('caches signatures by element reference', () => {
     const element = box(
       { width: 100, height: 20, backgroundColor: '#fff' },

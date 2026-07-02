@@ -42,8 +42,6 @@ const LAYOUT_PROPS = new Set([
   'text',
 ]);
 
-const CACHE_PROPS = new Set(['cache', 'cacheKey', 'cacheDeps']);
-
 export class JSXElementSignature {
   static layout(element: CTElement): string {
     let entry = SIGNATURE_CACHE.get(element);
@@ -63,13 +61,6 @@ export class JSXElementSignature {
     entry.visual = sig;
     SIGNATURE_CACHE.set(element, entry);
     return sig;
-  }
-
-  static cache(element: CTElement): string {
-    const parts: string[] = [];
-    this.appendPropsSignature(element.props, parts, CACHE_PROPS);
-    parts.push(this.visual(element));
-    return parts.join('|');
   }
 
   private static elementSignature(element: CTElement, mode: 'layout' | 'visual'): string {
