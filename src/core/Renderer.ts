@@ -323,6 +323,7 @@ export class Renderer {
     this.overlayRenderer.setCanvas(this.canvas, this.ctx);
     this.jsxMeasurementEngine.setContext(this.ctx);
     this.jsxRenderer.setContext(this.ctx);
+    this.jsxRenderer.invalidateOffscreen('all');
   }
 
   setTheme(theme: TableTheme): void {
@@ -332,6 +333,7 @@ export class Renderer {
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
     this.jsxRenderer.setTheme(theme);
+    this.jsxRenderer.invalidateOffscreen('all');
   }
 
   setLocale(locale: CanvasTableLocale): void {
@@ -418,6 +420,7 @@ export class Renderer {
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
     this.jsxRenderer.setTheme(theme);
+    this.jsxRenderer.invalidateOffscreen('all');
   }
 
   markDirty(x: number, y: number, width: number, height: number): void {
@@ -4703,6 +4706,7 @@ export class Renderer {
       this.renderCache.resetRowIds();
     }
     this.rowIdManager.reset();
+    this.jsxRenderer.invalidateOffscreen('all');
   }
 
   /**
@@ -4713,6 +4717,7 @@ export class Renderer {
       this.renderCache.resetColumnIds();
     }
     this.columnIdManager.reset();
+    this.jsxRenderer.invalidateOffscreen('all');
   }
 
   /**
@@ -4753,5 +4758,9 @@ export class Renderer {
     if (this.renderCache) {
       this.renderCache.clear();
     }
+  }
+
+  invalidateJsxOffscreen(scope: 'all' | { oldSize: string | string[] }): void {
+    this.jsxRenderer.invalidateOffscreen(scope);
   }
 }
