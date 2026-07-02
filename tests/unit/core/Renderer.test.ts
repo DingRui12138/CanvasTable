@@ -556,7 +556,26 @@ describe('Renderer', () => {
       expect(report).toContain('[jsx]');
       expect(report).toContain('jsx');
     });
+    it('includes JSX cache stats in performance diagnostics', () => {
+      const columns: Column[] = [{ key: 'jsx', title: 'JSX', width: 120 }];
+      const rows = createTestRows(1);
+      columns[0]!.render = () => ({
+        type: 'custom',
+        jsxRender: () => createCTElement('CTBox', { width: 20, height: 20, backgroundColor: '#fff' }),
+      });
+      layoutManager.calculateLayout(columns, rows);
+      layoutManager.setViewportSize(800, 600);
+      renderer = new Renderer(canvas, mockTheme, layoutManager);
 
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+      renderer.render(columns, rows, layoutManager.getVisibleRange(), 0, 0, createRenderOptions());
+
+      expect(renderer.getPerformanceDiagnostics().jsxCache).toMatchObject({
+        planHits: expect.any(Number),
+        planMisses: expect.any(Number),
+        cellOffscreen: expect.any(Object),
+      });
+    });
 
     it('should render with sort config', () => {
       const columns = createTestColumns();

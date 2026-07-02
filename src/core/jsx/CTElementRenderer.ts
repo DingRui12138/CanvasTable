@@ -8,20 +8,24 @@ import type {
   CTBorderSide,
   CTBackgroundGradient,
   CTRenderContext,
-} from "./types";
-import type { TableTheme } from "../../types/index";
-import { LayoutEngine } from "./LayoutEngine";
+} from './types';
+import type { TableTheme } from '../../types/index';
+import { LayoutEngine } from './LayoutEngine';
+import { JSXElementSignature } from './JSXElementSignature';
+import { JSXRenderCache, type JSXRenderCacheStats } from './JSXRenderCache';
+import { JSXRenderPlan } from './JSXRenderPlan';
+import { CellOffscreenCache, type CellOffscreenCacheStats } from './CellOffscreenCache';
 
 /**
  * CTElement Canvas Renderer
  *
- * 坐标系统设计：
- * - Flex 模式 (display='flex')：所有元素的 x, y 表示左上角（Box 模型）
- *   - alignItems: 'center' 由 LayoutEngine 计算，使不同高度的元素视觉居中
- *   - CTText: y 是框顶部，文字在 lineHeight 框内居中绘制
- *   - CTCircle: y 是圆顶部，圆心在 y + radius
+ * Coordinate system design:
+ * - Flex mode (display='flex'): all elements' x, y represent top-left corner (Box model)
+ *   - alignItems: 'center' is calculated by LayoutEngine to make different height elements visually centered
+ *   - CTText: y is box top, text is centered within lineHeight box
+ *   - CTCircle: y is circle top, center is at y + radius
  *
- * - 定位模式 (position='relative')：子元素的 x, y 是相对于父容器的位置
+ * - Position mode (position='relative'): children's x, y are relative to parent container
  */
 export class CTElementRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -30,8 +34,14 @@ export class CTElementRenderer {
   private renderContext?: CTRenderContext;
   private layouts: CTLayoutInfo[] | undefined;
   private layoutTree: CTLayoutNode | undefined;
+  private renderCache = new JSXRenderCache();
+  private cellOffscreen = new CellOffscreenCache();
   private gradientCache = new Map<string, CanvasGradient>();
   private static readonly GRADIENT_CACHE_MAX = 200;
+
+  // Store render position for cell offscreen cache
+  private cellX = 0;
+  private cellY = 0;
 
   constructor(
     ctx: CanvasRenderingContext2D,
@@ -52,14 +62,43 @@ export class CTElementRenderer {
     parentSize?: { width: number; height: number },
     layoutCacheKey?: string | null,
   ): void {
-    const layoutTree = this.layoutEngine.layoutTree(root, x, y, parentSize, layoutCacheKey);
+    this.cellX = x;
+    this.cellY = y;
+
+    const planKey = this.buildRenderPlanKey(root, parentSize, layoutCacheKey);
+    const plan = this.renderCache.getOrCreatePlan(planKey, () => {
+      const layoutTree = this.layoutEngine.layoutTree(root, 0, 0, parentSize, layoutCacheKey);
+      return JSXRenderPlan.compile(layoutTree);
+    });
+
+    const layoutTree = plan.toLayoutTree(root, x, y);
     this.layoutTree = layoutTree;
     this.layouts = undefined;
     this.ctx.save();
     try {
-      this.renderLayoutNode(layoutTree);
+      if (!this.renderCellOffscreen(root, parentSize)) {
+        this.renderLayoutNode(layoutTree);
+      }
     } finally {
       this.ctx.restore();
+    }
+  }
+
+  getRenderCacheStats(): JSXRenderCacheStats & { cellOffscreen: CellOffscreenCacheStats } {
+    return {
+      ...this.renderCache.getStats(),
+      cellOffscreen: this.cellOffscreen.getStats(),
+    };
+  }
+
+  invalidateOffscreen(scope: 'all' | { oldSize: string | string[] }): void {
+    if (scope === 'all') {
+      this.cellOffscreen.invalidateAll();
+      return;
+    }
+    const sizes = Array.isArray(scope.oldSize) ? scope.oldSize : [scope.oldSize];
+    for (const s of sizes) {
+      this.cellOffscreen.invalidateSize(s);
     }
   }
 
@@ -72,14 +111,117 @@ export class CTElementRenderer {
 
   setContext(ctx: CanvasRenderingContext2D): void {
     this.ctx = ctx;
+    this.renderCache.clear();
+    this.cellOffscreen.invalidateAll();
+    this.gradientCache.clear();
   }
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
+    this.renderCache.clear();
+    this.cellOffscreen.invalidateAll();
+    this.gradientCache.clear();
   }
 
   setRenderContext(renderContext?: CTRenderContext): void {
     this.renderContext = renderContext;
+  }
+
+  private buildRenderPlanKey(
+    root: CTElement,
+    parentSize?: { width: number; height: number },
+    layoutCacheKey?: string | null,
+  ): string {
+    const sizeKey = parentSize ? `${parentSize.width}x${parentSize.height}` : 'auto';
+    const explicitKey = layoutCacheKey ?? '';
+    return `${explicitKey}|${sizeKey}|${JSXElementSignature.layout(root)}|${JSXElementSignature.visual(root)}`;
+  }
+
+  private buildCellOffscreenKey(
+    root: CTElement,
+    parentSize: { width: number; height: number },
+  ): string {
+    return `${parentSize.width}x${parentSize.height}|${JSXElementSignature.visual(root)}`;
+  }
+
+  private renderCellOffscreen(
+    root: CTElement,
+    parentSize?: { width: number; height: number },
+  ): boolean {
+    if (!parentSize || parentSize.width <= 0 || parentSize.height <= 0) return false;
+
+    const cacheKey = this.buildCellOffscreenKey(root, parentSize);
+    const cached = this.cellOffscreen.get(cacheKey);
+    if (cached) {
+      // Cache hit: draw directly, but still collect interactive regions
+      this.ctx.drawImage(cached, this.cellX, this.cellY);
+      this.collectInteractiveRegions(this.layoutTree!, root);
+      return true;
+    }
+
+    // Cache miss: render to offscreen canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(parentSize.width);
+    canvas.height = Math.ceil(parentSize.height);
+    const offscreenCtx = canvas.getContext('2d');
+    if (!offscreenCtx) return false;
+
+    const originalCtx = this.ctx;
+    this.ctx = offscreenCtx;
+    offscreenCtx.save();
+    try {
+      // Render layout tree at 0,0 in offscreen canvas
+      // We need to temporarily shift the layout tree to 0,0 for offscreen rendering
+      const originalLayoutTree = this.layoutTree!;
+      const shiftedTree = this.shiftLayoutTree(originalLayoutTree, -this.cellX, -this.cellY);
+      this.layoutTree = shiftedTree;
+      this.renderLayoutNode(shiftedTree);
+      this.layoutTree = originalLayoutTree;
+    } finally {
+      offscreenCtx.restore();
+      this.ctx = originalCtx;
+    }
+    this.cellOffscreen.set(cacheKey, canvas);
+    this.ctx.drawImage(canvas, this.cellX, this.cellY);
+    return true;
+  }
+
+  private shiftLayoutTree(node: CTLayoutNode, dx: number, dy: number): CTLayoutNode {
+    const shifted: CTLayoutNode = {
+      ...node,
+      x: node.x + dx,
+      y: node.y + dy,
+      children: node.children.map(child => this.shiftLayoutTree(child, dx, dy)),
+    };
+    return shifted;
+  }
+
+  private collectInteractiveRegions(node: CTLayoutNode, element: CTElement): void {
+    if (element.type === 'CTTooltip' || element.type === 'CTDropdown') {
+      const regionType = element.type === 'CTTooltip' ? 'tooltip' : 'dropdown';
+      this.renderContext?.collectInteractiveRegion?.({
+        type: regionType,
+        rect: {
+          x: node.x,
+          y: node.y,
+          width: node.width,
+          height: node.height,
+        },
+        element,
+        props: element.props,
+        row: this.renderContext.row,
+        column: this.renderContext.column,
+        rowIndex: this.renderContext.rowIndex,
+        colIndex: this.renderContext.colIndex,
+      });
+    }
+
+    const currentChildren = this.getLayoutOrderedChildren(element);
+    for (let index = 0; index < node.children.length; index++) {
+      const childElement = currentChildren[index];
+      if (!childElement) continue;
+      this.collectInteractiveRegions(node.children[index]!, childElement);
+    }
   }
 
   private flattenLayoutTree(node: CTLayoutNode, offsetX = 0, offsetY = 0): CTLayoutInfo[] {
@@ -101,7 +243,7 @@ export class CTElementRenderer {
 
   private getLayoutOrderedChildren(element: CTElement): CTElement[] {
     const children = element.children || [];
-    if (element.type === "CTBox" && element.props.position === "relative") {
+    if (element.type === 'CTBox' && element.props.position === 'relative') {
       return [...children].sort((a, b) => {
         const aZ = (a.props.zIndex as number | undefined) ?? 0;
         const bZ = (b.props.zIndex as number | undefined) ?? 0;
@@ -120,23 +262,23 @@ export class CTElementRenderer {
     const x = node.x + offsetX;
     const y = node.y + offsetY;
     switch (currentElement.type) {
-      case "CTBox":
+      case 'CTBox':
         this.renderBoxNode(node, currentElement, x, y, offsetX, offsetY);
         break;
-      case "CTCircle":
+      case 'CTCircle':
         this.renderCircle(currentElement, x, y);
         break;
-      case "CTText":
+      case 'CTText':
         this.renderText(currentElement, x, y, node.width);
         break;
-      case "CTImage":
+      case 'CTImage':
         this.renderImage(currentElement, x, y);
         break;
-      case "CTLine":
+      case 'CTLine':
         this.renderLine(currentElement, x, y);
         break;
-      case "CTTooltip":
-      case "CTDropdown":
+      case 'CTTooltip':
+      case 'CTDropdown':
         this.renderInteractiveWrapperNode(node, currentElement, x, y, offsetX, offsetY);
         break;
     }
@@ -150,7 +292,7 @@ export class CTElementRenderer {
     offsetX: number,
     offsetY: number,
   ): void {
-    const regionType = element.type === "CTTooltip" ? "tooltip" : "dropdown";
+    const regionType = element.type === 'CTTooltip' ? 'tooltip' : 'dropdown';
     this.renderContext?.collectInteractiveRegion?.({
       type: regionType,
       rect: {
@@ -199,7 +341,7 @@ export class CTElementRenderer {
   ): void {
     this.ctx.beginPath();
     // Use simple rect when borderRadius is 0 (no per-corner variation)
-    if (typeof radii === "number" && radii === 0) {
+    if (typeof radii === 'number' && radii === 0) {
       this.ctx.rect(x, y, w, h);
     } else {
       (this.ctx as any).roundRect(x, y, w, h, radii);
@@ -225,7 +367,7 @@ export class CTElementRenderer {
   }
 
   private getGradientCacheKey(w: number, h: number, gradient: CTBackgroundGradient): string {
-    return `${w}x${h}|${gradient.type}|${gradient.type === "linear" ? gradient.angle : "_"}|${gradient.colors.join(",")}`;
+    return `${w}x${h}|${gradient.type}|${gradient.type === 'linear' ? gradient.angle : '_'}|${gradient.colors.join(',')}`;
   }
 
   private createRelativeGradientFill(
@@ -233,7 +375,7 @@ export class CTElementRenderer {
     h: number,
     gradient: CTBackgroundGradient,
   ): CanvasGradient {
-    if (gradient.type === "linear") {
+    if (gradient.type === 'linear') {
       const angle = gradient.angle;
       const rad = ((angle - 90) * Math.PI) / 180;
       const cx = w / 2;
@@ -265,8 +407,8 @@ export class CTElementRenderer {
     side: CTBorderSide | string | undefined,
   ): { width: number; color: string } | undefined {
     if (!side) return undefined;
-    if (typeof side === "string") return { width: 1, color: side };
-    if (side.width || side.color) return { width: side.width ?? 1, color: side.color ?? "#000" };
+    if (typeof side === 'string') return { width: 1, color: side };
+    if (side.width || side.color) return { width: side.width ?? 1, color: side.color ?? '#000' };
     return undefined;
   }
 
@@ -397,7 +539,7 @@ export class CTElementRenderer {
       }
 
       // ─── Overflow Clipping ───
-      const hasOverflow = props.overflow === "hidden" || props.overflow === "clip";
+      const hasOverflow = props.overflow === 'hidden' || props.overflow === 'clip';
       if (hasOverflow) {
         this.ctx.save();
         this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
@@ -413,6 +555,14 @@ export class CTElementRenderer {
           const childNode = node.children[index]!;
           const childElement = currentChildren[index];
           if (!childElement) continue;
+          const renderNode =
+            childOffsetX || childOffsetY
+              ? {
+                  ...childNode,
+                  x: childNode.x + childOffsetX,
+                  y: childNode.y + childOffsetY,
+                }
+              : childNode;
           this.renderLayoutNode(childNode, childElement, childOffsetX, childOffsetY);
         }
       } finally {
@@ -430,7 +580,7 @@ export class CTElementRenderer {
   }
 
   private normalizeShadow(shadow: CTBoxShadow | string): CTBoxShadow & { spread?: number } {
-    if (typeof shadow === "string") {
+    if (typeof shadow === 'string') {
       // Parse "offsetX offsetY blur color" or "offsetX offsetY blur spread color"
       const parts = shadow.trim().split(/\s+/);
       const offsetX = Number(parts[0]) || 0;
@@ -438,7 +588,7 @@ export class CTElementRenderer {
       const blur = Number(parts[2]) || 0;
       const numericParts = parts.filter((p) => !isNaN(Number(p)));
       const spread = numericParts.length > 3 ? Number(parts[3]) : 0;
-      const color = parts.slice(numericParts.length > 3 ? 4 : 3).join(" ") || "rgba(0,0,0,0.15)";
+      const color = parts.slice(numericParts.length > 3 ? 4 : 3).join(' ') || 'rgba(0,0,0,0.15)';
       return { offsetX, offsetY, blur, spread, color };
     }
     return shadow;
@@ -479,13 +629,13 @@ export class CTElementRenderer {
       text: string;
       fontSize?: number;
       fontFamily?: string;
-      fontWeight?: "normal" | "bold";
-      fontStyle?: "normal" | "italic";
+      fontWeight?: 'normal' | 'bold';
+      fontStyle?: 'normal' | 'italic';
       color?: string;
       lineHeight?: number;
       maxWidth?: number;
-      textAlign?: "left" | "center" | "right";
-      textDecoration?: "underline" | "line-through" | "none";
+      textAlign?: 'left' | 'center' | 'right';
+      textDecoration?: 'underline' | 'line-through' | 'none';
       letterSpacing?: number;
       x?: number;
       y?: number;
@@ -494,12 +644,12 @@ export class CTElementRenderer {
 
     const fontSize = props.fontSize ?? this.theme.font.size;
     const fontFamily = props.fontFamily ?? this.theme.font.family;
-    const fontWeight = props.fontWeight ?? "normal";
-    const fontStyle = props.fontStyle ?? "normal";
+    const fontWeight = props.fontWeight ?? 'normal';
+    const fontStyle = props.fontStyle ?? 'normal';
     const color = props.color ?? this.theme.colors.cellText;
     const lineHeight = props.lineHeight ?? fontSize;
-    const textAlign = props.textAlign ?? "left";
-    const textDecoration = props.textDecoration ?? "none";
+    const textAlign = props.textAlign ?? 'left';
+    const textDecoration = props.textDecoration ?? 'none';
     const letterSpacing = props.letterSpacing ?? 0;
 
     this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
@@ -507,24 +657,24 @@ export class CTElementRenderer {
 
     // ─── Text Alignment ───
     let textX = x;
-    if (textAlign === "center") {
+    if (textAlign === 'center') {
       textX = x + layoutWidth / 2;
-      this.ctx.textAlign = "center";
-    } else if (textAlign === "right") {
+      this.ctx.textAlign = 'center';
+    } else if (textAlign === 'right') {
       textX = x + layoutWidth;
-      this.ctx.textAlign = "right";
+      this.ctx.textAlign = 'right';
     } else {
-      this.ctx.textAlign = "left";
+      this.ctx.textAlign = 'left';
     }
-    this.ctx.textBaseline = "middle";
+    this.ctx.textBaseline = 'middle';
     const textY = y + lineHeight / 2;
 
     // ─── Letter Spacing ───
     if (letterSpacing > 0) {
       // Draw each character individually with spacing
-      this.ctx.textAlign = "left"; // Reset to left for individual positioning
+      this.ctx.textAlign = 'left'; // Reset to left for individual positioning
       let charX =
-        textAlign === "center"
+        textAlign === 'center'
           ? x +
             (layoutWidth -
               this.getTextWidthWithSpacing(
@@ -536,7 +686,7 @@ export class CTElementRenderer {
                 letterSpacing,
               )) /
               2
-          : textAlign === "right"
+          : textAlign === 'right'
             ? x +
               layoutWidth -
               this.getTextWidthWithSpacing(
@@ -568,7 +718,7 @@ export class CTElementRenderer {
     }
 
     // ─── Text Decoration ───
-    if (textDecoration === "underline") {
+    if (textDecoration === 'underline') {
       const textWidth =
         letterSpacing > 0
           ? this.getTextWidthWithSpacing(
@@ -582,9 +732,9 @@ export class CTElementRenderer {
           : this.ctx.measureText(props.text).width;
       const lineY = textY + fontSize / 2 + 1;
       const lineX =
-        textAlign === "center"
+        textAlign === 'center'
           ? textX - textWidth / 2
-          : textAlign === "right"
+          : textAlign === 'right'
             ? textX - textWidth
             : textX;
       this.ctx.strokeStyle = color;
@@ -593,7 +743,7 @@ export class CTElementRenderer {
       this.ctx.moveTo(lineX, lineY);
       this.ctx.lineTo(lineX + textWidth, lineY);
       this.ctx.stroke();
-    } else if (textDecoration === "line-through") {
+    } else if (textDecoration === 'line-through') {
       const textWidth =
         letterSpacing > 0
           ? this.getTextWidthWithSpacing(
@@ -607,9 +757,9 @@ export class CTElementRenderer {
           : this.ctx.measureText(props.text).width;
       const lineY = textY;
       const lineX =
-        textAlign === "center"
+        textAlign === 'center'
           ? textX - textWidth / 2
-          : textAlign === "right"
+          : textAlign === 'right'
             ? textX - textWidth
             : textX;
       this.ctx.strokeStyle = color;
@@ -621,8 +771,8 @@ export class CTElementRenderer {
     }
 
     // Reset
-    this.ctx.textAlign = "left";
-    this.ctx.textBaseline = "alphabetic";
+    this.ctx.textAlign = 'left';
+    this.ctx.textBaseline = 'alphabetic';
   }
 
   private measureCharWidth(
@@ -660,8 +810,8 @@ export class CTElementRenderer {
       height: number;
       borderRadius?: number;
       radius?: number;
-      objectFit?: "fill" | "contain" | "cover" | "none";
-      fit?: "fill" | "contain" | "cover" | "none";
+      objectFit?: 'fill' | 'contain' | 'cover' | 'none';
+      fit?: 'fill' | 'contain' | 'cover' | 'none';
       circle?: boolean;
       placeholder?: string;
       errorImage?: string;
@@ -688,7 +838,7 @@ export class CTElementRenderer {
           width,
           height,
           radius,
-          props.fit ?? props.objectFit ?? "cover",
+          props.fit ?? props.objectFit ?? 'cover',
         );
         return;
       }
@@ -745,10 +895,10 @@ export class CTElementRenderer {
     height: number,
     radius: number,
   ): void {
-    this.ctx.fillStyle = "#f5f5f5";
+    this.ctx.fillStyle = '#f5f5f5';
     this.drawRoundedRect(x, y, width, height, radius);
     this.ctx.fill();
-    this.ctx.strokeStyle = "#d9d9d9";
+    this.ctx.strokeStyle = '#d9d9d9';
     this.ctx.lineWidth = 1;
     this.drawRoundedRect(x, y, width, height, radius);
     this.ctx.stroke();
@@ -761,12 +911,12 @@ export class CTElementRenderer {
     width: number,
     height: number,
     radius: number,
-    fit: "fill" | "contain" | "cover" | "none" | undefined,
+    fit: 'fill' | 'contain' | 'cover' | 'none' | undefined,
   ): void {
     if (!src || !this.renderContext?.imageRuntime) return;
     const image = this.renderContext.imageRuntime.get(src, Math.max(width, height));
     if (image) {
-      this.drawImageWithFit(image, x, y, width, height, radius, fit ?? "cover");
+      this.drawImageWithFit(image, x, y, width, height, radius, fit ?? 'cover');
     } else if (!this.renderContext.imageRuntime.isLoading(src)) {
       this.renderContext.imageRuntime.load(src, Math.max(width, height));
     }
@@ -779,7 +929,7 @@ export class CTElementRenderer {
     width: number,
     height: number,
     radius: number,
-    fit: "fill" | "contain" | "cover" | "none",
+    fit: 'fill' | 'contain' | 'cover' | 'none',
   ): void {
     this.ctx.save();
     this.drawRoundedRect(x, y, width, height, radius);
@@ -792,16 +942,16 @@ export class CTElementRenderer {
     let drawWidth = width;
     let drawHeight = height;
 
-    if (fit === "contain" || fit === "cover") {
+    if (fit === 'contain' || fit === 'cover') {
       const scale =
-        fit === "contain"
+        fit === 'contain'
           ? Math.min(width / imageWidth, height / imageHeight)
           : Math.max(width / imageWidth, height / imageHeight);
       drawWidth = imageWidth * scale;
       drawHeight = imageHeight * scale;
       drawX = x + (width - drawWidth) / 2;
       drawY = y + (height - drawHeight) / 2;
-    } else if (fit === "none") {
+    } else if (fit === 'none') {
       drawWidth = imageWidth;
       drawHeight = imageHeight;
       drawX = x + (width - drawWidth) / 2;
@@ -817,15 +967,15 @@ export class CTElementRenderer {
       points: Array<{ x: number; y: number }>;
       strokeWidth?: number;
       strokeColor?: string;
-      strokeLinecap?: "butt" | "round" | "square";
+      strokeLinecap?: 'butt' | 'round' | 'square';
     };
 
     if (props.points.length < 2) return;
 
     this.ctx.beginPath();
-    this.ctx.strokeStyle = props.strokeColor ?? "#333333";
+    this.ctx.strokeStyle = props.strokeColor ?? '#333333';
     this.ctx.lineWidth = props.strokeWidth ?? 1;
-    this.ctx.lineCap = props.strokeLinecap ?? "butt";
+    this.ctx.lineCap = props.strokeLinecap ?? 'butt';
 
     this.ctx.moveTo(x + props.points[0]!.x, y + props.points[0]!.y);
     for (let i = 1; i < props.points.length; i++) {
