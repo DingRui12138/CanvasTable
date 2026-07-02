@@ -555,14 +555,6 @@ export class CTElementRenderer {
           const childNode = node.children[index]!;
           const childElement = currentChildren[index];
           if (!childElement) continue;
-          const renderNode =
-            childOffsetX || childOffsetY
-              ? {
-                  ...childNode,
-                  x: childNode.x + childOffsetX,
-                  y: childNode.y + childOffsetY,
-                }
-              : childNode;
           this.renderLayoutNode(childNode, childElement, childOffsetX, childOffsetY);
         }
       } finally {
