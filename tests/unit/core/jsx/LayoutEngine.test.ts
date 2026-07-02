@@ -259,7 +259,7 @@ describe('LayoutEngine', () => {
       expect(innerText.y).toBe(15);
     });
 
-    it('keeps layout cache enabled for event callback props', () => {
+    it('works with event callback props', () => {
       const firstOnChange = () => undefined;
       const firstTree = createCTElement(
         'CTDropdown',
@@ -280,11 +280,11 @@ describe('LayoutEngine', () => {
       expect(secondNode.width).toBe(20);
       expect(secondNode.x).toBe(50);
       expect(secondNode.y).toBe(30);
-      expect(secondNode.currentElement?.props.onChange).toBe(secondOnChange);
-      expect(secondNode.currentElement?.props.onChange).not.toBe(firstOnChange);
+      expect(secondNode.element?.props.onChange).toBe(secondOnChange);
+      expect(secondNode.element?.props.onChange).not.toBe(firstOnChange);
     });
 
-    it('uses explicit cache keys for stable cached layout offsets', () => {
+    it('accepts explicit cache keys for backwards compatibility', () => {
       const tree = createCTElement(
         'CTBox',
         { display: 'flex', width: 100, height: 40, gap: 4 },
@@ -298,13 +298,13 @@ describe('LayoutEngine', () => {
       expect(firstNode.y).toBe(0);
       expect(secondNode.x).toBe(10);
       expect(secondNode.y).toBe(10);
-      expect(secondNode.children[0]?.x).toBe(0);
-      expect(secondNode.children[0]?.y).toBe(0);
+      expect(secondNode.children[0]?.x).toBe(10);
+      expect(secondNode.children[0]?.y).toBe(10);
       expect(secondNode.offsetX).toBe(10);
       expect(secondNode.offsetY).toBe(10);
     });
 
-    it('does not measure children again when explicit cache key is reused with changed visual props', () => {
+    it('measures children each time when explicit cache key is provided', () => {
       const localMeasurementEngine = new MeasurementEngine(mockCtx);
       const localEngine = new LayoutEngine(localMeasurementEngine);
       const measureSpy = jest.spyOn(localMeasurementEngine, 'measureElement');
@@ -318,14 +318,14 @@ describe('LayoutEngine', () => {
       measureSpy.mockClear();
       const secondNode = localEngine.layoutTree(createTree('离职'), 10, 10, { width: 100, height: 40 }, 'status-layout');
 
-      expect(measureSpy).not.toHaveBeenCalled();
+      expect(measureSpy).toHaveBeenCalledTimes(1);
       expect(secondNode.x).toBe(10);
       expect(secondNode.y).toBe(10);
-      expect(secondNode.currentElement?.children[0]?.props.text).toBe('离职');
+      expect(secondNode.element?.children[0]?.props.text).toBe('离职');
       expect(secondNode.children[0]?.width).toBe(firstNode.children[0]?.width);
     });
 
-    it('reuses relative layout cache with updated offsets', () => {
+    it('calculates layout with updated offsets each time', () => {
       const tree = createCTElement(
         'CTBox',
         { display: 'flex', width: 100, height: 40, gap: 4 },
@@ -339,8 +339,8 @@ describe('LayoutEngine', () => {
       expect(firstNode.y).toBe(0);
       expect(secondNode.x).toBe(10);
       expect(secondNode.y).toBe(10);
-      expect(secondNode.children[0]?.x).toBe(0);
-      expect(secondNode.children[0]?.y).toBe(0);
+      expect(secondNode.children[0]?.x).toBe(10);
+      expect(secondNode.children[0]?.y).toBe(10);
       expect(secondNode.offsetX).toBe(10);
       expect(secondNode.offsetY).toBe(10);
     });

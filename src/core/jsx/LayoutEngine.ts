@@ -13,7 +13,6 @@ import { MeasurementEngine } from "./MeasurementEngine";
  * 性能优化：
  * - 单次布局内 measureChildSize 结果按 (element, parentSize) 记忆化，避免子树重复测量
  * - layoutGroupNode 在容器尺寸已显式时直接进入定位阶段，避免预测量整棵子树
- * - 跨单元格相对布局缓存（layoutTree 级别），按元素树签名 + parentSize 命中后克隆并平移
  */
 
 type Margin = { top: number; right: number; bottom: number; left: number };
@@ -23,15 +22,7 @@ interface MeasureCacheEntry {
   parentSize?: { width: number; height: number };
 }
 
-interface CachedRelativeTree {
-  tree: CTLayoutNode;
-}
-
 const ZERO_MARGIN: Margin = { top: 0, right: 0, bottom: 0, left: 0 };
-
-// 跨 LayoutEngine 实例共享的相对布局缓存
-const RELATIVE_TREE_CACHE = new Map<string, CachedRelativeTree>();
-const RELATIVE_TREE_CACHE_MAX = 500;
 
 export class LayoutEngine {
   private measurementEngine: MeasurementEngine;
@@ -77,46 +68,34 @@ export class LayoutEngine {
     startX: number,
     startY: number,
     parentSize?: { width: number; height: number },
-    explicitCacheKey?: string | null,
+    _explicitCacheKey?: string | null,
   ): CTLayoutNode {
-    // 1) 尝试跨单元格缓存（基于 0,0 的相对布局）
-    const cacheKey = explicitCacheKey
-      ? this.buildExplicitCacheKey(explicitCacheKey, parentSize)
-      : this.buildRelativeCacheKey(root, parentSize);
-    if (cacheKey !== null) {
-      const cached = RELATIVE_TREE_CACHE.get(cacheKey);
-      if (cached) {
-        // LRU 行为：最近命中放回末尾
-        RELATIVE_TREE_CACHE.delete(cacheKey);
-        RELATIVE_TREE_CACHE.set(cacheKey, cached);
-        try {
-          return this.createOffsetLayoutTree(cached.tree, root, startX, startY);
-        } catch {
-          RELATIVE_TREE_CACHE.delete(cacheKey);
-        }
-      }
-    }
-
     this.rootParentSize = parentSize;
     this.measureCache.clear();
-    let node: CTLayoutNode;
     try {
-      // 2) 计算相对布局（startX/startY = 0），便于缓存
       const relative = this.layoutNode(root, 0, 0, parentSize);
-      // 3) 写入缓存（如果可缓存）
-      if (cacheKey !== null) {
-        this.cacheRelativeTree(cacheKey, relative);
-      }
-      // 4) 偏移到目标位置
-      node =
-        startX === 0 && startY === 0
-          ? relative
-          : this.createOffsetLayoutTree(relative, root, startX, startY);
+      return startX === 0 && startY === 0
+        ? relative
+        : this.createOffsetLayoutTreeSimple(relative, startX, startY);
     } finally {
       this.rootParentSize = undefined;
       this.measureCache.clear();
     }
-    return node;
+  }
+
+  private createOffsetLayoutTreeSimple(
+    node: CTLayoutNode,
+    offsetX: number,
+    offsetY: number,
+  ): CTLayoutNode {
+    return {
+      ...node,
+      x: node.x + offsetX,
+      y: node.y + offsetY,
+      offsetX,
+      offsetY,
+      children: node.children.map((child) => this.createOffsetLayoutTreeSimple(child, offsetX, offsetY)),
+    };
   }
 
   /** 解析尺寸值（支持百分比字符串和数字） */
@@ -1003,172 +982,5 @@ export class LayoutEngine {
     return (
       cachedParentSize.width === parentSize.width && cachedParentSize.height === parentSize.height
     );
-  }
-
-  private buildExplicitCacheKey(
-    explicitCacheKey: string,
-    parentSize?: { width: number; height: number },
-  ): string {
-    const ps = parentSize ? `${parentSize.width}x${parentSize.height}` : "_";
-    return `${ps}|explicit:${explicitCacheKey}`;
-  }
-
-  private buildRelativeCacheKey(
-    root: CTElement,
-    parentSize?: { width: number; height: number },
-  ): string | null {
-    try {
-      const sig = this.elementSignature(root);
-      if (sig === null) return null;
-      const ps = parentSize ? `${parentSize.width}x${parentSize.height}` : "_";
-      return `${ps}|${sig}`;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * 生成元素树签名。遇到会影响布局但无法序列化的值（Symbol、循环引用等）返回 null，
-   * 以放弃缓存而不是冒着错误命中渲染的风险。事件回调不参与布局签名。
-   */
-  private elementSignature(element: CTElement): string | null {
-    const out: string[] = [];
-    const ok = this.appendElementSignature(element, out, new WeakSet());
-    if (!ok) return null;
-    return out.join("");
-  }
-
-  private appendElementSignature(
-    element: CTElement,
-    out: string[],
-    seen: WeakSet<object>,
-  ): boolean {
-    if (seen.has(element)) return false;
-    seen.add(element);
-    out.push("[", element.type);
-    const propsOk = this.appendPropsSignature(element.props, out, seen);
-    if (!propsOk) return false;
-    const children = element.children || [];
-    out.push("(", String(children.length));
-    for (const child of children) {
-      out.push(",");
-      const ok = this.appendElementSignature(child, out, seen);
-      if (!ok) return false;
-    }
-    out.push(")]");
-    return true;
-  }
-
-  private appendPropsSignature(
-    props: Record<string, unknown>,
-    out: string[],
-    seen: WeakSet<object>,
-  ): boolean {
-    const keys = Object.keys(props)
-      .filter((key) => !this.isEventCallbackProp(key, props[key]))
-      .sort();
-    out.push("o(", String(keys.length));
-    for (const key of keys) {
-      out.push(",", key, "=");
-      const ok = this.appendValueSignature(props[key], out, seen);
-      if (!ok) return false;
-    }
-    out.push(")");
-    return true;
-  }
-
-  private isEventCallbackProp(key: string, value: unknown): boolean {
-    return typeof value === "function" && /^on[A-Z]/.test(key);
-  }
-
-  private appendValueSignature(value: unknown, out: string[], seen: WeakSet<object>): boolean {
-    if (value === null || value === undefined) {
-      out.push("n");
-      return true;
-    }
-    const t = typeof value;
-    if (t === "string") {
-      out.push("s:", (value as string).length.toString(), ":", value as string, ";");
-      return true;
-    }
-    if (t === "number" || t === "boolean") {
-      out.push(t[0]!, ":", String(value), ";");
-      return true;
-    }
-    if (t === "function" || t === "symbol" || t === "bigint") {
-      // 不可安全序列化：放弃缓存
-      return false;
-    }
-    if (Array.isArray(value)) {
-      if (seen.has(value)) return false;
-      seen.add(value);
-      out.push("a(", String(value.length));
-      for (const item of value) {
-        out.push(",");
-        const ok = this.appendValueSignature(item, out, seen);
-        if (!ok) return false;
-      }
-      out.push(")");
-      return true;
-    }
-    if (t === "object") {
-      if (seen.has(value as object)) return false;
-      seen.add(value as object);
-      // 仅允许普通对象
-      const proto = Object.getPrototypeOf(value as object);
-      if (proto !== Object.prototype && proto !== null) {
-        return false;
-      }
-      const keys = Object.keys(value as Record<string, unknown>).sort();
-      out.push("o(", String(keys.length));
-      for (const k of keys) {
-        out.push(",", k, "=");
-        const ok = this.appendValueSignature((value as Record<string, unknown>)[k], out, seen);
-        if (!ok) return false;
-      }
-      out.push(")");
-      return true;
-    }
-    return false;
-  }
-
-  private cacheRelativeTree(key: string, tree: CTLayoutNode): void {
-    // LRU 边界：超出最大条目时移除最久未使用项
-    if (RELATIVE_TREE_CACHE.size >= RELATIVE_TREE_CACHE_MAX) {
-      const oldestKey = RELATIVE_TREE_CACHE.keys().next().value;
-      if (oldestKey !== undefined) RELATIVE_TREE_CACHE.delete(oldestKey);
-    }
-    RELATIVE_TREE_CACHE.set(key, { tree: this.cloneTreeForCache(tree) });
-  }
-
-  private cloneTreeForCache(node: CTLayoutNode): CTLayoutNode {
-    return {
-      element: node.element,
-      x: node.x,
-      y: node.y,
-      width: node.width,
-      height: node.height,
-      zIndex: node.zIndex,
-      margin: node.margin,
-      children: node.children.map((child) => this.cloneTreeForCache(child)),
-    };
-  }
-
-  private createOffsetLayoutTree(
-    tree: CTLayoutNode,
-    currentElement: CTElement,
-    offsetX: number,
-    offsetY: number,
-  ): CTLayoutNode {
-    if (offsetX === 0 && offsetY === 0 && currentElement === tree.element) return tree;
-    return {
-      ...tree,
-      element: currentElement,
-      currentElement,
-      x: tree.x + offsetX,
-      y: tree.y + offsetY,
-      offsetX,
-      offsetY,
-    };
   }
 }
