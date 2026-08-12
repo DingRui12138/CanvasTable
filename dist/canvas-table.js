@@ -8457,8 +8457,6 @@ function normalizeChildren(children) {
   });
 }
 const ZERO_MARGIN = { top: 0, right: 0, bottom: 0, left: 0 };
-const RELATIVE_TREE_CACHE = /* @__PURE__ */ new Map();
-const RELATIVE_TREE_CACHE_MAX = 500;
 class LayoutEngine {
   measurementEngine;
   layoutResults = [];
@@ -8489,34 +8487,26 @@ class LayoutEngine {
    * 计算元素树布局，返回树形结构（用于渲染时直接定位子元素）
    * @param parentSize 父容器尺寸，用于解析根元素的百分比 width/height
    */
-  layoutTree(root, startX, startY, parentSize, explicitCacheKey) {
-    const cacheKey = explicitCacheKey ? this.buildExplicitCacheKey(explicitCacheKey, parentSize) : this.buildRelativeCacheKey(root, parentSize);
-    if (cacheKey !== null) {
-      const cached = RELATIVE_TREE_CACHE.get(cacheKey);
-      if (cached) {
-        RELATIVE_TREE_CACHE.delete(cacheKey);
-        RELATIVE_TREE_CACHE.set(cacheKey, cached);
-        try {
-          return this.createOffsetLayoutTree(cached.tree, root, startX, startY);
-        } catch {
-          RELATIVE_TREE_CACHE.delete(cacheKey);
-        }
-      }
-    }
+  layoutTree(root, startX, startY, parentSize, _explicitCacheKey) {
     this.rootParentSize = parentSize;
     this.measureCache.clear();
-    let node;
     try {
       const relative = this.layoutNode(root, 0, 0, parentSize);
-      if (cacheKey !== null) {
-        this.cacheRelativeTree(cacheKey, relative);
-      }
-      node = startX === 0 && startY === 0 ? relative : this.createOffsetLayoutTree(relative, root, startX, startY);
+      return startX === 0 && startY === 0 ? relative : this.createOffsetLayoutTreeSimple(relative, startX, startY);
     } finally {
       this.rootParentSize = void 0;
       this.measureCache.clear();
     }
-    return node;
+  }
+  createOffsetLayoutTreeSimple(node, offsetX, offsetY) {
+    return {
+      ...node,
+      x: node.x + offsetX,
+      y: node.y + offsetY,
+      offsetX,
+      offsetY,
+      children: node.children.map((child) => this.createOffsetLayoutTreeSimple(child, offsetX, offsetY))
+    };
   }
   /** 解析尺寸值（支持百分比字符串和数字） */
   resolveSize(value, parentSize) {
@@ -9192,139 +9182,6 @@ class LayoutEngine {
     }
     return cachedParentSize.width === parentSize.width && cachedParentSize.height === parentSize.height;
   }
-  buildExplicitCacheKey(explicitCacheKey, parentSize) {
-    const ps = parentSize ? `${parentSize.width}x${parentSize.height}` : "_";
-    return `${ps}|explicit:${explicitCacheKey}`;
-  }
-  buildRelativeCacheKey(root, parentSize) {
-    try {
-      const sig = this.elementSignature(root);
-      if (sig === null) return null;
-      const ps = parentSize ? `${parentSize.width}x${parentSize.height}` : "_";
-      return `${ps}|${sig}`;
-    } catch {
-      return null;
-    }
-  }
-  /**
-   * 生成元素树签名。遇到会影响布局但无法序列化的值（Symbol、循环引用等）返回 null，
-   * 以放弃缓存而不是冒着错误命中渲染的风险。事件回调不参与布局签名。
-   */
-  elementSignature(element) {
-    const out = [];
-    const ok = this.appendElementSignature(element, out, /* @__PURE__ */ new WeakSet());
-    if (!ok) return null;
-    return out.join("");
-  }
-  appendElementSignature(element, out, seen) {
-    if (seen.has(element)) return false;
-    seen.add(element);
-    out.push("[", element.type);
-    const propsOk = this.appendPropsSignature(element.props, out, seen);
-    if (!propsOk) return false;
-    const children = element.children || [];
-    out.push("(", String(children.length));
-    for (const child of children) {
-      out.push(",");
-      const ok = this.appendElementSignature(child, out, seen);
-      if (!ok) return false;
-    }
-    out.push(")]");
-    return true;
-  }
-  appendPropsSignature(props, out, seen) {
-    const keys = Object.keys(props).filter((key) => !this.isEventCallbackProp(key, props[key])).sort();
-    out.push("o(", String(keys.length));
-    for (const key of keys) {
-      out.push(",", key, "=");
-      const ok = this.appendValueSignature(props[key], out, seen);
-      if (!ok) return false;
-    }
-    out.push(")");
-    return true;
-  }
-  isEventCallbackProp(key, value) {
-    return typeof value === "function" && /^on[A-Z]/.test(key);
-  }
-  appendValueSignature(value, out, seen) {
-    if (value === null || value === void 0) {
-      out.push("n");
-      return true;
-    }
-    const t = typeof value;
-    if (t === "string") {
-      out.push("s:", value.length.toString(), ":", value, ";");
-      return true;
-    }
-    if (t === "number" || t === "boolean") {
-      out.push(t[0], ":", String(value), ";");
-      return true;
-    }
-    if (t === "function" || t === "symbol" || t === "bigint") {
-      return false;
-    }
-    if (Array.isArray(value)) {
-      if (seen.has(value)) return false;
-      seen.add(value);
-      out.push("a(", String(value.length));
-      for (const item of value) {
-        out.push(",");
-        const ok = this.appendValueSignature(item, out, seen);
-        if (!ok) return false;
-      }
-      out.push(")");
-      return true;
-    }
-    if (t === "object") {
-      if (seen.has(value)) return false;
-      seen.add(value);
-      const proto = Object.getPrototypeOf(value);
-      if (proto !== Object.prototype && proto !== null) {
-        return false;
-      }
-      const keys = Object.keys(value).sort();
-      out.push("o(", String(keys.length));
-      for (const k of keys) {
-        out.push(",", k, "=");
-        const ok = this.appendValueSignature(value[k], out, seen);
-        if (!ok) return false;
-      }
-      out.push(")");
-      return true;
-    }
-    return false;
-  }
-  cacheRelativeTree(key, tree) {
-    if (RELATIVE_TREE_CACHE.size >= RELATIVE_TREE_CACHE_MAX) {
-      const oldestKey = RELATIVE_TREE_CACHE.keys().next().value;
-      if (oldestKey !== void 0) RELATIVE_TREE_CACHE.delete(oldestKey);
-    }
-    RELATIVE_TREE_CACHE.set(key, { tree: this.cloneTreeForCache(tree) });
-  }
-  cloneTreeForCache(node) {
-    return {
-      element: node.element,
-      x: node.x,
-      y: node.y,
-      width: node.width,
-      height: node.height,
-      zIndex: node.zIndex,
-      margin: node.margin,
-      children: node.children.map((child) => this.cloneTreeForCache(child))
-    };
-  }
-  createOffsetLayoutTree(tree, currentElement, offsetX, offsetY) {
-    if (offsetX === 0 && offsetY === 0 && currentElement === tree.element) return tree;
-    return {
-      ...tree,
-      element: currentElement,
-      currentElement,
-      x: tree.x + offsetX,
-      y: tree.y + offsetY,
-      offsetX,
-      offsetY
-    };
-  }
 }
 const TEXT_WIDTH_CACHE = /* @__PURE__ */ new Map();
 const TEXT_WIDTH_CACHE_MAX = 2e3;
@@ -9425,34 +9282,47 @@ class CTElementRenderer {
   renderContext;
   layouts;
   layoutTree;
+  gradientCache = /* @__PURE__ */ new Map();
+  static GRADIENT_CACHE_MAX = 200;
+  // Store render position for cell offscreen cache
+  cellX = 0;
+  cellY = 0;
   constructor(ctx, layoutEngine, theme, renderContext) {
     this.ctx = ctx;
     this.layoutEngine = layoutEngine;
     this.theme = theme;
     this.renderContext = renderContext;
   }
-  render(root, x, y, parentSize, layoutCacheKey) {
-    const layoutTree = this.layoutEngine.layoutTree(root, x, y, parentSize, layoutCacheKey);
+  render(root, x, y, parentSize, _layoutCacheKey) {
+    this.cellX = x;
+    this.cellY = y;
+    const layoutTree = this.layoutEngine.layoutTree(root, 0, 0, parentSize);
     this.layoutTree = layoutTree;
     this.layouts = void 0;
     this.ctx.save();
+    this.ctx.translate(x, y);
     try {
-      this.renderLayoutNode(layoutTree);
+      this.renderLayoutNode(layoutTree, root, 0, 0);
     } finally {
       this.ctx.restore();
     }
   }
+  invalidateOffscreen(_scope) {
+    this.gradientCache.clear();
+  }
   getLayouts() {
     if (!this.layouts && this.layoutTree) {
-      this.layouts = this.flattenLayoutTree(this.layoutTree);
+      this.layouts = this.flattenLayoutTree(this.layoutTree, this.cellX, this.cellY);
     }
     return this.layouts ?? [];
   }
   setContext(ctx) {
     this.ctx = ctx;
+    this.gradientCache.clear();
   }
   setTheme(theme) {
     this.theme = theme;
+    this.gradientCache.clear();
   }
   setRenderContext(renderContext) {
     this.renderContext = renderContext;
@@ -9514,8 +9384,8 @@ class CTElementRenderer {
     this.renderContext?.collectInteractiveRegion?.({
       type: regionType,
       rect: {
-        x,
-        y,
+        x: x + this.cellX,
+        y: y + this.cellY,
         width: node.width,
         height: node.height
       },
@@ -9552,32 +9422,50 @@ class CTElementRenderer {
       this.ctx.roundRect(x, y, w, h, radii);
     }
   }
-  createGradientFill(x, y, w, h, gradient) {
+  createGradientFill(w, h, gradient) {
+    const cacheKey = this.getGradientCacheKey(w, h, gradient);
+    const cached = this.gradientCache.get(cacheKey);
+    if (cached) {
+      this.gradientCache.delete(cacheKey);
+      this.gradientCache.set(cacheKey, cached);
+      return cached;
+    }
+    const created = this.createRelativeGradientFill(w, h, gradient);
+    this.gradientCache.set(cacheKey, created);
+    if (this.gradientCache.size > CTElementRenderer.GRADIENT_CACHE_MAX) {
+      const oldest = this.gradientCache.keys().next().value;
+      if (oldest) this.gradientCache.delete(oldest);
+    }
+    return created;
+  }
+  getGradientCacheKey(w, h, gradient) {
+    return `${w}x${h}|${gradient.type}|${gradient.type === "linear" ? gradient.angle : "_"}|${gradient.colors.join(",")}`;
+  }
+  createRelativeGradientFill(w, h, gradient) {
     if (gradient.type === "linear") {
       const angle = gradient.angle;
       const rad = (angle - 90) * Math.PI / 180;
-      const cx = x + w / 2;
-      const cy = y + h / 2;
+      const cx2 = w / 2;
+      const cy2 = h / 2;
       const len = Math.max(w, h);
-      const x0 = cx - Math.cos(rad) * len / 2;
-      const y0 = cy - Math.sin(rad) * len / 2;
-      const x1 = cx + Math.cos(rad) * len / 2;
-      const y1 = cy + Math.sin(rad) * len / 2;
-      const grad = this.ctx.createLinearGradient(x0, y0, x1, y1);
+      const x0 = cx2 - Math.cos(rad) * len / 2;
+      const y0 = cy2 - Math.sin(rad) * len / 2;
+      const x1 = cx2 + Math.cos(rad) * len / 2;
+      const y1 = cy2 + Math.sin(rad) * len / 2;
+      const grad2 = this.ctx.createLinearGradient(x0, y0, x1, y1);
       gradient.colors.forEach((color, i) => {
-        grad.addColorStop(i / (gradient.colors.length - 1), color);
+        grad2.addColorStop(i / (gradient.colors.length - 1), color);
       });
-      return grad;
-    } else {
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const r = Math.max(w, h) / 2;
-      const grad = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-      gradient.colors.forEach((color, i) => {
-        grad.addColorStop(i / (gradient.colors.length - 1), color);
-      });
-      return grad;
+      return grad2;
     }
+    const cx = w / 2;
+    const cy = h / 2;
+    const r = Math.max(w, h) / 2;
+    const grad = this.ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    gradient.colors.forEach((color, i) => {
+      grad.addColorStop(i / (gradient.colors.length - 1), color);
+    });
+    return grad;
   }
   normalizeBorderSide(side) {
     if (!side) return void 0;
@@ -9620,15 +9508,16 @@ class CTElementRenderer {
       }
       try {
         if (props.backgroundGradient) {
+          this.ctx.save();
+          this.ctx.translate(x, y);
           this.ctx.fillStyle = this.createGradientFill(
-            x,
-            y,
             boxWidth,
             boxHeight,
             props.backgroundGradient
           );
-          this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
+          this.drawRoundedRect(0, 0, boxWidth, boxHeight, borderRadiusArray);
           this.ctx.fill();
+          this.ctx.restore();
         } else if (props.backgroundColor) {
           this.ctx.fillStyle = props.backgroundColor;
           this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
@@ -9858,6 +9747,23 @@ class CTElementRenderer {
     const radius = props.circle ? Math.min(width, height) / 2 : props.radius ?? props.borderRadius ?? 0;
     const imageRuntime = this.renderContext?.imageRuntime;
     const src = props.src;
+    const targetSize = Math.max(width, height);
+    if (src && imageRuntime) {
+      const cached = imageRuntime.get(src, targetSize);
+      if (cached) {
+        imageRuntime.collectVisible(src);
+        this.drawImageWithFit(
+          cached,
+          x,
+          y,
+          width,
+          height,
+          radius,
+          props.fit ?? props.objectFit ?? "cover"
+        );
+        return;
+      }
+    }
     this.drawImagePlaceholder(x, y, width, height, radius);
     if (!src || !imageRuntime) return;
     const lazyEnabled = props.lazy !== false;
@@ -9866,7 +9772,6 @@ class CTElementRenderer {
     if (lazyEnabled && rowIndex !== void 0 && rowIndex >= 0 && !imageRuntime.isInLazyLoadRange(rowIndex, threshold)) {
       return;
     }
-    const targetSize = Math.max(width, height);
     imageRuntime.collectVisible(src);
     if (imageRuntime.isFailed(src)) {
       this.renderImageFallback(
@@ -9877,19 +9782,6 @@ class CTElementRenderer {
         height,
         radius,
         props.fit ?? props.objectFit
-      );
-      return;
-    }
-    const cached = imageRuntime.get(src, targetSize);
-    if (cached) {
-      this.drawImageWithFit(
-        cached,
-        x,
-        y,
-        width,
-        height,
-        radius,
-        props.fit ?? props.objectFit ?? "cover"
       );
       return;
     }
@@ -10278,6 +10170,7 @@ class Renderer {
     this.overlayRenderer.setCanvas(this.canvas, this.ctx);
     this.jsxMeasurementEngine.setContext(this.ctx);
     this.jsxRenderer.setContext(this.ctx);
+    this.jsxRenderer.invalidateOffscreen("all");
   }
   setTheme(theme) {
     this.theme = theme;
@@ -10286,6 +10179,7 @@ class Renderer {
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
     this.jsxRenderer.setTheme(theme);
+    this.jsxRenderer.invalidateOffscreen("all");
   }
   setLocale(locale) {
     this.locale = locale;
@@ -10359,6 +10253,7 @@ class Renderer {
     this.imageOverlayRenderer.setTheme(theme);
     this.overlayRenderer.setTheme(theme);
     this.jsxRenderer.setTheme(theme);
+    this.jsxRenderer.invalidateOffscreen("all");
   }
   markDirty(x, y, width, height) {
     this.dirtyRegions.push({ x, y, width, height });
@@ -13388,6 +13283,7 @@ class Renderer {
       this.renderCache.resetRowIds();
     }
     this.rowIdManager.reset();
+    this.jsxRenderer.invalidateOffscreen("all");
   }
   /**
    * 重置列 ID 管理器
@@ -13397,6 +13293,7 @@ class Renderer {
       this.renderCache.resetColumnIds();
     }
     this.columnIdManager.reset();
+    this.jsxRenderer.invalidateOffscreen("all");
   }
   /**
    * 清理不可见行的缓存
@@ -13427,6 +13324,9 @@ class Renderer {
     if (this.renderCache) {
       this.renderCache.clear();
     }
+  }
+  invalidateJsxOffscreen(scope) {
+    this.jsxRenderer.invalidateOffscreen(scope);
   }
 }
 const TableEvents = {

@@ -102,39 +102,7 @@ describe('CTElementRenderer', () => {
     expect(plannedRenderer.getRenderCacheStats()).toMatchObject({ planHits: 1, planMisses: 1 });
   });
 
-  it('reuses cell offscreen cache for identical JSX', () => {
-    const createTree = () => createCTElement('CTBox', {
-      width: 40,
-      height: 20,
-      backgroundColor: '#ff0000',
-    });
-
-    renderer.render(createTree(), 0, 0, { width: 40, height: 20 });
-    mockCtx.__clearDrawCalls();
-    renderer.render(createTree(), 50, 30, { width: 40, height: 20 });
-
-    const drawCalls = mockCtx.__getDrawCalls();
-    expect(drawCalls.filter((call) => call.type === 'drawImage')).toHaveLength(1);
-    expect(drawCalls.some((call) => call.type === 'fill')).toBe(false);
-    expect(renderer.getRenderCacheStats().cellOffscreen).toMatchObject({ hits: 1, misses: 1 });
-  });
-
-  it('misses cell offscreen cache when visual signature changes', () => {
-    const createTree = (color: string) => createCTElement('CTBox', {
-      width: 40,
-      height: 20,
-      backgroundColor: color,
-    });
-
-    renderer.render(createTree('#ff0000'), 0, 0, { width: 40, height: 20 });
-    mockCtx.__clearDrawCalls();
-    renderer.render(createTree('#00ff00'), 50, 30, { width: 40, height: 20 });
-
-    const drawCalls = mockCtx.__getDrawCalls();
-    expect(renderer.getRenderCacheStats().cellOffscreen).toMatchObject({ hits: 0, misses: 2 });
-  });
-
-  it('keeps dropdown regions live inside cached offscreen roots', () => {
+  it('keeps dropdown regions live across plan cache hits', () => {
     const regions: CTInteractiveRegion[] = [];
     renderer.setRenderContext({
       ctx: mockCtx,
@@ -145,19 +113,19 @@ describe('CTElementRenderer', () => {
     const firstOnChange = () => 'first';
     const firstTree = createCTElement(
       'CTBox',
-      { cache: true, cacheKey: 'interactive-card', display: 'flex', width: 40, height: 20 },
+      { display: 'flex', width: 40, height: 20 },
       createCTElement(
         'CTDropdown',
         { config: { options: [] }, onChange: firstOnChange },
         createCTElement('CTBox', { width: 20, height: 20 }),
       ),
     );
-    renderer.render(firstTree, 0, 0, { width: 40, height: 20 });
+    renderer.render(firstTree, 0, 0, { width: 40, height: 20 }, 'interactive-card');
 
     const secondOnChange = () => 'second';
     const secondTree = createCTElement(
       'CTBox',
-      { cache: true, cacheKey: 'interactive-card', display: 'flex', width: 40, height: 20 },
+      { display: 'flex', width: 40, height: 20 },
       createCTElement(
         'CTDropdown',
         { config: { options: [] }, onChange: secondOnChange },
@@ -170,7 +138,7 @@ describe('CTElementRenderer', () => {
       rowIndex: 2,
       collectInteractiveRegion: (region) => regions.push(region),
     });
-    renderer.render(secondTree, 50, 30, { width: 40, height: 20 });
+    renderer.render(secondTree, 50, 30, { width: 40, height: 20 }, 'interactive-card');
 
     expect(regions.at(-1)?.rect).toMatchObject({ x: 50, y: 30, width: 20, height: 20 });
     expect(regions.at(-1)?.rowIndex).toBe(2);
@@ -215,36 +183,6 @@ describe('CTElementRenderer', () => {
     renderer.render(tree, 0, 0, { width: 100, height: 40 });
 
     expect(renderer.getLayouts().length).toBeGreaterThan(0);
-  });
-
-  it('applies cache-hit offsets to nested clipped children', () => {
-    const measurementEngine = new MeasurementEngine(mockCtx);
-    const layoutEngine = new LayoutEngine(measurementEngine);
-    const tracedRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
-    const createTree = () =>
-      createCTElement(
-        'CTBox',
-        { display: 'flex', width: 100, height: 40, overflow: 'hidden', backgroundColor: '#1890ff' },
-        createCTElement(
-          'CTBox',
-          { display: 'flex', width: 40, height: 20, backgroundColor: '#ffffff' },
-          createCTElement('CTText', { text: 'visible', fontSize: 12 }),
-        ),
-      );
-
-    // First render: cache miss
-    tracedRenderer.render(createTree(), 0, 0, { width: 100, height: 40 }, 'clipped-card');
-    mockCtx.__clearDrawCalls();
-
-    // Second render: cache hit
-    tracedRenderer.render(createTree(), 50, 30, { width: 100, height: 40 }, 'clipped-card');
-
-    const drawCalls = mockCtx.__getDrawCalls();
-    const drawTypes = drawCalls.map((call) => call.type);
-    // With cell-level offscreen cache, second render just drawsImage
-    expect(drawTypes).toContain('drawImage');
-    const drawImageCall = drawCalls.find((call) => call.type === 'drawImage');
-    expect(drawImageCall?.props).toEqual(expect.objectContaining({ dx: 50, dy: 30 }));
   });
 
   it('renders cache hits without cloning while rebinding interactive props', () => {
@@ -332,8 +270,8 @@ describe('CTElementRenderer', () => {
     expect(fillCall).toBeDefined();
     const arcCall = fillCall?.props.path?.find((p: any) => p.type === 'arc');
     expect(arcCall).toBeDefined();
-    expect(arcCall?.props.x).toBe(45);
-    expect(arcCall?.props.y).toBe(45);
+    expect(arcCall?.props.x).toBe(15);
+    expect(arcCall?.props.y).toBe(15);
     expect(arcCall?.props.radius).toBe(15);
   });
 
@@ -608,123 +546,5 @@ describe('CTElementRenderer', () => {
     const drawCalls = mockCtx.__getDrawCalls();
     const fillCall = drawCalls.find(c => c.type === 'fill');
     expect(fillCall).toBeDefined();
-  });
-});
-
-// Helper to create renderer for cell offscreen cache tests
-const createRenderer = () => {
-  const canvas = document.createElement('canvas');
-  const mockCtx = canvas.getContext('2d')!;
-  const theme = {
-    colors: {
-      background: '#ffffff',
-      headerBackground: '#f5f5f5',
-      headerText: '#333333',
-      rowBackground: '#ffffff',
-      rowAltBackground: '#fafafa',
-      rowHoverBackground: '#e6f7ff',
-      rowSelectedBackground: '#bae7ff',
-      cellText: '#333333',
-      cellBorder: '#d9d9d9',
-      selectionBorder: '#1890ff',
-      linkColor: '#1890ff',
-      placeholderText: '#bfbfbf',
-      primary: '#1890ff',
-      tagColors: {},
-      date: { border: '#d9d9d9', icon: '#bfbfbf' },
-      input: { border: '#d9d9d9', focusBorder: '#40a9ff', background: '#ffffff', text: '#333333', placeholder: '#bfbfbf' },
-      checkbox: { border: '#d9d9d9', checkedBg: '#1890ff', checkmark: '#ffffff', disabledBg: '#f5f5f5' },
-      radio: { border: '#d9d9d9', checkedBg: '#1890ff', dot: '#ffffff', disabledBg: '#f5f5f5' },
-      switch: { onBg: '#1890ff', offBg: '#bfbfbf', thumb: '#ffffff', disabledOnBg: '#e6f7ff', disabledOffBg: '#f5f5f5' },
-      button: { background: '#ffffff', text: '#333333', border: '#d9d9d9', hoverBg: '#f5f5f5', primaryBg: '#1890ff', primaryText: '#ffffff', dangerBg: '#ff4d4f', dangerText: '#ffffff', warningBg: '#faad14', warningText: '#ffffff', linkText: '#1890ff', disabledBg: '#f5f5f5', disabledText: '#bfbfbf', disabledBorder: '#d9d9d9' },
-      dropdown: { background: '#ffffff', border: '#d9d9d9', hoverBg: '#f5f5f5', selectedBg: '#e6f7ff', text: '#333333' },
-      scrollbar: { track: '#f0f0f0', thumb: '#d9d9d9', thumbHover: '#bfbfbf', thumbActive: '#999999', opacity: 0.8 },
-      progress: { track: '#f0f0f0', default: '#1890ff', success: '#52c41a', warning: '#faad14', error: '#ff4d4f' },
-      indicator: { active: '#1890ff', inactive: '#bfbfbf' },
-      tooltip: { background: '#333333', text: '#ffffff', gap: 8 },
-      image: { hoverBorder: '#1890ff', hoverShadow: 'rgba(0, 0, 0, 0.1)', placeholderBg: '#f5f5f5', errorBg: '#fff2f0', errorBorder: '#ffccc7' },
-      hiddenPlaceholder: { hoverBg: '#e6f7ff' },
-      moreCount: { background: '#f5f5f5', text: '#333333' },
-      shadow: { color: 'rgba(0, 0, 0, 0.1)', blur: 4, offsetX: 0, offsetY: 2 },
-      watermark: { color: '#bfbfbf', fontSize: 14, opacity: 0.1 },
-    },
-    font: { family: 'Arial', size: 14, headerSize: 14 },
-    row: {
-      height: 40,
-      headerHeight: 40,
-      minHeight: 24,
-      maxHeight: 320,
-      resizeGuideColor: '#1890ff',
-      resizeGuideWidth: 1,
-    },
-    border: { width: 1, color: '#d9d9d9' },
-  };
-  const measurementEngine = new MeasurementEngine(mockCtx);
-  const layoutEngine = new LayoutEngine(measurementEngine);
-  const renderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
-  return { renderer, ctx: mockCtx };
-};
-
-describe('CTElementRenderer cell offscreen cache', () => {
-  it('caches cell rendering and reuses on second render with same signature', () => {
-    const { renderer, ctx } = createRenderer();
-    const tree = createCTElement(
-      'CTBox',
-      { width: 60, height: 32, backgroundColor: '#f00' },
-      createCTElement('CTText', { text: 'hello', color: '#fff' }),
-    );
-
-    renderer.render(tree, 0, 0, { width: 60, height: 32 });
-    const firstStats = renderer.getRenderCacheStats();
-    expect(firstStats.cellOffscreen.misses).toBe(1);
-    expect(firstStats.cellOffscreen.hits).toBe(0);
-
-    // Second render with same tree (same size and visual signature) - should hit offscreen cache
-    renderer.render(tree, 100, 0, { width: 60, height: 32 });
-    const secondStats = renderer.getRenderCacheStats();
-    expect(secondStats.cellOffscreen.hits).toBe(1);
-    expect(secondStats.cellOffscreen.misses).toBe(1);
-  });
-
-  it('misses when visual signature changes', () => {
-    const { renderer } = createRenderer();
-    const tree1 = createCTElement(
-      'CTBox',
-      { width: 60, height: 32, backgroundColor: '#f00' },
-      createCTElement('CTText', { text: 'hello' }),
-    );
-    const tree2 = createCTElement(
-      'CTBox',
-      { width: 60, height: 32, backgroundColor: '#0f0' },
-      createCTElement('CTText', { text: 'hello' }),
-    );
-
-    renderer.render(tree1, 0, 0, { width: 60, height: 32 });
-    renderer.render(tree2, 0, 0, { width: 60, height: 32 });
-    const stats = renderer.getRenderCacheStats();
-    expect(stats.cellOffscreen.misses).toBe(2);
-    expect(stats.cellOffscreen.hits).toBe(0);
-  });
-
-  it('invalidateOffscreen("all") clears all entries', () => {
-    const { renderer } = createRenderer();
-    const tree = createCTElement('CTBox', { width: 60, height: 32, backgroundColor: '#f00' });
-    renderer.render(tree, 0, 0, { width: 60, height: 32 });
-    expect(renderer.getRenderCacheStats().cellOffscreen.entries).toBe(1);
-
-    renderer.invalidateOffscreen('all');
-    expect(renderer.getRenderCacheStats().cellOffscreen.entries).toBe(0);
-  });
-
-  it('invalidateOffscreen({ oldSize }) clears only matching entries', () => {
-    const { renderer } = createRenderer();
-    const tree60 = createCTElement('CTBox', { width: 60, height: 32, backgroundColor: '#f00' });
-    const tree80 = createCTElement('CTBox', { width: 80, height: 32, backgroundColor: '#0f0' });
-    renderer.render(tree60, 0, 0, { width: 60, height: 32 });
-    renderer.render(tree80, 0, 0, { width: 80, height: 32 });
-    expect(renderer.getRenderCacheStats().cellOffscreen.entries).toBe(2);
-
-    renderer.invalidateOffscreen({ oldSize: '60x32' });
-    expect(renderer.getRenderCacheStats().cellOffscreen.entries).toBe(1);
   });
 });

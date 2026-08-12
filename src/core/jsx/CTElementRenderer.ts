@@ -13,8 +13,6 @@ import type { TableTheme } from '../../types/index';
 import { LayoutEngine } from './LayoutEngine';
 import { JSXElementSignature } from './JSXElementSignature';
 import { JSXRenderCache, type JSXRenderCacheStats } from './JSXRenderCache';
-import { JSXRenderPlan } from './JSXRenderPlan';
-import { CellOffscreenCache, type CellOffscreenCacheStats } from './CellOffscreenCache';
 
 /**
  * CTElement Canvas Renderer
@@ -35,7 +33,6 @@ export class CTElementRenderer {
   private layouts: CTLayoutInfo[] | undefined;
   private layoutTree: CTLayoutNode | undefined;
   private renderCache = new JSXRenderCache();
-  private cellOffscreen = new CellOffscreenCache();
   private gradientCache = new Map<string, CanvasGradient>();
   private static readonly GRADIENT_CACHE_MAX = 200;
 
@@ -66,45 +63,34 @@ export class CTElementRenderer {
     this.cellY = y;
 
     const planKey = this.buildRenderPlanKey(root, parentSize, layoutCacheKey);
-    const plan = this.renderCache.getOrCreatePlan(planKey, () => {
-      const layoutTree = this.layoutEngine.layoutTree(root, 0, 0, parentSize, layoutCacheKey);
-      return JSXRenderPlan.compile(layoutTree);
+    const layoutTree = this.renderCache.getOrCreatePlan(planKey, () => {
+      return this.layoutEngine.layoutTree(root, 0, 0, parentSize, layoutCacheKey);
     });
 
-    const layoutTree = plan.toLayoutTree(root, x, y);
     this.layoutTree = layoutTree;
     this.layouts = undefined;
     this.ctx.save();
+    this.ctx.translate(x, y);
     try {
-      if (!this.renderCellOffscreen(root, parentSize)) {
-        this.renderLayoutNode(layoutTree);
-      }
+      this.renderLayoutNode(layoutTree, root, 0, 0);
     } finally {
       this.ctx.restore();
     }
   }
 
-  getRenderCacheStats(): JSXRenderCacheStats & { cellOffscreen: CellOffscreenCacheStats } {
-    return {
-      ...this.renderCache.getStats(),
-      cellOffscreen: this.cellOffscreen.getStats(),
-    };
+  getRenderCacheStats(): JSXRenderCacheStats {
+    return this.renderCache.getStats();
   }
 
-  invalidateOffscreen(scope: 'all' | { oldSize: string | string[] }): void {
-    if (scope === 'all') {
-      this.cellOffscreen.invalidateAll();
-      return;
-    }
-    const sizes = Array.isArray(scope.oldSize) ? scope.oldSize : [scope.oldSize];
-    for (const s of sizes) {
-      this.cellOffscreen.invalidateSize(s);
-    }
+  invalidateOffscreen(_scope: 'all' | { oldSize: string | string[] }): void {
+    // Layer 3 offscreen cache removed; clear plan cache for lifecycle events
+    this.renderCache.clear();
+    this.gradientCache.clear();
   }
 
   getLayouts(): CTLayoutInfo[] {
     if (!this.layouts && this.layoutTree) {
-      this.layouts = this.flattenLayoutTree(this.layoutTree!);
+      this.layouts = this.flattenLayoutTree(this.layoutTree!, this.cellX, this.cellY);
     }
     return this.layouts ?? [];
   }
@@ -112,14 +98,12 @@ export class CTElementRenderer {
   setContext(ctx: CanvasRenderingContext2D): void {
     this.ctx = ctx;
     this.renderCache.clear();
-    this.cellOffscreen.invalidateAll();
     this.gradientCache.clear();
   }
 
   setTheme(theme: TableTheme): void {
     this.theme = theme;
     this.renderCache.clear();
-    this.cellOffscreen.invalidateAll();
     this.gradientCache.clear();
   }
 
@@ -133,95 +117,15 @@ export class CTElementRenderer {
     layoutCacheKey?: string | null,
   ): string {
     const sizeKey = parentSize ? `${parentSize.width}x${parentSize.height}` : 'auto';
-    const explicitKey = layoutCacheKey ?? '';
-    return `${explicitKey}|${sizeKey}|${JSXElementSignature.layout(root)}|${JSXElementSignature.visual(root)}`;
-  }
-
-  private buildCellOffscreenKey(
-    root: CTElement,
-    parentSize: { width: number; height: number },
-  ): string {
-    return `${parentSize.width}x${parentSize.height}|${JSXElementSignature.visual(root)}`;
-  }
-
-  private renderCellOffscreen(
-    root: CTElement,
-    parentSize?: { width: number; height: number },
-  ): boolean {
-    if (!parentSize || parentSize.width <= 0 || parentSize.height <= 0) return false;
-
-    const cacheKey = this.buildCellOffscreenKey(root, parentSize);
-    const cached = this.cellOffscreen.get(cacheKey);
-    if (cached) {
-      // Cache hit: draw directly, but still collect interactive regions
-      this.ctx.drawImage(cached, this.cellX, this.cellY);
-      this.collectInteractiveRegions(this.layoutTree!, root);
-      return true;
+    // When an explicit layoutCacheKey is provided, the layout tree is shared
+    // across all rows with the same key (LayoutEngine caches by explicit key
+    // alone). Including the full signature here would defeat that sharing —
+    // every row with unique visual props would miss the plan cache. So we
+    // trust the explicit key and skip signature computation.
+    if (layoutCacheKey) {
+      return `${layoutCacheKey}|${sizeKey}`;
     }
-
-    // Cache miss: render to offscreen canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(parentSize.width);
-    canvas.height = Math.ceil(parentSize.height);
-    const offscreenCtx = canvas.getContext('2d');
-    if (!offscreenCtx) return false;
-
-    const originalCtx = this.ctx;
-    this.ctx = offscreenCtx;
-    offscreenCtx.save();
-    try {
-      // Render layout tree at 0,0 in offscreen canvas
-      // We need to temporarily shift the layout tree to 0,0 for offscreen rendering
-      const originalLayoutTree = this.layoutTree!;
-      const shiftedTree = this.shiftLayoutTree(originalLayoutTree, -this.cellX, -this.cellY);
-      this.layoutTree = shiftedTree;
-      this.renderLayoutNode(shiftedTree);
-      this.layoutTree = originalLayoutTree;
-    } finally {
-      offscreenCtx.restore();
-      this.ctx = originalCtx;
-    }
-    this.cellOffscreen.set(cacheKey, canvas);
-    this.ctx.drawImage(canvas, this.cellX, this.cellY);
-    return true;
-  }
-
-  private shiftLayoutTree(node: CTLayoutNode, dx: number, dy: number): CTLayoutNode {
-    const shifted: CTLayoutNode = {
-      ...node,
-      x: node.x + dx,
-      y: node.y + dy,
-      children: node.children.map(child => this.shiftLayoutTree(child, dx, dy)),
-    };
-    return shifted;
-  }
-
-  private collectInteractiveRegions(node: CTLayoutNode, element: CTElement): void {
-    if (element.type === 'CTTooltip' || element.type === 'CTDropdown') {
-      const regionType = element.type === 'CTTooltip' ? 'tooltip' : 'dropdown';
-      this.renderContext?.collectInteractiveRegion?.({
-        type: regionType,
-        rect: {
-          x: node.x,
-          y: node.y,
-          width: node.width,
-          height: node.height,
-        },
-        element,
-        props: element.props,
-        row: this.renderContext.row,
-        column: this.renderContext.column,
-        rowIndex: this.renderContext.rowIndex,
-        colIndex: this.renderContext.colIndex,
-      });
-    }
-
-    const currentChildren = this.getLayoutOrderedChildren(element);
-    for (let index = 0; index < node.children.length; index++) {
-      const childElement = currentChildren[index];
-      if (!childElement) continue;
-      this.collectInteractiveRegions(node.children[index]!, childElement);
-    }
+    return `${sizeKey}|${JSXElementSignature.layout(root)}|${JSXElementSignature.visual(root)}`;
   }
 
   private flattenLayoutTree(node: CTLayoutNode, offsetX = 0, offsetY = 0): CTLayoutInfo[] {
@@ -296,8 +200,8 @@ export class CTElementRenderer {
     this.renderContext?.collectInteractiveRegion?.({
       type: regionType,
       rect: {
-        x,
-        y,
+        x: x + this.cellX,
+        y: y + this.cellY,
         width: node.width,
         height: node.height,
       },

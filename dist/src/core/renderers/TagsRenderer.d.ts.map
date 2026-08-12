@@ -1,1 +1,0 @@
-{"version":3,"file":"TagsRenderer.d.ts","sourceRoot":"","sources":["../../../../src/core/renderers/TagsRenderer.ts"],"names":[],"mappings":"AAAA;;GAEG;AAEH,OAAO,EAAc,QAAQ,EAAE,MAAM,aAAa,CAAC;AACnD,OAAO,EAAE,gBAAgB,EAAE,mBAAmB,EAAE,gBAAgB,EAAE,MAAM,gBAAgB,CAAC;AAGzF,qBAAa,YAAa,SAAQ,gBAAgB;IAChD,QAAQ,CAAC,IAAI,EAAE,QAAQ,CAAS;IAEhC,MAAM,CAAC,OAAO,EAAE,mBAAmB,GAAG,gBAAgB;CAqFvD"}

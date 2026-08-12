@@ -573,7 +573,6 @@ describe('Renderer', () => {
       expect(renderer.getPerformanceDiagnostics().jsxCache).toMatchObject({
         planHits: expect.any(Number),
         planMisses: expect.any(Number),
-        cellOffscreen: expect.any(Object),
       });
     });
 

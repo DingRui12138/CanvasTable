@@ -1,4 +1,4 @@
-import type { JSXRenderPlan } from './JSXRenderPlan';
+import type { CTLayoutNode } from './types';
 
 export interface JSXRenderCacheStats {
   planHits: number;
@@ -12,7 +12,7 @@ export interface JSXRenderCacheOptions {
 
 export class JSXRenderCache {
   private readonly maxPlans: number;
-  private readonly plans = new Map<string, JSXRenderPlan>();
+  private readonly plans = new Map<string, CTLayoutNode>();
   private stats: JSXRenderCacheStats = {
     planHits: 0,
     planMisses: 0,
@@ -23,7 +23,7 @@ export class JSXRenderCache {
     this.maxPlans = options.maxPlans ?? 500;
   }
 
-  getOrCreatePlan(key: string, factory: () => JSXRenderPlan): JSXRenderPlan {
+  getOrCreatePlan(key: string, factory: () => CTLayoutNode): CTLayoutNode {
     const cached = this.plans.get(key);
     if (cached) {
       this.stats.planHits++;
