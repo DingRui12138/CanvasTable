@@ -131,16 +131,21 @@ export class RenderCache {
   /** 单元格缓存最大数量 */
   private maxCellCacheSize: number;
 
+  /** 列值缓存最大数量 */
+  private maxValueCacheSize: number;
+
   constructor(
     rowIdManager: RowIdManager,
     columnIdManager: ColumnIdManager,
     rowVersionManager: RowVersionManager,
     maxCellCacheSize: number = 3000,
+    maxValueCacheSize: number = 5000,
   ) {
     this.rowIdManager = rowIdManager;
     this.columnIdManager = columnIdManager;
     this.rowVersionManager = rowVersionManager;
     this.maxCellCacheSize = maxCellCacheSize;
+    this.maxValueCacheSize = maxValueCacheSize;
   }
 
   // ==================== Key 生成 ====================
@@ -225,8 +230,8 @@ export class RenderCache {
   ): void {
     if (cacheMode === "value") {
       const key = this.getValueCacheKey(column, value);
+      this.ensureValueCapacity();
       this.valueCache.set(key, renderResult);
-      // valueCache 不限制大小，因为 key 是稳定的值组合
     } else {
       const key = this.getCellCacheKey(row, column);
       this.ensureCellCapacity();
@@ -235,6 +240,19 @@ export class RenderCache {
         renderResult,
         rowVersion: this.rowVersionManager.getVersion(row),
       });
+    }
+  }
+
+  /**
+   * 确保值缓存不超过最大数量
+   */
+  private ensureValueCapacity(): void {
+    if (this.valueCache.size >= this.maxValueCacheSize) {
+      // 删除最早的条目（LRU）
+      const firstKey = this.valueCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.valueCache.delete(firstKey);
+      }
     }
   }
 

@@ -208,6 +208,28 @@ describe("RenderCache", () => {
       expect(cache.get(row, col, "active", "value")).toEqual(resultActive);
       expect(cache.get(row, col, "inactive", "value")).toEqual(resultInactive);
     });
+
+    it("should evict the oldest value entry when exceeding the capacity", () => {
+      const limitedCache = new RenderCache(
+        new RowIdManager(),
+        new ColumnIdManager(),
+        new RowVersionManager(),
+        3000,
+        2,
+      );
+      const row = { id: "1", data: {} } as Row;
+      const col = { key: "status", title: "Status" } as Column;
+      const result: RenderResult = { text: "value", type: "text" };
+
+      limitedCache.set(row, col, "v1", result, "value");
+      limitedCache.set(row, col, "v2", result, "value");
+      limitedCache.set(row, col, "v3", result, "value");
+
+      expect(limitedCache.get(row, col, "v1", "value")).toBeNull();
+      expect(limitedCache.get(row, col, "v2", "value")).toEqual(result);
+      expect(limitedCache.get(row, col, "v3", "value")).toEqual(result);
+      expect(limitedCache.getStats().valueCacheSize).toBe(2);
+    });
   });
 
   describe("cleanup operations", () => {

@@ -601,6 +601,7 @@ export interface ComputedSummaryRow {
   height: number;
   cells: ComputedSummaryCell[];
   source: SummaryRowConfig;
+  style?: SummaryStyle;
 }
 
 export interface ComputedSummaryCell {

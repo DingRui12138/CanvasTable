@@ -29,6 +29,10 @@ export class SummaryManager {
       ...context,
       scopeRows,
     };
+    // 预先建立 key -> 索引映射，避免每个合计单元格重复 findIndex/indexOf
+    const columnIndexByKey = new Map(
+      context.visibleLeafColumns.map((column, index) => [column.key, index]),
+    );
 
     return {
       enabled,
@@ -42,9 +46,10 @@ export class SummaryManager {
           height: result.height ?? rowConfig.height ?? defaultRowHeight,
           cells: [],
           source: rowConfig,
+          style: config.style,
         };
 
-        row.cells = this.buildCells(result.cells, row, rowIndex, summaryContext);
+        row.cells = this.buildCells(result.cells, row, rowIndex, summaryContext, columnIndexByKey);
         return row;
       }),
     };
@@ -70,21 +75,19 @@ export class SummaryManager {
     row: ComputedSummaryRow,
     rowIndex: number,
     context: SummaryContext,
+    columnIndexByKey: Map<string, number>,
   ): ComputedSummaryCell[] {
     const builtCells: ComputedSummaryCell[] = [];
     const occupiedColumns = new Set<number>();
 
     cells.forEach((cell, cellIndex) => {
-      const range = this.resolveColumnRange(cell, context.visibleLeafColumns);
+      const range = this.resolveColumnRange(cell, context.visibleLeafColumns, columnIndexByKey);
       if (!range) return;
 
       for (let index = range.startColumnIndex; index <= range.endColumnIndex; index++) {
         if (occupiedColumns.has(index)) {
           throw new Error(`Overlapping summary cells in row "${row.key}"`);
         }
-      }
-
-      for (let index = range.startColumnIndex; index <= range.endColumnIndex; index++) {
         occupiedColumns.add(index);
       }
 
@@ -93,7 +96,14 @@ export class SummaryManager {
         key: `${row.key}:${cellIndex}`,
         ...range,
         config: cell,
-        renderResult: this.resolveRenderResult(cell, row, rowIndex, column, context),
+        renderResult: this.resolveRenderResult(
+          cell,
+          row,
+          rowIndex,
+          column,
+          range.startColumnIndex,
+          context,
+        ),
       });
     });
 
@@ -103,6 +113,7 @@ export class SummaryManager {
   private static resolveColumnRange(
     cell: SummaryCellConfig,
     visibleLeafColumns: Column[],
+    columnIndexByKey: Map<string, number>,
   ):
     | {
         startColumnIndex: number;
@@ -116,10 +127,10 @@ export class SummaryManager {
 
     if (!startKey || !endKey) return undefined;
 
-    const startColumnIndex = visibleLeafColumns.findIndex((column) => column.key === startKey);
-    const endColumnIndex = visibleLeafColumns.findIndex((column) => column.key === endKey);
+    const startColumnIndex = columnIndexByKey.get(startKey);
+    const endColumnIndex = columnIndexByKey.get(endKey);
 
-    if (startColumnIndex < 0 || endColumnIndex < 0) return undefined;
+    if (startColumnIndex === undefined || endColumnIndex === undefined) return undefined;
 
     const start = Math.min(startColumnIndex, endColumnIndex);
     const end = Math.max(startColumnIndex, endColumnIndex);
@@ -137,6 +148,7 @@ export class SummaryManager {
     row: ComputedSummaryRow,
     rowIndex: number,
     column: Column,
+    columnIndex: number,
     context: SummaryContext,
   ): RenderResult {
     if (cell.render) {
@@ -145,7 +157,7 @@ export class SummaryManager {
         row,
         rowIndex,
         column,
-        columnIndex: context.visibleLeafColumns.indexOf(column),
+        columnIndex,
         context,
       });
     }

@@ -53,6 +53,34 @@ describe("SummaryManager", () => {
     expect(result.rows).toHaveLength(1);
   });
 
+  it("attaches row style from the summary config", () => {
+    const config: SummaryConfig = {
+      rows: [{ key: "total", cells: [{ columnKey: "name", text: "Total" }] }],
+      style: { backgroundColor: "#f5f5f5", color: "#333333", fontWeight: "bold" },
+    };
+
+    const result = SummaryManager.buildRows(config, createContext(), 32);
+
+    expect(result.rows[0]!.style).toEqual(config.style);
+  });
+
+  it("passes the resolved column index to render callbacks", () => {
+    const render = jest.fn(() => ({ text: "x", type: "text" as const }));
+    const config: SummaryConfig = {
+      rows: [{ key: "total", cells: [{ columnKey: "amount", render }] }],
+    };
+    const context = createContext();
+
+    SummaryManager.buildRows(config, context, 32);
+
+    expect(render).toHaveBeenCalledWith(
+      expect.objectContaining({
+        columnIndex: 3,
+        column: context.visibleLeafColumns[3],
+      }),
+    );
+  });
+
   it("passes view rows or all rows according to scope", () => {
     const viewConfig: SummaryConfig = {
       scope: "view",

@@ -95,6 +95,11 @@ type JSXUpdateHandlers = {
   updateRow: (rowIndex: number, data: Record<string, unknown>) => Promise<void>;
 };
 
+/** 单行文本截断结果缓存上限 */
+const CELL_TEXT_CACHE_LIMIT = 5000;
+/** 多行换行结果缓存上限 */
+const WRAPPED_TEXT_CACHE_LIMIT = 2000;
+
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -150,6 +155,10 @@ export class Renderer {
   private textWidthCache: Map<string, number> = new Map();
   private textWidthCacheKey: string = ""; // 当前字体配置的 key
 
+  // 单元格文本截断/换行缓存，key 含字体与最大宽度，滚动重复绘制时直接复用
+  private cellTextCache: Map<string, { text: string; width: number }> = new Map();
+  private wrappedTextCache: Map<string, { lines: string[]; widths: number[] }> = new Map();
+
   // 动态行高支持
   /**
    * 根据单元格高度计算可显示行数
@@ -159,10 +168,72 @@ export class Renderer {
   }
 
   /**
-   * 多行文本换行
+   * 单行文本截断（带缓存）
+   * 相同 (字体, 可用宽度, 文本) 直接复用截断结果与测量宽度，避免每帧重复 measureText
    */
-  private wrapTextToLines(text: string, maxWidth: number, maxRows: number): string[] {
-    return layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+  private measureSingleLineText(
+    text: string,
+    fontKey: string,
+    maxWidth: number,
+  ): { text: string; width: number } {
+    const cacheKey = `${fontKey}\u0000${maxWidth}\u0000${text}`;
+    const cached = this.cellTextCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    let finalText = text;
+    let textWidth = this.ctx.measureText(text).width;
+    if (textWidth > maxWidth) {
+      const ellipsis = "...";
+      // 二分查找最长可显示前缀，避免逐字符 measureText 的 O(n) 调用
+      let low = 0;
+      let high = text.length;
+      while (low < high) {
+        const mid = (low + high + 1) >> 1;
+        if (this.ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
+          low = mid;
+        } else {
+          high = mid - 1;
+        }
+      }
+      finalText = text.slice(0, low) + ellipsis;
+      textWidth = this.ctx.measureText(finalText).width;
+    }
+
+    const result = { text: finalText, width: textWidth };
+    if (this.cellTextCache.size >= CELL_TEXT_CACHE_LIMIT) {
+      this.cellTextCache.clear();
+    }
+    this.cellTextCache.set(cacheKey, result);
+    return result;
+  }
+
+  /**
+   * 多行文本换行（带缓存）
+   * 同时缓存每行宽度，供居中对齐/右对齐复用
+   */
+  private measureWrappedText(
+    text: string,
+    fontKey: string,
+    maxWidth: number,
+    maxRows: number,
+  ): { lines: string[]; widths: number[] } {
+    const cacheKey = `${fontKey}\u0000${maxWidth}\u0000${maxRows}\u0000${text}`;
+    const cached = this.wrappedTextCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const lines = layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+    const widths = lines.map((line) => this.ctx.measureText(line).width);
+    const result = { lines, widths };
+
+    if (this.wrappedTextCache.size >= WRAPPED_TEXT_CACHE_LIMIT) {
+      this.wrappedTextCache.clear();
+    }
+    this.wrappedTextCache.set(cacheKey, result);
+    return result;
   }
 
   // 性能监控
@@ -562,19 +633,15 @@ export class Renderer {
 
       const renderBands = this.shouldRenderRowBands();
 
-      this.ctx.save();
-      centerClipStateSaved = true;
-      this.ctx.beginPath();
-      this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
-      this.ctx.clip();
-
       if (renderBands) {
+        // band 路径内部自行处理 center 段与左右固定列的区域裁剪，
+        // 这里不能在 center clip 内绘制，否则固定列会被裁掉。
         this.measurePhase("rowBands", () => {
           this.renderRowBands(
             rows,
             centerColumnIndices,
-            [],
-            [],
+            leftFixedIndices,
+            rightFixedIndices,
             scrollLeft,
             scrollTop,
             visibleRange,
@@ -584,6 +651,12 @@ export class Renderer {
           );
         });
       } else {
+        this.ctx.save();
+        centerClipStateSaved = true;
+        this.ctx.beginPath();
+        this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
+        this.ctx.clip();
+
         this.measurePhase("centerRows", () => {
           this.renderCenterRows(
             leafColumns,
@@ -600,10 +673,10 @@ export class Renderer {
             },
           );
         });
-      }
 
-      this.ctx.restore();
-      centerClipStateSaved = false;
+        this.ctx.restore();
+        centerClipStateSaved = false;
+      }
 
       this.measurePhase("centerSelections", () => {
         this.renderCenterSelections(
@@ -654,23 +727,6 @@ export class Renderer {
             scrollTop,
             visibleRange,
             options,
-          );
-        });
-      }
-
-      if (renderBands && (hasLeftFixed || hasRightFixed)) {
-        this.measurePhase("rowBandsFixed", () => {
-          this.renderRowBands(
-            rows,
-            [],
-            leftFixedIndices,
-            rightFixedIndices,
-            scrollLeft,
-            scrollTop,
-            visibleRange,
-            fixedInfo,
-            options,
-            "rowBandsFixed",
           );
         });
       }
@@ -769,127 +825,247 @@ export class Renderer {
     );
   }
 
-  private renderRowBandCells(
+  /**
+   * 一次行循环绘制一个 band 的 center + 左右固定列。
+   * 行级信息（行索引/行高/纵坐标/背景色）每行只计算一次，
+   * 背景按区域每行只填充一次，避免 center 与固定列各跑一遍行循环。
+   */
+  private renderBandRows(
     band: RowBand,
-    allRows: Row[],
-    columnIndices: number[],
+    centerColumnIndices: number[],
+    leftFixedIndices: number[],
+    rightFixedIndices: number[],
     scrollLeft: number,
     scrollTop: number,
     visibleRange: VisibleRange,
+    viewportWidth: number,
+    viewportHeight: number,
+    leftFixedWidth: number,
+    rightStartX: number,
     options: {
       hoveredCell: CellPosition | null;
       selectedCells: CellRange[];
       editingCell: CellPosition | null;
       stripeRows: boolean;
     },
-    startX?: number,
-    detailPrefix?: string,
+    detailPrefix: string,
   ): void {
-    let y = band.y;
-    if (band.type === "body") {
-      y -= scrollTop;
+    if (band.rows.length === 0) return;
+
+    const isBody = band.type === "body";
+    const startIndex = isBody ? visibleRange.startRow : 0;
+    const endIndex = isBody
+      ? Math.min(visibleRange.endRow, band.rows.length - 1)
+      : band.rows.length - 1;
+
+    const layouts: Array<{
+      row: Row;
+      rowIndex: number;
+      y: number;
+      rowHeight: number;
+      backgroundColor: string;
+    }> = [];
+
+    this.measureRowBandDetail(`${detailPrefix}.collectRows`, () => {
+      let y = band.y;
+      for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
+        const row = band.rows[bandRowIndex];
+        if (!row) {
+          continue;
+        }
+
+        const rowIndex = this.layoutManager.getRowIndexByRef(row);
+        if (rowIndex < 0) {
+          continue;
+        }
+
+        const rowHeight = this.layoutManager.getRowHeightByIndex(rowIndex);
+        if (isBody) {
+          y = band.y - scrollTop + (this.layoutManager.getRowBandOffsetByRef(row) ?? 0);
+        }
+        if (y + rowHeight < 0 || y > viewportHeight) {
+          y += rowHeight;
+          continue;
+        }
+
+        let backgroundColor = this.theme.colors.rowBackground;
+        if (options.stripeRows && rowIndex % 2 === 1) {
+          backgroundColor = this.theme.colors.rowAltBackground;
+        }
+        if (row.selected) {
+          backgroundColor = this.theme.colors.rowSelectedBackground;
+        }
+        if (options.hoveredCell?.rowIndex === rowIndex) {
+          backgroundColor = this.theme.colors.rowHoverBackground;
+        }
+
+        layouts.push({ row, rowIndex, y, rowHeight, backgroundColor });
+        y += rowHeight;
+      }
+    });
+
+    if (layouts.length === 0) return;
+
+    // center 列实际覆盖的横向范围（与 viewport 中心区取交集）
+    let centerFillStart = 0;
+    let centerFillEnd = 0;
+    if (centerColumnIndices.length > 0) {
+      const firstIndex = centerColumnIndices[0]!;
+      const lastIndex = centerColumnIndices[centerColumnIndices.length - 1]!;
+      const lastEnd =
+        this.layoutManager.getColumnOffset(lastIndex) +
+        this.layoutManager.getColumnWidthByIndex(lastIndex);
+      centerFillStart = Math.max(
+        leftFixedWidth,
+        this.layoutManager.getColumnOffset(firstIndex) - scrollLeft,
+      );
+      centerFillEnd = Math.min(rightStartX, lastEnd - scrollLeft);
     }
 
-    const startIndex = band.type === "body" ? visibleRange.startRow : 0;
-    const endIndex =
-      band.type === "body"
-        ? Math.min(visibleRange.endRow, band.rows.length - 1)
-        : band.rows.length - 1;
-    const measureDetail = <T>(name: string, fn: () => T): T =>
-      detailPrefix ? this.measureRowBandDetail(`${detailPrefix}.${name}`, fn) : fn();
-    const countDetail = (name: string): void => {
-      if (detailPrefix) {
-        this.recordRowBandDetail(`${detailPrefix}.${name}`, 0);
-      }
-    };
-
-    for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
-      const row = band.rows[bandRowIndex];
-      if (!row) {
-        continue;
-      }
-
-      countDetail("rows.visited");
-      const rowIndex = measureDetail("rowIndexLookup", () =>
-        this.layoutManager.getRowIndexByRef(row),
-      );
-      if (rowIndex < 0) {
-        continue;
-      }
-
-      const rowHeight = measureDetail("rowHeightLookup", () =>
-        this.layoutManager.getRowHeightByIndex(rowIndex),
-      );
-      if (band.type === "body") {
-        const rowOffset = measureDetail("rowOffsetLookup", () =>
-          this.layoutManager.getRowBandOffsetByRef(row),
-        );
-        y = band.y - scrollTop + (rowOffset ?? 0);
-      }
-      const viewportHeight = this.canvas.height / this.dpr;
-      if (y + rowHeight < 0 || y > viewportHeight) {
-        y += rowHeight;
-        continue;
-      }
-
-      let backgroundColor = this.theme.colors.rowBackground;
-      if (options.stripeRows && rowIndex % 2 === 1) {
-        backgroundColor = this.theme.colors.rowAltBackground;
-      }
-      if (row.selected) {
-        backgroundColor = this.theme.colors.rowSelectedBackground;
-      }
-      if (options.hoveredCell?.rowIndex === rowIndex) {
-        backgroundColor = this.theme.colors.rowHoverBackground;
-      }
-
-      for (const colIndex of columnIndices) {
-        countDetail("cells.visited");
-        const column = measureDetail("columnLookup", () =>
-          this.layoutManager.getLeafColumn(colIndex),
-        );
-        if (!column) continue;
-
-        const width = measureDetail("columnWidthLookup", () =>
-          this.layoutManager.getColumnWidthByIndex(colIndex),
-        );
-        const x = measureDetail("columnOffsetLookup", () =>
-          startX !== undefined
-            ? startX +
-              this.layoutManager.getColumnOffset(colIndex) -
-              this.layoutManager.getColumnOffset(columnIndices[0]!)
-            : this.layoutManager.getColumnOffset(colIndex) - scrollLeft,
-        );
-
-        measureDetail("backgroundFill", () => {
-          this.ctx.fillStyle = backgroundColor;
-          this.ctx.fillRect(x, y, width, rowHeight);
-        });
-        const cellTrace = detailPrefix
-          ? {
-              prefix: `${detailPrefix}.cellInternal`,
-              location: { rowIndex, colIndex, x, y, width, height: rowHeight },
-              columnKey: column.key,
-            }
-          : undefined;
-        measureDetail("cellWithPosition", () => {
-          this.renderCellWithPosition(
-            column,
-            row,
-            rowIndex,
-            colIndex,
-            row.data[getColumnField(column)],
-            x,
-            y,
-            width,
-            rowHeight,
-            options,
-            cellTrace,
+    // 1) 行背景：每个区域每行只填充一次
+    this.measureRowBandDetail(`${detailPrefix}.background`, () => {
+      for (const item of layouts) {
+        this.ctx.fillStyle = item.backgroundColor;
+        if (leftFixedWidth > 0) {
+          this.ctx.fillRect(0, item.y, leftFixedWidth, item.rowHeight);
+        }
+        if (centerFillEnd > centerFillStart) {
+          this.ctx.fillRect(
+            centerFillStart,
+            item.y,
+            centerFillEnd - centerFillStart,
+            item.rowHeight,
           );
-        });
+        }
+        if (viewportWidth > rightStartX) {
+          this.ctx.fillRect(rightStartX, item.y, viewportWidth - rightStartX, item.rowHeight);
+        }
       }
+    });
 
-      y += rowHeight;
+    // 2) center 单元格内容：水平裁剪一次，防止滚动列覆盖固定列
+    if (centerColumnIndices.length > 0) {
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(leftFixedWidth, 0, rightStartX - leftFixedWidth, viewportHeight);
+      this.ctx.clip();
+
+      this.measureRowBandDetail(`${detailPrefix}.centerCells`, () => {
+        for (const item of layouts) {
+          for (const colIndex of centerColumnIndices) {
+            const column = this.layoutManager.getLeafColumn(colIndex);
+            if (!column) continue;
+
+            const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+            const x = this.layoutManager.getColumnOffset(colIndex) - scrollLeft;
+            this.renderCellWithPosition(
+              column,
+              item.row,
+              item.rowIndex,
+              colIndex,
+              item.row.data[getColumnField(column)],
+              x,
+              item.y,
+              width,
+              item.rowHeight,
+              options,
+              {
+                prefix: `${detailPrefix}.center.cellInternal`,
+                location: {
+                  rowIndex: item.rowIndex,
+                  colIndex,
+                  x,
+                  y: item.y,
+                  width,
+                  height: item.rowHeight,
+                },
+                columnKey: column.key,
+              },
+            );
+          }
+        }
+      });
+
+      this.ctx.restore();
+    }
+
+    // 3) 左右固定列内容（固定列 x 相对于各自区域起点）
+    const leftFirstOffset =
+      leftFixedIndices.length > 0 ? this.layoutManager.getColumnOffset(leftFixedIndices[0]!) : 0;
+    const rightFirstOffset =
+      rightFixedIndices.length > 0
+        ? this.layoutManager.getColumnOffset(rightFixedIndices[0]!)
+        : 0;
+
+    if (leftFixedIndices.length > 0 || rightFixedIndices.length > 0) {
+      this.measureRowBandDetail(`${detailPrefix}.fixedCells`, () => {
+        for (const item of layouts) {
+          for (const colIndex of leftFixedIndices) {
+            const column = this.layoutManager.getLeafColumn(colIndex);
+            if (!column) continue;
+
+            const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+            const x = this.layoutManager.getColumnOffset(colIndex) - leftFirstOffset;
+            this.renderCellWithPosition(
+              column,
+              item.row,
+              item.rowIndex,
+              colIndex,
+              item.row.data[getColumnField(column)],
+              x,
+              item.y,
+              width,
+              item.rowHeight,
+              options,
+              {
+                prefix: `${detailPrefix}.leftFixed.cellInternal`,
+                location: {
+                  rowIndex: item.rowIndex,
+                  colIndex,
+                  x,
+                  y: item.y,
+                  width,
+                  height: item.rowHeight,
+                },
+                columnKey: column.key,
+              },
+            );
+          }
+
+          for (const colIndex of rightFixedIndices) {
+            const column = this.layoutManager.getLeafColumn(colIndex);
+            if (!column) continue;
+
+            const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+            const x =
+              rightStartX + this.layoutManager.getColumnOffset(colIndex) - rightFirstOffset;
+            this.renderCellWithPosition(
+              column,
+              item.row,
+              item.rowIndex,
+              colIndex,
+              item.row.data[getColumnField(column)],
+              x,
+              item.y,
+              width,
+              item.rowHeight,
+              options,
+              {
+                prefix: `${detailPrefix}.rightFixed.cellInternal`,
+                location: {
+                  rowIndex: item.rowIndex,
+                  colIndex,
+                  x,
+                  y: item.y,
+                  width,
+                  height: item.rowHeight,
+                },
+                columnKey: column.key,
+              },
+            );
+          }
+        }
+      });
     }
   }
 
@@ -916,136 +1092,78 @@ export class Renderer {
     const pinnedBands = [rowBands.pinnedTop, rowBands.pinnedBottom];
     const summaryBands = [rowBands.summaryTop, rowBands.summaryBottom];
 
+    const viewportWidth = this.canvas.width / this.dpr;
+    const viewportHeight = this.canvas.height / this.dpr;
+    const leftFixedWidth = leftFixedIndices.length > 0 ? fixedInfo.leftFixed.width : 0;
+    const rightFixedWidth = rightFixedIndices.length > 0 ? fixedInfo.rightFixed.width : 0;
+    const rightStartX = viewportWidth - rightFixedWidth;
+
+    // body：竖直裁剪后一次行循环绘制「背景 + center + 左右固定列」
     this.ctx.save();
     this.ctx.beginPath();
-    this.ctx.rect(
-      0,
-      rowBands.body.y,
-      this.canvas.width / this.dpr,
-      this.layoutManager.getBodyViewportHeight(),
-    );
+    this.ctx.rect(0, rowBands.body.y, viewportWidth, this.layoutManager.getBodyViewportHeight());
     this.ctx.clip();
-    this.renderRowBandCells(
+    this.renderBandRows(
       rowBands.body,
-      rows,
       centerColumnIndices,
+      leftFixedIndices,
+      rightFixedIndices,
       scrollLeft,
       scrollTop,
       visibleRange,
+      viewportWidth,
+      viewportHeight,
+      leftFixedWidth,
+      rightStartX,
       options,
-      undefined,
-      `${detailRoot}.center.body`,
+      `${detailRoot}.body`,
     );
     this.ctx.restore();
 
+    // 固定行（pinned）：不需要 body 竖直裁剪
     for (const band of pinnedBands) {
-      this.renderRowBandCells(
+      this.renderBandRows(
         band,
-        rows,
         centerColumnIndices,
-        scrollLeft,
-        scrollTop,
-        visibleRange,
-        options,
-        undefined,
-        `${detailRoot}.center.${band.type}`,
-      );
-    }
-    for (const band of summaryBands) {
-      this.measureRowBandDetail(`${detailRoot}.center.${band.type}.summaryCells`, () => {
-        this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft);
-      });
-    }
-
-    if (leftFixedIndices.length > 0) {
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(
-        0,
-        rowBands.body.y,
-        this.canvas.width / this.dpr,
-        this.layoutManager.getBodyViewportHeight(),
-      );
-      this.ctx.clip();
-      this.renderRowBandCells(
-        rowBands.body,
-        rows,
         leftFixedIndices,
-        scrollLeft,
-        scrollTop,
-        visibleRange,
-        options,
-        0,
-        `${detailRoot}.leftFixed.body`,
-      );
-      this.ctx.restore();
-
-      for (const band of pinnedBands) {
-        this.renderRowBandCells(
-          band,
-          rows,
-          leftFixedIndices,
-          scrollLeft,
-          scrollTop,
-          visibleRange,
-          options,
-          0,
-          `${detailRoot}.leftFixed.${band.type}`,
-        );
-      }
-      for (const band of summaryBands) {
-        this.measureRowBandDetail(`${detailRoot}.leftFixed.${band.type}.summaryCells`, () => {
-          this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0);
-        });
-      }
-    }
-
-    if (rightFixedIndices.length > 0) {
-      const viewportWidth = this.canvas.width / this.dpr;
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(
-        0,
-        rowBands.body.y,
-        this.canvas.width / this.dpr,
-        this.layoutManager.getBodyViewportHeight(),
-      );
-      this.ctx.clip();
-      this.renderRowBandCells(
-        rowBands.body,
-        rows,
         rightFixedIndices,
         scrollLeft,
         scrollTop,
         visibleRange,
+        viewportWidth,
+        viewportHeight,
+        leftFixedWidth,
+        rightStartX,
         options,
-        viewportWidth - fixedInfo.rightFixed.width,
-        `${detailRoot}.rightFixed.body`,
+        `${detailRoot}.${band.type}`,
       );
-      this.ctx.restore();
+    }
 
-      for (const band of pinnedBands) {
-        this.renderRowBandCells(
-          band,
-          rows,
-          rightFixedIndices,
-          scrollLeft,
-          scrollTop,
-          visibleRange,
-          options,
-          viewportWidth - fixedInfo.rightFixed.width,
-          `${detailRoot}.rightFixed.${band.type}`,
+    // 合计行：行数极少，保持原有分段绘制逻辑
+    for (const band of summaryBands) {
+      if (band.rows.length === 0) continue;
+
+      if (centerColumnIndices.length > 0) {
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(leftFixedWidth, 0, rightStartX - leftFixedWidth, viewportHeight);
+        this.ctx.clip();
+        this.measureRowBandDetail(`${detailRoot}.${band.type}.summaryCenter`, () =>
+          this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft),
+        );
+        this.ctx.restore();
+      }
+
+      if (leftFixedIndices.length > 0) {
+        this.measureRowBandDetail(`${detailRoot}.${band.type}.summaryLeft`, () =>
+          this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0),
         );
       }
-      for (const band of summaryBands) {
-        this.measureRowBandDetail(`${detailRoot}.rightFixed.${band.type}.summaryCells`, () => {
-          this.renderSummaryBandCells(
-            band,
-            rightFixedIndices,
-            scrollLeft,
-            viewportWidth - fixedInfo.rightFixed.width,
-          );
-        });
+
+      if (rightFixedIndices.length > 0) {
+        this.measureRowBandDetail(`${detailRoot}.${band.type}.summaryRight`, () =>
+          this.renderSummaryBandCells(band, rightFixedIndices, scrollLeft, rightStartX),
+        );
       }
     }
   }
@@ -1063,13 +1181,19 @@ export class Renderer {
 
     for (const row of band.rows) {
       const rowHeight = row.height;
+      const rowStyle = row.style;
+      const rowBackground = rowStyle?.backgroundColor ?? this.theme.colors.headerBackground;
+      const rowBorderColor = rowStyle?.borderColor ?? this.theme.colors.cellBorder;
+      const hasRowTextStyle =
+        rowStyle?.color !== undefined || rowStyle?.fontWeight !== undefined;
+
       for (const columnIndex of columnIndices) {
         const x = this.getSummaryColumnX(columnIndex, columnIndices, scrollLeft, startX);
         const width = this.layoutManager.getColumnWidthByIndex(columnIndex);
 
-        this.ctx.fillStyle = this.theme.colors.headerBackground;
+        this.ctx.fillStyle = rowBackground;
         this.ctx.fillRect(x, y, width, rowHeight);
-        this.ctx.strokeStyle = this.theme.colors.cellBorder;
+        this.ctx.strokeStyle = rowBorderColor;
         this.ctx.lineWidth = this.theme.border.width;
         this.ctx.strokeRect(x, y, width, rowHeight);
       }
@@ -1083,6 +1207,18 @@ export class Renderer {
         const column = this.layoutManager.getLeafColumn(cell.startColumnIndex);
         if (!column) continue;
 
+        const cellStyle = cell.renderResult.style;
+        // 单元格样式优先于行级样式，行级只补足单元格未声明的文字颜色/字重
+        const textStyle = hasRowTextStyle
+          ? {
+              ...cellStyle,
+              color: cellStyle?.color ?? rowStyle?.color,
+              fontWeight: cellStyle?.fontWeight ?? rowStyle?.fontWeight,
+            }
+          : cellStyle;
+        const renderResult =
+          textStyle === cellStyle ? cell.renderResult : { ...cell.renderResult, style: textStyle };
+
         for (const segment of segments) {
           const x = this.getSummaryColumnX(segment.start, columnIndices, scrollLeft, startX);
           const endOffset =
@@ -1090,13 +1226,12 @@ export class Renderer {
             this.layoutManager.getColumnWidthByIndex(segment.end);
           const width = endOffset - this.layoutManager.getColumnOffset(segment.start);
 
-          this.ctx.fillStyle =
-            cell.renderResult.style?.backgroundColor ?? this.theme.colors.headerBackground;
+          this.ctx.fillStyle = cellStyle?.backgroundColor ?? rowBackground;
           this.ctx.fillRect(x, y, width, rowHeight);
 
           if (segment.start <= cell.startColumnIndex && cell.startColumnIndex <= segment.end) {
             this.renderCellContent(
-              cell.renderResult,
+              renderResult,
               x,
               y,
               width,
@@ -1110,9 +1245,8 @@ export class Renderer {
             );
           }
 
-          this.ctx.strokeStyle =
-            cell.renderResult.style?.borderColor ?? this.theme.colors.cellBorder;
-          this.ctx.lineWidth = cell.renderResult.style?.borderWidth ?? this.theme.border.width;
+          this.ctx.strokeStyle = cellStyle?.borderColor ?? rowBorderColor;
+          this.ctx.lineWidth = cellStyle?.borderWidth ?? this.theme.border.width;
           this.ctx.strokeRect(x, y, width, rowHeight);
         }
       }
@@ -2317,7 +2451,16 @@ export class Renderer {
       this.resolveDisabled(column.disabled, row, column),
     );
 
-    const cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
+    let cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
+    // 默认值缓存对对象值的 stringify 成本较高，对象值仍走直接渲染
+    if (
+      cacheMode === "value" &&
+      column.cacheMode === undefined &&
+      value !== null &&
+      typeof value === "object"
+    ) {
+      cacheMode = false;
+    }
     let renderResult: RenderResult;
 
     if (this.renderCache && cacheMode !== false) {
@@ -2472,8 +2615,11 @@ export class Renderer {
     if (column.cacheMode === "value") return "value";
     if (column.cacheMode === "cell") return "cell";
 
-    // 默认不使用缓存（对于大数据场景更高效）
-    // 只有用户明确指定 cacheMode 时才启用
+    // 纯展示列（无自定义 render/formatter）默认按值缓存：
+    // 同一列中相同值只需格式化/测量一次，滚动时直接复用 RenderResult
+    if (!column.render && !column.formatter) return "value";
+
+    // 存在自定义 render/formatter 时结果可能依赖行数据，默认不缓存
     return false;
   }
 
@@ -2652,7 +2798,9 @@ export class Renderer {
         ? { rowIndex, colIndex, x, y, width, height }
         : undefined;
 
-      this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+      // 与实际设置的 ctx.font 保持一致，用作文本度量缓存 key
+      const fontKey = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+      this.ctx.font = fontKey;
 
       if (type === CellTypes.CHECKBOX && checkbox) {
         this.measureRender("checkbox", ck, cellLocation, () => {
@@ -2979,8 +3127,9 @@ export class Renderer {
         const maxRows = this.calculateMaxRows(height, lineHeight, padding);
 
         if (maxRows > 1) {
-          // 多行显示模式
-          const lines = this.wrapTextToLines(displayText, maxTextWidth, maxRows);
+          // 多行显示模式（换行结果与每行宽度均缓存）
+          const wrapped = this.measureWrappedText(displayText, fontKey, maxTextWidth, maxRows);
+          const lines = wrapped.lines;
           const totalHeight = lines.length * lineHeight;
 
           // 计算起始 Y（根据 verticalAlign）
@@ -2997,13 +3146,14 @@ export class Renderer {
           this.ctx.textBaseline = "top";
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i]!;
+            const lineWidth = wrapped.widths[i] ?? 0;
             let textX: number;
             switch (align) {
               case "center":
-                textX = x + (width - this.ctx.measureText(line).width) / 2;
+                textX = x + (width - lineWidth) / 2;
                 break;
               case "right":
-                textX = x + width - padding - this.ctx.measureText(line).width;
+                textX = x + width - padding - lineWidth;
                 break;
               default:
                 textX = x + padding;
@@ -3011,28 +3161,18 @@ export class Renderer {
             this.ctx.fillText(line, textX, startY + i * lineHeight);
           }
         } else {
-          // 单行显示模式（原有逻辑）
-          const ellipsis = "...";
-          let textWidth = this.ctx.measureText(displayText).width;
-
-          if (textWidth > maxTextWidth) {
-            let truncated = displayText;
-            while (
-              truncated.length > 0 &&
-              this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
-            ) {
-              truncated = truncated.slice(0, -1);
-            }
-            displayText = truncated + ellipsis;
-          }
+          // 单行显示模式：截断结果与宽度按 (字体 + 可用宽度) 缓存，滚动时免重复 measureText
+          const metrics = this.measureSingleLineText(displayText, fontKey, maxTextWidth);
+          displayText = metrics.text;
+          const displayWidth = metrics.width;
 
           let textX: number;
           switch (align) {
             case "center":
-              textX = x + (width - this.ctx.measureText(displayText).width) / 2;
+              textX = x + (width - displayWidth) / 2;
               break;
             case "right":
-              textX = x + width - padding - this.ctx.measureText(displayText).width;
+              textX = x + width - padding - displayWidth;
               break;
             default:
               textX = x + padding;
@@ -3059,7 +3199,7 @@ export class Renderer {
             this.ctx.fillText(displayText, textX, textY);
 
             if (type === CellTypes.LINK) {
-              const textWidth = this.ctx.measureText(displayText).width;
+              const textWidth = displayWidth;
               this.ctx.strokeStyle = color;
               this.ctx.lineWidth = 1;
               this.ctx.beginPath();

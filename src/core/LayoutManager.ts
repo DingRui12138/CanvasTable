@@ -372,42 +372,63 @@ export class LayoutManager {
         _hiddenColumnKey: column.key,
       }) as Column & { _hiddenColumnKey: string };
 
-    const findAdjacentFixed = (
-      items: Column[],
-      fromIndex: number,
-      direction: -1 | 1,
-    ): "left" | "right" | undefined => {
-      for (let index = fromIndex; index >= 0 && index < items.length; index += direction) {
-        const adjacent = items[index];
-        if (adjacent && !adjacent.hidden) {
-          return adjacent.fixed === "left" || adjacent.fixed === "right"
-            ? adjacent.fixed
-            : undefined;
+    // 返回本次调用追加的总列宽，供上级分组判断 accumulatedWidth，避免 slice/reduce
+    const collectLeaves = (items: Column[], includeEdgePlaceholders: boolean): number => {
+      const count = items.length;
+      // 预处理“前/后最近可见列的 fixed”和“右侧是否还有可见列”，
+      // 避免每个隐藏列都向前/向后扫描，整体保持 O(n)
+      const previousVisibleFixed: Array<"left" | "right" | undefined> = Array.from({
+        length: count,
+      });
+      const nextVisibleFixed: Array<"left" | "right" | undefined> = Array.from({
+        length: count,
+      });
+      const hasFollowingVisible = Array.from<boolean>({ length: count + 1 }).fill(false);
+
+      let lastVisibleFixed: "left" | "right" | undefined;
+      for (let index = 0; index < count; index++) {
+        previousVisibleFixed[index] = lastVisibleFixed;
+        const column = items[index];
+        if (column && !column.hidden) {
+          lastVisibleFixed =
+            column.fixed === "left" || column.fixed === "right" ? column.fixed : undefined;
         }
       }
 
-      return undefined;
-    };
+      for (let index = count - 1; index >= 0; index--) {
+        const column = items[index];
+        hasFollowingVisible[index] =
+          Boolean(column && !column.hidden) || hasFollowingVisible[index + 1]!;
+      }
 
-    const collectLeaves = (items: Column[], includeEdgePlaceholders: boolean): void => {
+      lastVisibleFixed = undefined;
+      for (let index = count - 1; index >= 0; index--) {
+        nextVisibleFixed[index] = lastVisibleFixed;
+        const column = items[index];
+        if (column && !column.hidden) {
+          lastVisibleFixed =
+            column.fixed === "left" || column.fixed === "right" ? column.fixed : undefined;
+        }
+      }
+
       let accumulatedWidth = 0;
       let previousWasHidden = false;
+      let hasPreviousVisible = false;
 
-      for (let index = 0; index < items.length; index++) {
+      for (let index = 0; index < count; index++) {
         const column = items[index];
         if (!column) continue;
 
         if (column.hidden) {
-          const hasPreviousVisible = items.slice(0, index).some((item) => item && !item.hidden);
-          const hasNextVisible = items.slice(index + 1).some((item) => item && !item.hidden);
+          const hasNextVisible = hasFollowingVisible[index + 1]!;
           const shouldAddPlaceholder = includeEdgePlaceholders
             ? hasPreviousVisible && hasNextVisible
             : (previousWasHidden === false || accumulatedWidth > 0) &&
               (hasNextVisible || accumulatedWidth > 0);
 
           if (shouldAddPlaceholder) {
-            const previousFixed = findAdjacentFixed(items, index - 1, -1);
-            const nextFixed = findAdjacentFixed(items, index + 1, 1);
+            const previousFixed = previousVisibleFixed[index];
+            const nextFixed = nextVisibleFixed[index];
             const placeholderFixed = previousFixed === nextFixed ? previousFixed : undefined;
             const placeholder = createHiddenPlaceholder(column, placeholderFixed);
             leafColumns.push(placeholder);
@@ -419,19 +440,17 @@ export class LayoutManager {
         }
 
         previousWasHidden = false;
+        hasPreviousVisible = true;
+
         if (column.children && column.children.length > 0) {
-          const beforeCount = leafColumns.length;
-          collectLeaves(column.children, false);
-          if (leafColumns.length > beforeCount) {
-            accumulatedWidth += leafColumns
-              .slice(beforeCount)
-              .reduce((total, leaf) => total + this.getColumnWidth(leaf), 0);
-          }
+          accumulatedWidth += collectLeaves(column.children, false);
         } else {
           leafColumns.push(column);
           accumulatedWidth += this.getColumnWidth(column);
         }
       }
+
+      return accumulatedWidth;
     };
 
     collectLeaves(this.buildLayoutColumns(columns), true);
