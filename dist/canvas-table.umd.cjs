@@ -1317,11 +1317,14 @@ ${numFmtsXml}
     rowVersionManager;
     /** 单元格缓存最大数量 */
     maxCellCacheSize;
-    constructor(rowIdManager, columnIdManager, rowVersionManager, maxCellCacheSize = 3e3) {
+    /** 列值缓存最大数量 */
+    maxValueCacheSize;
+    constructor(rowIdManager, columnIdManager, rowVersionManager, maxCellCacheSize = 3e3, maxValueCacheSize = 5e3) {
       this.rowIdManager = rowIdManager;
       this.columnIdManager = columnIdManager;
       this.rowVersionManager = rowVersionManager;
       this.maxCellCacheSize = maxCellCacheSize;
+      this.maxValueCacheSize = maxValueCacheSize;
     }
     // ==================== Key 生成 ====================
     /**
@@ -1385,6 +1388,7 @@ ${numFmtsXml}
     set(row, column, value, renderResult, cacheMode) {
       if (cacheMode === "value") {
         const key = this.getValueCacheKey(column, value);
+        this.ensureValueCapacity();
         this.valueCache.set(key, renderResult);
       } else {
         const key = this.getCellCacheKey(row, column);
@@ -1394,6 +1398,17 @@ ${numFmtsXml}
           renderResult,
           rowVersion: this.rowVersionManager.getVersion(row)
         });
+      }
+    }
+    /**
+     * 确保值缓存不超过最大数量
+     */
+    ensureValueCapacity() {
+      if (this.valueCache.size >= this.maxValueCacheSize) {
+        const firstKey = this.valueCache.keys().next().value;
+        if (firstKey !== void 0) {
+          this.valueCache.delete(firstKey);
+        }
       }
     }
     /**
@@ -2728,28 +2743,47 @@ ${numFmtsXml}
         fixed,
         _hiddenColumnKey: column.key
       });
-      const findAdjacentFixed = (items, fromIndex, direction) => {
-        for (let index = fromIndex; index >= 0 && index < items.length; index += direction) {
-          const adjacent = items[index];
-          if (adjacent && !adjacent.hidden) {
-            return adjacent.fixed === "left" || adjacent.fixed === "right" ? adjacent.fixed : void 0;
+      const collectLeaves = (items, includeEdgePlaceholders) => {
+        const count = items.length;
+        const previousVisibleFixed = Array.from({
+          length: count
+        });
+        const nextVisibleFixed = Array.from({
+          length: count
+        });
+        const hasFollowingVisible = Array.from({ length: count + 1 }).fill(false);
+        let lastVisibleFixed;
+        for (let index = 0; index < count; index++) {
+          previousVisibleFixed[index] = lastVisibleFixed;
+          const column = items[index];
+          if (column && !column.hidden) {
+            lastVisibleFixed = column.fixed === "left" || column.fixed === "right" ? column.fixed : void 0;
           }
         }
-        return void 0;
-      };
-      const collectLeaves = (items, includeEdgePlaceholders) => {
+        for (let index = count - 1; index >= 0; index--) {
+          const column = items[index];
+          hasFollowingVisible[index] = Boolean(column && !column.hidden) || hasFollowingVisible[index + 1];
+        }
+        lastVisibleFixed = void 0;
+        for (let index = count - 1; index >= 0; index--) {
+          nextVisibleFixed[index] = lastVisibleFixed;
+          const column = items[index];
+          if (column && !column.hidden) {
+            lastVisibleFixed = column.fixed === "left" || column.fixed === "right" ? column.fixed : void 0;
+          }
+        }
         let accumulatedWidth = 0;
         let previousWasHidden = false;
-        for (let index = 0; index < items.length; index++) {
+        let hasPreviousVisible = false;
+        for (let index = 0; index < count; index++) {
           const column = items[index];
           if (!column) continue;
           if (column.hidden) {
-            const hasPreviousVisible = items.slice(0, index).some((item) => item && !item.hidden);
-            const hasNextVisible = items.slice(index + 1).some((item) => item && !item.hidden);
+            const hasNextVisible = hasFollowingVisible[index + 1];
             const shouldAddPlaceholder = includeEdgePlaceholders ? hasPreviousVisible && hasNextVisible : (previousWasHidden === false || accumulatedWidth > 0) && (hasNextVisible || accumulatedWidth > 0);
             if (shouldAddPlaceholder) {
-              const previousFixed = findAdjacentFixed(items, index - 1, -1);
-              const nextFixed = findAdjacentFixed(items, index + 1, 1);
+              const previousFixed = previousVisibleFixed[index];
+              const nextFixed = nextVisibleFixed[index];
               const placeholderFixed = previousFixed === nextFixed ? previousFixed : void 0;
               const placeholder = createHiddenPlaceholder(column, placeholderFixed);
               leafColumns.push(placeholder);
@@ -2759,17 +2793,15 @@ ${numFmtsXml}
             continue;
           }
           previousWasHidden = false;
+          hasPreviousVisible = true;
           if (column.children && column.children.length > 0) {
-            const beforeCount = leafColumns.length;
-            collectLeaves(column.children, false);
-            if (leafColumns.length > beforeCount) {
-              accumulatedWidth += leafColumns.slice(beforeCount).reduce((total, leaf) => total + this.getColumnWidth(leaf), 0);
-            }
+            accumulatedWidth += collectLeaves(column.children, false);
           } else {
             leafColumns.push(column);
             accumulatedWidth += this.getColumnWidth(column);
           }
         }
+        return accumulatedWidth;
       };
       collectLeaves(this.buildLayoutColumns(columns), true);
       return leafColumns;
@@ -9279,6 +9311,147 @@ ${numFmtsXml}
       return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
     }
   }
+  const SIGNATURE_CACHE = /* @__PURE__ */ new WeakMap();
+  const LAYOUT_PROPS = /* @__PURE__ */ new Set([
+    "type",
+    "display",
+    "position",
+    "x",
+    "y",
+    "zIndex",
+    "width",
+    "height",
+    "minWidth",
+    "maxWidth",
+    "minHeight",
+    "maxHeight",
+    "padding",
+    "margin",
+    "gap",
+    "flexDirection",
+    "justifyContent",
+    "alignItems",
+    "alignSelf",
+    "radius",
+    "borderRadius",
+    "borderTopLeftRadius",
+    "borderTopRightRadius",
+    "borderBottomLeftRadius",
+    "borderBottomRightRadius",
+    "lineHeight",
+    "fontSize",
+    "fontFamily",
+    "fontWeight",
+    "fontStyle",
+    "letterSpacing",
+    "text"
+  ]);
+  class JSXElementSignature {
+    static layout(element) {
+      let entry = SIGNATURE_CACHE.get(element);
+      if (entry?.layout !== void 0) return entry.layout;
+      const sig = this.elementSignature(element, "layout");
+      entry = entry ?? { layout: void 0, visual: void 0 };
+      entry.layout = sig;
+      SIGNATURE_CACHE.set(element, entry);
+      return sig;
+    }
+    static visual(element) {
+      let entry = SIGNATURE_CACHE.get(element);
+      if (entry?.visual !== void 0) return entry.visual;
+      const sig = this.elementSignature(element, "visual");
+      entry = entry ?? { layout: void 0, visual: void 0 };
+      entry.visual = sig;
+      SIGNATURE_CACHE.set(element, entry);
+      return sig;
+    }
+    static elementSignature(element, mode) {
+      const parts = [];
+      this.appendElementSignature(element, mode, parts);
+      return parts.join("|");
+    }
+    static appendElementSignature(element, mode, parts) {
+      parts.push(`type:${element.type}`);
+      this.appendPropsSignature(element.props, parts, mode === "layout" ? LAYOUT_PROPS : void 0);
+      parts.push(`children:${element.children.length}`);
+      for (const child of element.children) {
+        this.appendElementSignature(child, mode, parts);
+      }
+    }
+    static appendPropsSignature(props, parts, allowedProps) {
+      const propParts = [];
+      for (const key of Object.keys(props).sort()) {
+        const value = props[key];
+        if (this.isEventCallbackProp(key, value)) continue;
+        if (allowedProps && !allowedProps.has(key)) continue;
+        propParts.push(`${key}:${this.valueSignature(value)}`);
+      }
+      parts.push(`props{${propParts.join(",")}}`);
+    }
+    static isEventCallbackProp(key, value) {
+      return typeof value === "function" && /^on[A-Z]/.test(key);
+    }
+    static valueSignature(value) {
+      if (value === null) return "null";
+      if (value === void 0) return "undefined";
+      if (typeof value === "string") return `string:${value}`;
+      if (typeof value === "number") return `number:${value}`;
+      if (typeof value === "boolean") return `boolean:${value}`;
+      if (typeof value === "function") return "function";
+      if (Array.isArray(value)) {
+        return `array:[${value.map((item) => this.valueSignature(item)).join(",")}]`;
+      }
+      if (typeof value === "object") {
+        return `object:{${Object.keys(value).sort().map((key) => `${key}:${this.valueSignature(value[key])}`).join(",")}}`;
+      }
+      return String(value);
+    }
+  }
+  class JSXRenderCache {
+    maxPlans;
+    plans = /* @__PURE__ */ new Map();
+    stats = {
+      planHits: 0,
+      planMisses: 0,
+      planEvictions: 0
+    };
+    constructor(options = {}) {
+      this.maxPlans = options.maxPlans ?? 500;
+    }
+    getOrCreatePlan(key, factory) {
+      const cached = this.plans.get(key);
+      if (cached) {
+        this.stats.planHits++;
+        this.plans.delete(key);
+        this.plans.set(key, cached);
+        return cached;
+      }
+      this.stats.planMisses++;
+      const plan = factory();
+      this.plans.set(key, plan);
+      if (this.plans.size > this.maxPlans) {
+        const oldest = this.plans.keys().next().value;
+        if (oldest !== void 0) {
+          this.plans.delete(oldest);
+          this.stats.planEvictions++;
+        }
+      }
+      return plan;
+    }
+    clear() {
+      this.plans.clear();
+    }
+    resetStats() {
+      this.stats = {
+        planHits: 0,
+        planMisses: 0,
+        planEvictions: 0
+      };
+    }
+    getStats() {
+      return { ...this.stats };
+    }
+  }
   class CTElementRenderer {
     ctx;
     layoutEngine;
@@ -9286,6 +9459,7 @@ ${numFmtsXml}
     renderContext;
     layouts;
     layoutTree;
+    renderCache = new JSXRenderCache();
     gradientCache = /* @__PURE__ */ new Map();
     static GRADIENT_CACHE_MAX = 200;
     // Store render position for cell offscreen cache
@@ -9297,10 +9471,13 @@ ${numFmtsXml}
       this.theme = theme;
       this.renderContext = renderContext;
     }
-    render(root, x, y, parentSize, _layoutCacheKey) {
+    render(root, x, y, parentSize, layoutCacheKey) {
       this.cellX = x;
       this.cellY = y;
-      const layoutTree = this.layoutEngine.layoutTree(root, 0, 0, parentSize);
+      const planKey = this.buildRenderPlanKey(root, parentSize, layoutCacheKey);
+      const layoutTree = this.renderCache.getOrCreatePlan(planKey, () => {
+        return this.layoutEngine.layoutTree(root, 0, 0, parentSize, layoutCacheKey);
+      });
       this.layoutTree = layoutTree;
       this.layouts = void 0;
       this.ctx.save();
@@ -9311,7 +9488,11 @@ ${numFmtsXml}
         this.ctx.restore();
       }
     }
+    getRenderCacheStats() {
+      return this.renderCache.getStats();
+    }
     invalidateOffscreen(_scope) {
+      this.renderCache.clear();
       this.gradientCache.clear();
     }
     getLayouts() {
@@ -9322,14 +9503,23 @@ ${numFmtsXml}
     }
     setContext(ctx) {
       this.ctx = ctx;
+      this.renderCache.clear();
       this.gradientCache.clear();
     }
     setTheme(theme) {
       this.theme = theme;
+      this.renderCache.clear();
       this.gradientCache.clear();
     }
     setRenderContext(renderContext) {
       this.renderContext = renderContext;
+    }
+    buildRenderPlanKey(root, parentSize, layoutCacheKey) {
+      const sizeKey = parentSize ? `${parentSize.width}x${parentSize.height}` : "auto";
+      if (layoutCacheKey) {
+        return `${layoutCacheKey}|${sizeKey}`;
+      }
+      return `${sizeKey}|${JSXElementSignature.layout(root)}|${JSXElementSignature.visual(root)}`;
     }
     flattenLayoutTree(node, offsetX = 0, offsetY = 0) {
       const result = [
@@ -9992,6 +10182,8 @@ ${numFmtsXml}
       children: []
     };
   }
+  const CELL_TEXT_CACHE_LIMIT = 5e3;
+  const WRAPPED_TEXT_CACHE_LIMIT = 2e3;
   class Renderer {
     canvas;
     ctx;
@@ -10039,6 +10231,9 @@ ${numFmtsXml}
     textWidthCache = /* @__PURE__ */ new Map();
     textWidthCacheKey = "";
     // 当前字体配置的 key
+    // 单元格文本截断/换行缓存，key 含字体与最大宽度，滚动重复绘制时直接复用
+    cellTextCache = /* @__PURE__ */ new Map();
+    wrappedTextCache = /* @__PURE__ */ new Map();
     // 动态行高支持
     /**
      * 根据单元格高度计算可显示行数
@@ -10047,10 +10242,57 @@ ${numFmtsXml}
       return calculateMaxTextRows(cellHeight, lineHeight, padding);
     }
     /**
-     * 多行文本换行
+     * 单行文本截断（带缓存）
+     * 相同 (字体, 可用宽度, 文本) 直接复用截断结果与测量宽度，避免每帧重复 measureText
      */
-    wrapTextToLines(text, maxWidth, maxRows) {
-      return layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+    measureSingleLineText(text, fontKey, maxWidth) {
+      const cacheKey = `${fontKey}\0${maxWidth}\0${text}`;
+      const cached = this.cellTextCache.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      let finalText = text;
+      let textWidth = this.ctx.measureText(text).width;
+      if (textWidth > maxWidth) {
+        const ellipsis = "...";
+        let low = 0;
+        let high = text.length;
+        while (low < high) {
+          const mid = low + high + 1 >> 1;
+          if (this.ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
+            low = mid;
+          } else {
+            high = mid - 1;
+          }
+        }
+        finalText = text.slice(0, low) + ellipsis;
+        textWidth = this.ctx.measureText(finalText).width;
+      }
+      const result = { text: finalText, width: textWidth };
+      if (this.cellTextCache.size >= CELL_TEXT_CACHE_LIMIT) {
+        this.cellTextCache.clear();
+      }
+      this.cellTextCache.set(cacheKey, result);
+      return result;
+    }
+    /**
+     * 多行文本换行（带缓存）
+     * 同时缓存每行宽度，供居中对齐/右对齐复用
+     */
+    measureWrappedText(text, fontKey, maxWidth, maxRows) {
+      const cacheKey = `${fontKey}\0${maxWidth}\0${maxRows}\0${text}`;
+      const cached = this.wrappedTextCache.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      const lines = layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+      const widths = lines.map((line) => this.ctx.measureText(line).width);
+      const result = { lines, widths };
+      if (this.wrappedTextCache.size >= WRAPPED_TEXT_CACHE_LIMIT) {
+        this.wrappedTextCache.clear();
+      }
+      this.wrappedTextCache.set(cacheKey, result);
+      return result;
     }
     // 性能监控
     performanceEnabled = false;
@@ -10334,18 +10576,13 @@ ${numFmtsXml}
           }
         }
         const renderBands = this.shouldRenderRowBands();
-        this.ctx.save();
-        centerClipStateSaved = true;
-        this.ctx.beginPath();
-        this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
-        this.ctx.clip();
         if (renderBands) {
           this.measurePhase("rowBands", () => {
             this.renderRowBands(
               rows,
               centerColumnIndices,
-              [],
-              [],
+              leftFixedIndices,
+              rightFixedIndices,
               scrollLeft,
               scrollTop,
               visibleRange,
@@ -10355,6 +10592,11 @@ ${numFmtsXml}
             );
           });
         } else {
+          this.ctx.save();
+          centerClipStateSaved = true;
+          this.ctx.beginPath();
+          this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
+          this.ctx.clip();
           this.measurePhase("centerRows", () => {
             this.renderCenterRows(
               leafColumns,
@@ -10371,9 +10613,9 @@ ${numFmtsXml}
               }
             );
           });
+          this.ctx.restore();
+          centerClipStateSaved = false;
         }
-        this.ctx.restore();
-        centerClipStateSaved = false;
         this.measurePhase("centerSelections", () => {
           this.renderCenterSelections(
             options.selectedCells,
@@ -10420,22 +10662,6 @@ ${numFmtsXml}
               scrollTop,
               visibleRange,
               options
-            );
-          });
-        }
-        if (renderBands && (hasLeftFixed || hasRightFixed)) {
-          this.measurePhase("rowBandsFixed", () => {
-            this.renderRowBands(
-              rows,
-              [],
-              leftFixedIndices,
-              rightFixedIndices,
-              scrollLeft,
-              scrollTop,
-              visibleRange,
-              fixedInfo,
-              options,
-              "rowBandsFixed"
             );
           });
         }
@@ -10516,99 +10742,190 @@ ${numFmtsXml}
       const rowBands = this.layoutManager.getRowBandsForRender();
       return this.layoutManager.hasPinnedRows() || rowBands.summaryTop.rows.length > 0 || rowBands.summaryBottom.rows.length > 0;
     }
-    renderRowBandCells(band, allRows, columnIndices, scrollLeft, scrollTop, visibleRange, options, startX, detailPrefix) {
-      let y = band.y;
-      if (band.type === "body") {
-        y -= scrollTop;
-      }
-      const startIndex = band.type === "body" ? visibleRange.startRow : 0;
-      const endIndex = band.type === "body" ? Math.min(visibleRange.endRow, band.rows.length - 1) : band.rows.length - 1;
-      const measureDetail = (name, fn) => detailPrefix ? this.measureRowBandDetail(`${detailPrefix}.${name}`, fn) : fn();
-      const countDetail = (name) => {
-        if (detailPrefix) {
-          this.recordRowBandDetail(`${detailPrefix}.${name}`, 0);
-        }
-      };
-      for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
-        const row = band.rows[bandRowIndex];
-        if (!row) {
-          continue;
-        }
-        countDetail("rows.visited");
-        const rowIndex = measureDetail(
-          "rowIndexLookup",
-          () => this.layoutManager.getRowIndexByRef(row)
-        );
-        if (rowIndex < 0) {
-          continue;
-        }
-        const rowHeight = measureDetail(
-          "rowHeightLookup",
-          () => this.layoutManager.getRowHeightByIndex(rowIndex)
-        );
-        if (band.type === "body") {
-          const rowOffset = measureDetail(
-            "rowOffsetLookup",
-            () => this.layoutManager.getRowBandOffsetByRef(row)
-          );
-          y = band.y - scrollTop + (rowOffset ?? 0);
-        }
-        const viewportHeight = this.canvas.height / this.dpr;
-        if (y + rowHeight < 0 || y > viewportHeight) {
+    /**
+     * 一次行循环绘制一个 band 的 center + 左右固定列。
+     * 行级信息（行索引/行高/纵坐标/背景色）每行只计算一次，
+     * 背景按区域每行只填充一次，避免 center 与固定列各跑一遍行循环。
+     */
+    renderBandRows(band, centerColumnIndices, leftFixedIndices, rightFixedIndices, scrollLeft, scrollTop, visibleRange, viewportWidth, viewportHeight, leftFixedWidth, rightStartX, options, detailPrefix) {
+      if (band.rows.length === 0) return;
+      const isBody = band.type === "body";
+      const startIndex = isBody ? visibleRange.startRow : 0;
+      const endIndex = isBody ? Math.min(visibleRange.endRow, band.rows.length - 1) : band.rows.length - 1;
+      const layouts = [];
+      this.measureRowBandDetail(`${detailPrefix}.collectRows`, () => {
+        let y = band.y;
+        for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
+          const row = band.rows[bandRowIndex];
+          if (!row) {
+            continue;
+          }
+          const rowIndex = this.layoutManager.getRowIndexByRef(row);
+          if (rowIndex < 0) {
+            continue;
+          }
+          const rowHeight = this.layoutManager.getRowHeightByIndex(rowIndex);
+          if (isBody) {
+            y = band.y - scrollTop + (this.layoutManager.getRowBandOffsetByRef(row) ?? 0);
+          }
+          if (y + rowHeight < 0 || y > viewportHeight) {
+            y += rowHeight;
+            continue;
+          }
+          let backgroundColor = this.theme.colors.rowBackground;
+          if (options.stripeRows && rowIndex % 2 === 1) {
+            backgroundColor = this.theme.colors.rowAltBackground;
+          }
+          if (row.selected) {
+            backgroundColor = this.theme.colors.rowSelectedBackground;
+          }
+          if (options.hoveredCell?.rowIndex === rowIndex) {
+            backgroundColor = this.theme.colors.rowHoverBackground;
+          }
+          layouts.push({ row, rowIndex, y, rowHeight, backgroundColor });
           y += rowHeight;
-          continue;
         }
-        let backgroundColor = this.theme.colors.rowBackground;
-        if (options.stripeRows && rowIndex % 2 === 1) {
-          backgroundColor = this.theme.colors.rowAltBackground;
-        }
-        if (row.selected) {
-          backgroundColor = this.theme.colors.rowSelectedBackground;
-        }
-        if (options.hoveredCell?.rowIndex === rowIndex) {
-          backgroundColor = this.theme.colors.rowHoverBackground;
-        }
-        for (const colIndex of columnIndices) {
-          countDetail("cells.visited");
-          const column = measureDetail(
-            "columnLookup",
-            () => this.layoutManager.getLeafColumn(colIndex)
-          );
-          if (!column) continue;
-          const width = measureDetail(
-            "columnWidthLookup",
-            () => this.layoutManager.getColumnWidthByIndex(colIndex)
-          );
-          const x = measureDetail(
-            "columnOffsetLookup",
-            () => startX !== void 0 ? startX + this.layoutManager.getColumnOffset(colIndex) - this.layoutManager.getColumnOffset(columnIndices[0]) : this.layoutManager.getColumnOffset(colIndex) - scrollLeft
-          );
-          measureDetail("backgroundFill", () => {
-            this.ctx.fillStyle = backgroundColor;
-            this.ctx.fillRect(x, y, width, rowHeight);
-          });
-          const cellTrace = detailPrefix ? {
-            prefix: `${detailPrefix}.cellInternal`,
-            location: { rowIndex, colIndex, x, y, width, height: rowHeight },
-            columnKey: column.key
-          } : void 0;
-          measureDetail("cellWithPosition", () => {
-            this.renderCellWithPosition(
-              column,
-              row,
-              rowIndex,
-              colIndex,
-              row.data[getColumnField(column)],
-              x,
-              y,
-              width,
-              rowHeight,
-              options,
-              cellTrace
+      });
+      if (layouts.length === 0) return;
+      let centerFillStart = 0;
+      let centerFillEnd = 0;
+      if (centerColumnIndices.length > 0) {
+        const firstIndex = centerColumnIndices[0];
+        const lastIndex = centerColumnIndices[centerColumnIndices.length - 1];
+        const lastEnd = this.layoutManager.getColumnOffset(lastIndex) + this.layoutManager.getColumnWidthByIndex(lastIndex);
+        centerFillStart = Math.max(
+          leftFixedWidth,
+          this.layoutManager.getColumnOffset(firstIndex) - scrollLeft
+        );
+        centerFillEnd = Math.min(rightStartX, lastEnd - scrollLeft);
+      }
+      this.measureRowBandDetail(`${detailPrefix}.background`, () => {
+        for (const item of layouts) {
+          this.ctx.fillStyle = item.backgroundColor;
+          if (leftFixedWidth > 0) {
+            this.ctx.fillRect(0, item.y, leftFixedWidth, item.rowHeight);
+          }
+          if (centerFillEnd > centerFillStart) {
+            this.ctx.fillRect(
+              centerFillStart,
+              item.y,
+              centerFillEnd - centerFillStart,
+              item.rowHeight
             );
-          });
+          }
+          if (viewportWidth > rightStartX) {
+            this.ctx.fillRect(rightStartX, item.y, viewportWidth - rightStartX, item.rowHeight);
+          }
         }
-        y += rowHeight;
+      });
+      if (centerColumnIndices.length > 0) {
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(leftFixedWidth, 0, rightStartX - leftFixedWidth, viewportHeight);
+        this.ctx.clip();
+        this.measureRowBandDetail(`${detailPrefix}.centerCells`, () => {
+          for (const item of layouts) {
+            for (const colIndex of centerColumnIndices) {
+              const column = this.layoutManager.getLeafColumn(colIndex);
+              if (!column) continue;
+              const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+              const x = this.layoutManager.getColumnOffset(colIndex) - scrollLeft;
+              this.renderCellWithPosition(
+                column,
+                item.row,
+                item.rowIndex,
+                colIndex,
+                item.row.data[getColumnField(column)],
+                x,
+                item.y,
+                width,
+                item.rowHeight,
+                options,
+                {
+                  prefix: `${detailPrefix}.center.cellInternal`,
+                  location: {
+                    rowIndex: item.rowIndex,
+                    colIndex,
+                    x,
+                    y: item.y,
+                    width,
+                    height: item.rowHeight
+                  },
+                  columnKey: column.key
+                }
+              );
+            }
+          }
+        });
+        this.ctx.restore();
+      }
+      const leftFirstOffset = leftFixedIndices.length > 0 ? this.layoutManager.getColumnOffset(leftFixedIndices[0]) : 0;
+      const rightFirstOffset = rightFixedIndices.length > 0 ? this.layoutManager.getColumnOffset(rightFixedIndices[0]) : 0;
+      if (leftFixedIndices.length > 0 || rightFixedIndices.length > 0) {
+        this.measureRowBandDetail(`${detailPrefix}.fixedCells`, () => {
+          for (const item of layouts) {
+            for (const colIndex of leftFixedIndices) {
+              const column = this.layoutManager.getLeafColumn(colIndex);
+              if (!column) continue;
+              const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+              const x = this.layoutManager.getColumnOffset(colIndex) - leftFirstOffset;
+              this.renderCellWithPosition(
+                column,
+                item.row,
+                item.rowIndex,
+                colIndex,
+                item.row.data[getColumnField(column)],
+                x,
+                item.y,
+                width,
+                item.rowHeight,
+                options,
+                {
+                  prefix: `${detailPrefix}.leftFixed.cellInternal`,
+                  location: {
+                    rowIndex: item.rowIndex,
+                    colIndex,
+                    x,
+                    y: item.y,
+                    width,
+                    height: item.rowHeight
+                  },
+                  columnKey: column.key
+                }
+              );
+            }
+            for (const colIndex of rightFixedIndices) {
+              const column = this.layoutManager.getLeafColumn(colIndex);
+              if (!column) continue;
+              const width = this.layoutManager.getColumnWidthByIndex(colIndex);
+              const x = rightStartX + this.layoutManager.getColumnOffset(colIndex) - rightFirstOffset;
+              this.renderCellWithPosition(
+                column,
+                item.row,
+                item.rowIndex,
+                colIndex,
+                item.row.data[getColumnField(column)],
+                x,
+                item.y,
+                width,
+                item.rowHeight,
+                options,
+                {
+                  prefix: `${detailPrefix}.rightFixed.cellInternal`,
+                  location: {
+                    rowIndex: item.rowIndex,
+                    colIndex,
+                    x,
+                    y: item.y,
+                    width,
+                    height: item.rowHeight
+                  },
+                  columnKey: column.key
+                }
+              );
+            }
+          }
+        });
       }
     }
     renderRowBands(rows, centerColumnIndices, leftFixedIndices, rightFixedIndices, scrollLeft, scrollTop, visibleRange, fixedInfo, options, detailRoot) {
@@ -10618,131 +10935,72 @@ ${numFmtsXml}
       );
       const pinnedBands = [rowBands.pinnedTop, rowBands.pinnedBottom];
       const summaryBands = [rowBands.summaryTop, rowBands.summaryBottom];
+      const viewportWidth = this.canvas.width / this.dpr;
+      const viewportHeight = this.canvas.height / this.dpr;
+      const leftFixedWidth = leftFixedIndices.length > 0 ? fixedInfo.leftFixed.width : 0;
+      const rightFixedWidth = rightFixedIndices.length > 0 ? fixedInfo.rightFixed.width : 0;
+      const rightStartX = viewportWidth - rightFixedWidth;
       this.ctx.save();
       this.ctx.beginPath();
-      this.ctx.rect(
-        0,
-        rowBands.body.y,
-        this.canvas.width / this.dpr,
-        this.layoutManager.getBodyViewportHeight()
-      );
+      this.ctx.rect(0, rowBands.body.y, viewportWidth, this.layoutManager.getBodyViewportHeight());
       this.ctx.clip();
-      this.renderRowBandCells(
+      this.renderBandRows(
         rowBands.body,
-        rows,
         centerColumnIndices,
+        leftFixedIndices,
+        rightFixedIndices,
         scrollLeft,
         scrollTop,
         visibleRange,
+        viewportWidth,
+        viewportHeight,
+        leftFixedWidth,
+        rightStartX,
         options,
-        void 0,
-        `${detailRoot}.center.body`
+        `${detailRoot}.body`
       );
       this.ctx.restore();
       for (const band of pinnedBands) {
-        this.renderRowBandCells(
+        this.renderBandRows(
           band,
-          rows,
           centerColumnIndices,
-          scrollLeft,
-          scrollTop,
-          visibleRange,
-          options,
-          void 0,
-          `${detailRoot}.center.${band.type}`
-        );
-      }
-      for (const band of summaryBands) {
-        this.measureRowBandDetail(`${detailRoot}.center.${band.type}.summaryCells`, () => {
-          this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft);
-        });
-      }
-      if (leftFixedIndices.length > 0) {
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.rect(
-          0,
-          rowBands.body.y,
-          this.canvas.width / this.dpr,
-          this.layoutManager.getBodyViewportHeight()
-        );
-        this.ctx.clip();
-        this.renderRowBandCells(
-          rowBands.body,
-          rows,
           leftFixedIndices,
-          scrollLeft,
-          scrollTop,
-          visibleRange,
-          options,
-          0,
-          `${detailRoot}.leftFixed.body`
-        );
-        this.ctx.restore();
-        for (const band of pinnedBands) {
-          this.renderRowBandCells(
-            band,
-            rows,
-            leftFixedIndices,
-            scrollLeft,
-            scrollTop,
-            visibleRange,
-            options,
-            0,
-            `${detailRoot}.leftFixed.${band.type}`
-          );
-        }
-        for (const band of summaryBands) {
-          this.measureRowBandDetail(`${detailRoot}.leftFixed.${band.type}.summaryCells`, () => {
-            this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0);
-          });
-        }
-      }
-      if (rightFixedIndices.length > 0) {
-        const viewportWidth = this.canvas.width / this.dpr;
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.rect(
-          0,
-          rowBands.body.y,
-          this.canvas.width / this.dpr,
-          this.layoutManager.getBodyViewportHeight()
-        );
-        this.ctx.clip();
-        this.renderRowBandCells(
-          rowBands.body,
-          rows,
           rightFixedIndices,
           scrollLeft,
           scrollTop,
           visibleRange,
+          viewportWidth,
+          viewportHeight,
+          leftFixedWidth,
+          rightStartX,
           options,
-          viewportWidth - fixedInfo.rightFixed.width,
-          `${detailRoot}.rightFixed.body`
+          `${detailRoot}.${band.type}`
         );
-        this.ctx.restore();
-        for (const band of pinnedBands) {
-          this.renderRowBandCells(
-            band,
-            rows,
-            rightFixedIndices,
-            scrollLeft,
-            scrollTop,
-            visibleRange,
-            options,
-            viewportWidth - fixedInfo.rightFixed.width,
-            `${detailRoot}.rightFixed.${band.type}`
+      }
+      for (const band of summaryBands) {
+        if (band.rows.length === 0) continue;
+        if (centerColumnIndices.length > 0) {
+          this.ctx.save();
+          this.ctx.beginPath();
+          this.ctx.rect(leftFixedWidth, 0, rightStartX - leftFixedWidth, viewportHeight);
+          this.ctx.clip();
+          this.measureRowBandDetail(
+            `${detailRoot}.${band.type}.summaryCenter`,
+            () => this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft)
+          );
+          this.ctx.restore();
+        }
+        if (leftFixedIndices.length > 0) {
+          this.measureRowBandDetail(
+            `${detailRoot}.${band.type}.summaryLeft`,
+            () => this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0)
           );
         }
-        for (const band of summaryBands) {
-          this.measureRowBandDetail(`${detailRoot}.rightFixed.${band.type}.summaryCells`, () => {
-            this.renderSummaryBandCells(
-              band,
-              rightFixedIndices,
-              scrollLeft,
-              viewportWidth - fixedInfo.rightFixed.width
-            );
-          });
+        if (rightFixedIndices.length > 0) {
+          this.measureRowBandDetail(
+            `${detailRoot}.${band.type}.summaryRight`,
+            () => this.renderSummaryBandCells(band, rightFixedIndices, scrollLeft, rightStartX)
+          );
         }
       }
     }
@@ -10752,12 +11010,16 @@ ${numFmtsXml}
       const visibleColumns = new Set(columnIndices);
       for (const row of band.rows) {
         const rowHeight = row.height;
+        const rowStyle = row.style;
+        const rowBackground = rowStyle?.backgroundColor ?? this.theme.colors.headerBackground;
+        const rowBorderColor = rowStyle?.borderColor ?? this.theme.colors.cellBorder;
+        const hasRowTextStyle = rowStyle?.color !== void 0 || rowStyle?.fontWeight !== void 0;
         for (const columnIndex of columnIndices) {
           const x = this.getSummaryColumnX(columnIndex, columnIndices, scrollLeft, startX);
           const width = this.layoutManager.getColumnWidthByIndex(columnIndex);
-          this.ctx.fillStyle = this.theme.colors.headerBackground;
+          this.ctx.fillStyle = rowBackground;
           this.ctx.fillRect(x, y, width, rowHeight);
-          this.ctx.strokeStyle = this.theme.colors.cellBorder;
+          this.ctx.strokeStyle = rowBorderColor;
           this.ctx.lineWidth = this.theme.border.width;
           this.ctx.strokeRect(x, y, width, rowHeight);
         }
@@ -10768,15 +11030,22 @@ ${numFmtsXml}
           }
           const column = this.layoutManager.getLeafColumn(cell.startColumnIndex);
           if (!column) continue;
+          const cellStyle = cell.renderResult.style;
+          const textStyle = hasRowTextStyle ? {
+            ...cellStyle,
+            color: cellStyle?.color ?? rowStyle?.color,
+            fontWeight: cellStyle?.fontWeight ?? rowStyle?.fontWeight
+          } : cellStyle;
+          const renderResult = textStyle === cellStyle ? cell.renderResult : { ...cell.renderResult, style: textStyle };
           for (const segment of segments) {
             const x = this.getSummaryColumnX(segment.start, columnIndices, scrollLeft, startX);
             const endOffset = this.layoutManager.getColumnOffset(segment.end) + this.layoutManager.getColumnWidthByIndex(segment.end);
             const width = endOffset - this.layoutManager.getColumnOffset(segment.start);
-            this.ctx.fillStyle = cell.renderResult.style?.backgroundColor ?? this.theme.colors.headerBackground;
+            this.ctx.fillStyle = cellStyle?.backgroundColor ?? rowBackground;
             this.ctx.fillRect(x, y, width, rowHeight);
             if (segment.start <= cell.startColumnIndex && cell.startColumnIndex <= segment.end) {
               this.renderCellContent(
-                cell.renderResult,
+                renderResult,
                 x,
                 y,
                 width,
@@ -10789,8 +11058,8 @@ ${numFmtsXml}
                 column.key
               );
             }
-            this.ctx.strokeStyle = cell.renderResult.style?.borderColor ?? this.theme.colors.cellBorder;
-            this.ctx.lineWidth = cell.renderResult.style?.borderWidth ?? this.theme.border.width;
+            this.ctx.strokeStyle = cellStyle?.borderColor ?? rowBorderColor;
+            this.ctx.lineWidth = cellStyle?.borderWidth ?? this.theme.border.width;
             this.ctx.strokeRect(x, y, width, rowHeight);
           }
         }
@@ -11522,7 +11791,10 @@ ${numFmtsXml}
         "resolveDisabled",
         () => this.resolveDisabled(column.disabled, row, column)
       );
-      const cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
+      let cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
+      if (cacheMode === "value" && column.cacheMode === void 0 && value !== null && typeof value === "object") {
+        cacheMode = false;
+      }
       let renderResult;
       if (this.renderCache && cacheMode !== false) {
         const cached = measureCell(
@@ -11664,6 +11936,7 @@ ${numFmtsXml}
       if (column.cacheMode === false) return false;
       if (column.cacheMode === "value") return "value";
       if (column.cacheMode === "cell") return "cell";
+      if (!column.render && !column.formatter) return "value";
       return false;
     }
     /**
@@ -11772,7 +12045,8 @@ ${numFmtsXml}
         const fontWeight = style?.fontWeight ?? "normal";
         const fontStyle = style?.fontStyle ?? "normal";
         const cellLocation = this.performanceEnabled ? { rowIndex, colIndex, x, y, width, height } : void 0;
-        this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+        const fontKey = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+        this.ctx.font = fontKey;
         if (type === CellTypes.CHECKBOX && checkbox) {
           this.measureRender("checkbox", ck, cellLocation, () => {
             this.renderWithCellRenderer("checkbox", checkbox, x, y, width, height, {
@@ -12038,7 +12312,8 @@ ${numFmtsXml}
           const maxTextWidth = width - padding * 2;
           const maxRows = this.calculateMaxRows(height, lineHeight, padding);
           if (maxRows > 1) {
-            const lines = this.wrapTextToLines(displayText, maxTextWidth, maxRows);
+            const wrapped = this.measureWrappedText(displayText, fontKey, maxTextWidth, maxRows);
+            const lines = wrapped.lines;
             const totalHeight = lines.length * lineHeight;
             let startY;
             if (verticalAlign === "top") {
@@ -12051,13 +12326,14 @@ ${numFmtsXml}
             this.ctx.textBaseline = "top";
             for (let i = 0; i < lines.length; i++) {
               const line = lines[i];
+              const lineWidth = wrapped.widths[i] ?? 0;
               let textX;
               switch (align) {
                 case "center":
-                  textX = x + (width - this.ctx.measureText(line).width) / 2;
+                  textX = x + (width - lineWidth) / 2;
                   break;
                 case "right":
-                  textX = x + width - padding - this.ctx.measureText(line).width;
+                  textX = x + width - padding - lineWidth;
                   break;
                 default:
                   textX = x + padding;
@@ -12065,22 +12341,16 @@ ${numFmtsXml}
               this.ctx.fillText(line, textX, startY + i * lineHeight);
             }
           } else {
-            const ellipsis = "...";
-            let textWidth = this.ctx.measureText(displayText).width;
-            if (textWidth > maxTextWidth) {
-              let truncated = displayText;
-              while (truncated.length > 0 && this.ctx.measureText(truncated + ellipsis).width > maxTextWidth) {
-                truncated = truncated.slice(0, -1);
-              }
-              displayText = truncated + ellipsis;
-            }
+            const metrics = this.measureSingleLineText(displayText, fontKey, maxTextWidth);
+            displayText = metrics.text;
+            const displayWidth = metrics.width;
             let textX;
             switch (align) {
               case "center":
-                textX = x + (width - this.ctx.measureText(displayText).width) / 2;
+                textX = x + (width - displayWidth) / 2;
                 break;
               case "right":
-                textX = x + width - padding - this.ctx.measureText(displayText).width;
+                textX = x + width - padding - displayWidth;
                 break;
               default:
                 textX = x + padding;
@@ -12104,12 +12374,12 @@ ${numFmtsXml}
             } else {
               this.ctx.fillText(displayText, textX, textY);
               if (type === CellTypes.LINK) {
-                const textWidth2 = this.ctx.measureText(displayText).width;
+                const textWidth = displayWidth;
                 this.ctx.strokeStyle = color;
                 this.ctx.lineWidth = 1;
                 this.ctx.beginPath();
                 this.ctx.moveTo(textX, textY + fontSize2 / 2 + 2);
-                this.ctx.lineTo(textX + textWidth2, textY + fontSize2 / 2 + 2);
+                this.ctx.lineTo(textX + textWidth, textY + fontSize2 / 2 + 2);
                 this.ctx.stroke();
               }
             }
@@ -12273,7 +12543,8 @@ ${numFmtsXml}
       return {
         frameHistory: [...this.frameHistory],
         lastFrame: this.getLastFrameDiagnostics(),
-        worstFrame: this.getWorstFrameDiagnostics()
+        worstFrame: this.getWorstFrameDiagnostics(),
+        jsxCache: this.jsxRenderer.getRenderCacheStats()
       };
     }
     /**
@@ -14017,7 +14288,7 @@ ${numFmtsXml}
             const configMap = {
               input: "input",
               select: "select",
-              tags: "tags",
+              tag: "tags",
               date: "date",
               checkbox: "checkbox",
               radio: "radio",
@@ -21653,6 +21924,9 @@ ${numFmtsXml}
         ...context,
         scopeRows
       };
+      const columnIndexByKey = new Map(
+        context.visibleLeafColumns.map((column, index) => [column.key, index])
+      );
       return {
         enabled,
         position,
@@ -21664,9 +21938,10 @@ ${numFmtsXml}
             key: rowConfig.key,
             height: result.height ?? rowConfig.height ?? defaultRowHeight,
             cells: [],
-            source: rowConfig
+            source: rowConfig,
+            style: config.style
           };
-          row.cells = this.buildCells(result.cells, row, rowIndex, summaryContext);
+          row.cells = this.buildCells(result.cells, row, rowIndex, summaryContext, columnIndexByKey);
           return row;
         })
       };
@@ -21680,18 +21955,16 @@ ${numFmtsXml}
       }
       return { cells: fallbackCells };
     }
-    static buildCells(cells, row, rowIndex, context) {
+    static buildCells(cells, row, rowIndex, context, columnIndexByKey) {
       const builtCells = [];
       const occupiedColumns = /* @__PURE__ */ new Set();
       cells.forEach((cell, cellIndex) => {
-        const range = this.resolveColumnRange(cell, context.visibleLeafColumns);
+        const range = this.resolveColumnRange(cell, context.visibleLeafColumns, columnIndexByKey);
         if (!range) return;
         for (let index = range.startColumnIndex; index <= range.endColumnIndex; index++) {
           if (occupiedColumns.has(index)) {
             throw new Error(`Overlapping summary cells in row "${row.key}"`);
           }
-        }
-        for (let index = range.startColumnIndex; index <= range.endColumnIndex; index++) {
           occupiedColumns.add(index);
         }
         const column = context.visibleLeafColumns[range.startColumnIndex];
@@ -21699,18 +21972,25 @@ ${numFmtsXml}
           key: `${row.key}:${cellIndex}`,
           ...range,
           config: cell,
-          renderResult: this.resolveRenderResult(cell, row, rowIndex, column, context)
+          renderResult: this.resolveRenderResult(
+            cell,
+            row,
+            rowIndex,
+            column,
+            range.startColumnIndex,
+            context
+          )
         });
       });
       return builtCells;
     }
-    static resolveColumnRange(cell, visibleLeafColumns) {
+    static resolveColumnRange(cell, visibleLeafColumns, columnIndexByKey) {
       const startKey = cell.startColumnKey ?? cell.columnKey;
       const endKey = cell.endColumnKey ?? cell.columnKey ?? startKey;
       if (!startKey || !endKey) return void 0;
-      const startColumnIndex = visibleLeafColumns.findIndex((column) => column.key === startKey);
-      const endColumnIndex = visibleLeafColumns.findIndex((column) => column.key === endKey);
-      if (startColumnIndex < 0 || endColumnIndex < 0) return void 0;
+      const startColumnIndex = columnIndexByKey.get(startKey);
+      const endColumnIndex = columnIndexByKey.get(endKey);
+      if (startColumnIndex === void 0 || endColumnIndex === void 0) return void 0;
       const start = Math.min(startColumnIndex, endColumnIndex);
       const end = Math.max(startColumnIndex, endColumnIndex);
       return {
@@ -21720,14 +22000,14 @@ ${numFmtsXml}
         endColumnKey: visibleLeafColumns[end].key
       };
     }
-    static resolveRenderResult(cell, row, rowIndex, column, context) {
+    static resolveRenderResult(cell, row, rowIndex, column, columnIndex, context) {
       if (cell.render) {
         return cell.render({
           cell,
           row,
           rowIndex,
           column,
-          columnIndex: context.visibleLeafColumns.indexOf(column),
+          columnIndex,
           context
         });
       }
