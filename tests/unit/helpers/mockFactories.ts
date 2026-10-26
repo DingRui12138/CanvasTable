@@ -178,6 +178,14 @@ export function createMockCanvasContext(): CanvasRenderingContext2D {
     moveTo: jest.fn((x: number, y: number) => calls.push({ method: 'moveTo', args: [x, y] })),
     lineTo: jest.fn((x: number, y: number) => calls.push({ method: 'lineTo', args: [x, y] })),
     rect: jest.fn((x: number, y: number, w: number, h: number) => calls.push({ method: 'rect', args: [x, y, w, h] })),
+    roundRect: jest.fn((x: number, y: number, w: number, h: number, radii?: number | number[]) =>
+      calls.push({ method: 'roundRect', args: [x, y, w, h, radii] })),
+    quadraticCurveTo: jest.fn((cpx: number, cpy: number, x: number, y: number) =>
+      calls.push({ method: 'quadraticCurveTo', args: [cpx, cpy, x, y] })),
+    bezierCurveTo: jest.fn(
+      (cp1x: number, cp1y: number, cp2x: number, cp2y: number, x: number, y: number) =>
+        calls.push({ method: 'bezierCurveTo', args: [cp1x, cp1y, cp2x, cp2y, x, y] }),
+    ),
     arc: jest.fn((x: number, y: number, r: number, start: number, end: number) => calls.push({ method: 'arc', args: [x, y, r, start, end] })),
     arcTo: jest.fn((x1: number, y1: number, x2: number, y2: number, r: number) => calls.push({ method: 'arcTo', args: [x1, y1, x2, y2, r] })),
 
@@ -203,6 +211,10 @@ export function createMockCanvasContext(): CanvasRenderingContext2D {
 
     // Clipping
     clip: jest.fn(() => calls.push({ method: 'clip', args: [] })),
+
+    // Line dash
+    setLineDash: jest.fn((segments: number[]) => calls.push({ method: 'setLineDash', args: segments })),
+    getLineDash: jest.fn(() => []),
 
     // Styles
     fillStyle: '#000000',

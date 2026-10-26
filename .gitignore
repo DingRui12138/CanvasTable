@@ -12,7 +12,9 @@ pnpm-debug.log*
 coverage/
 docs/**/plans/
 docs/**/specs/
+docs/**/reports/
 .worktrees/
+.workbuddy-ai/
 
 # Playwright runtime artifacts
 test-results/

@@ -509,12 +509,25 @@ describe('LayoutManager', () => {
       layoutManager.calculateLayout(columns, rows);
       layoutManager.setScrollPosition(0, theme.row.height * 10000);
 
-      const startedAt = performance.now();
-      const result = layoutManager.hitTest(40, theme.row.headerHeight + theme.row.height * 2);
-      const elapsed = performance.now() - startedAt;
+      const hitY = theme.row.headerHeight + theme.row.height * 2;
+      // 预热：让 V8 完成首次调用优化，避免冷启动抖动污染计时
+      for (let i = 0; i < 5; i++) {
+        layoutManager.hitTest(40, hitY);
+      }
+
+      // 取多次测量中的最小值，避免整卷并发运行时的瞬时 CPU 抢占导致偶发超时
+      const samples: number[] = [];
+      let result = layoutManager.hitTest(40, hitY);
+      for (let i = 0; i < 7; i++) {
+        const startedAt = performance.now();
+        result = layoutManager.hitTest(40, hitY);
+        samples.push(performance.now() - startedAt);
+      }
+      // 若实现退化为逐行扫描，20000 行下单次耗时必然显著超过该阈值
+      const bestElapsed = Math.min(...samples);
 
       expect(result.region).toBe('cell');
-      expect(elapsed).toBeLessThan(20);
+      expect(bestElapsed).toBeLessThan(20);
     });
 
     it('places top summary rows above pinned top rows', () => {

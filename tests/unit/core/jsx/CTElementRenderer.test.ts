@@ -547,4 +547,148 @@ describe('CTElementRenderer', () => {
     const fillCall = drawCalls.find(c => c.type === 'fill');
     expect(fillCall).toBeDefined();
   });
+
+  // ─── Regression: cell offscreen cache layer removal ───
+  // The third cache layer (CellOffscreenCache) was removed. These tests
+  // pin down the new contract: invalidateOffscreen clears the plan cache,
+  // explicit layoutCacheKey skips signature computation, and render
+  // positions via ctx.translate instead of shifting the layout tree.
+
+  it('shares plan across different visual props when explicit layoutCacheKey is provided', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const layoutSpy = jest.spyOn(layoutEngine, 'layoutTree');
+    const plannedRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+
+    // Same layout structure, different visual props (backgroundColor)
+    plannedRenderer.render(
+      createCTElement('CTBox', { width: 100, height: 40, backgroundColor: '#ff0000' }),
+      0, 0, { width: 100, height: 40 }, 'shared-layout',
+    );
+    plannedRenderer.render(
+      createCTElement('CTBox', { width: 100, height: 40, backgroundColor: '#00ff00' }),
+      50, 30, { width: 100, height: 40 }, 'shared-layout',
+    );
+
+    // Layout computed only once despite different visual props
+    expect(layoutSpy).toHaveBeenCalledTimes(1);
+    expect(plannedRenderer.getRenderCacheStats()).toMatchObject({ planHits: 1, planMisses: 1 });
+  });
+
+  it('produces plan miss when layoutCacheKey differs', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const layoutSpy = jest.spyOn(layoutEngine, 'layoutTree');
+    const plannedRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+
+    plannedRenderer.render(
+      createCTElement('CTBox', { width: 100, height: 40 }),
+      0, 0, { width: 100, height: 40 }, 'key-a',
+    );
+    plannedRenderer.render(
+      createCTElement('CTBox', { width: 100, height: 40 }),
+      0, 0, { width: 100, height: 40 }, 'key-b',
+    );
+
+    expect(layoutSpy).toHaveBeenCalledTimes(2);
+    expect(plannedRenderer.getRenderCacheStats()).toMatchObject({ planHits: 0, planMisses: 2 });
+  });
+
+  it('invalidates plan cache on invalidateOffscreen("all")', () => {
+    const createTree = () => createCTElement('CTBox', { width: 40, height: 20, backgroundColor: '#ff0000' });
+
+    renderer.render(createTree(), 0, 0, { width: 40, height: 20 });
+    renderer.render(createTree(), 50, 30, { width: 40, height: 20 });
+    expect(renderer.getRenderCacheStats()).toMatchObject({ planHits: 1, planMisses: 1 });
+
+    renderer.invalidateOffscreen('all');
+    renderer.render(createTree(), 0, 0, { width: 40, height: 20 });
+
+    // Plan cache was cleared → new miss
+    expect(renderer.getRenderCacheStats()).toMatchObject({ planHits: 1, planMisses: 2 });
+  });
+
+  it('clears all plans on invalidateOffscreen with size scope (scope ignored)', () => {
+    // Size-scoped invalidation only applied to the removed cell offscreen cache.
+    // After removal, invalidateOffscreen clears the entire plan cache regardless of scope.
+    const createTree = () => createCTElement('CTBox', { width: 40, height: 20, backgroundColor: '#ff0000' });
+
+    renderer.render(createTree(), 0, 0, { width: 40, height: 20 });
+    expect(renderer.getRenderCacheStats()).toMatchObject({ planMisses: 1 });
+
+    renderer.invalidateOffscreen({ oldSize: '40x20' });
+    renderer.render(createTree(), 0, 0, { width: 40, height: 20 });
+
+    // Plan was cleared despite size scope
+    expect(renderer.getRenderCacheStats()).toMatchObject({ planHits: 0, planMisses: 2 });
+  });
+
+  it('clears gradient cache on invalidateOffscreen', () => {
+    const createTree = () => createCTElement('CTBox', {
+      width: 100,
+      height: 30,
+      backgroundGradient: { type: 'linear', angle: 90, colors: ['#ff0000', '#0000ff'] },
+    });
+    const gradientSpy = jest.spyOn(mockCtx, 'createLinearGradient');
+
+    renderer.render(createTree(), 0, 0);
+    expect(gradientSpy).toHaveBeenCalledTimes(1);
+
+    // Same tree → gradient should be cached
+    renderer.render(createTree(), 0, 0);
+    expect(gradientSpy).toHaveBeenCalledTimes(1);
+
+    // Invalidate → gradient cache cleared
+    renderer.invalidateOffscreen('all');
+    renderer.render(createTree(), 0, 0);
+    expect(gradientSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('translates canvas by render position instead of shifting layout tree', () => {
+    const tree = createCTElement('CTBox', { width: 40, height: 20, backgroundColor: '#ff0000' });
+    const translateSpy = jest.spyOn(mockCtx, 'translate');
+
+    renderer.render(tree, 50, 30);
+
+    expect(translateSpy).toHaveBeenCalledWith(50, 30);
+  });
+
+  it('returns absolute layouts including render offset', () => {
+    const tree = createCTElement(
+      'CTBox',
+      { display: 'flex', width: 100, height: 40 },
+      createCTElement('CTBox', { width: 20, height: 20, backgroundColor: '#aaa' }),
+    );
+
+    renderer.render(tree, 50, 30, { width: 100, height: 40 });
+
+    const layouts = renderer.getLayouts();
+    expect(layouts.length).toBeGreaterThan(0);
+    // Root layout should include the render offset
+    expect(layouts[0]).toMatchObject({ x: 50, y: 30, width: 100, height: 40 });
+  });
+
+  it('rebinds interactive regions at absolute coordinates after translate', () => {
+    const regions: CTInteractiveRegion[] = [];
+    renderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      collectInteractiveRegion: (region) => regions.push(region),
+    });
+    const tree = createCTElement(
+      'CTBox',
+      { display: 'flex', width: 100, height: 40 },
+      createCTElement(
+        'CTTooltip',
+        { content: 'hint' },
+        createCTElement('CTBox', { width: 20, height: 20 }),
+      ),
+    );
+
+    renderer.render(tree, 70, 40, { width: 100, height: 40 });
+
+    // Region rect must be in absolute canvas coords (cellX/cellY added),
+    // not the translated coords used internally for drawing.
+    expect(regions.at(-1)?.rect).toMatchObject({ x: 70, y: 40, width: 20, height: 20 });
+  });
 });
