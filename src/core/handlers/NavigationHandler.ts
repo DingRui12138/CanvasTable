@@ -145,7 +145,7 @@ export class NavigationHandler extends BaseHandler {
           const configMap: Record<string, keyof typeof result> = {
             input: "input",
             select: "select",
-            tags: "tags",
+            tag: "tags",
             date: "date",
             checkbox: "checkbox",
             radio: "radio",
