@@ -1,7 +1,9 @@
 import { Renderer } from '@/core/Renderer';
 import { LayoutManager } from '@/core/LayoutManager';
 import { RowPinManager } from '@/core/RowPinManager';
+import { ColumnIdManager, RenderCache, RowIdManager, RowVersionManager } from '@/core/RenderCache';
 import { createCTElement } from '@/core/jsx/createCTElement';
+import { zhCN } from '@/locale';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { ComputedSummaryRow, VisibleRange, SortConfig, InteractionState, Column } from '@/types';
 
@@ -900,6 +902,535 @@ describe('Renderer', () => {
       };
       expect(lazyRange.isInLazyLoadRange(1, 0)).toBe(true);
       expect(lazyRange.isInLazyLoadRange(2, 0)).toBe(false);
+    });
+  });
+
+  describe('configuration', () => {
+    it('applies locale to loading overlay text', () => {
+      const fillTextSpy = jest.spyOn(renderer.getCanvasContext(), 'fillText');
+
+      renderer.setLocale({ ...zhCN, loadingText: '自定义加载' });
+      renderer.renderLoadingOverlay();
+
+      expect(fillTextSpy).toHaveBeenCalledWith('自定义加载', expect.any(Number), expect.any(Number));
+    });
+
+    it('creates a fresh image load queue when image config changes', () => {
+      renderer.setImageLoadConfig({ maxConcurrent: 2, maxCacheSize: 5 });
+
+      expect(renderer.getImageLoadStats()).toEqual({
+        pending: 0,
+        loading: 0,
+        cached: 0,
+        failed: 0,
+      });
+    });
+
+    it('exposes and resets row and column id managers', () => {
+      const rows = createTestRows(2);
+      const columns = createTestColumns();
+
+      const rowIdManager = renderer.getRowIdManager();
+      const firstRowId = rowIdManager.getId(rows[0]!);
+      expect(firstRowId).toBe('r0');
+      expect(rowIdManager.getId(rows[0]!)).toBe(firstRowId);
+
+      renderer.resetRowIds();
+      expect(rowIdManager.getId(rows[0]!)).toBe('r0');
+
+      const columnIdManager = renderer.getColumnIdManager();
+      expect(columnIdManager.getId(columns[0]!)).toBe('c0');
+
+      renderer.resetColumnIds();
+      expect(columnIdManager.getId(columns[0]!)).toBe('c0');
+    });
+
+    it('exposes jsx interactive regions and invalidates offscreen cache', () => {
+      expect(renderer.getJSXInteractiveRegions()).toEqual([]);
+
+      renderer.setJSXUpdateHandlers({
+        updateValue: jest.fn(async () => {}),
+        updateField: jest.fn(async () => {}),
+        updateRow: jest.fn(async () => {}),
+      });
+
+      expect(() => renderer.invalidateJsxOffscreen('all')).not.toThrow();
+      expect(() => renderer.invalidateJsxOffscreen({ oldSize: '100%' })).not.toThrow();
+    });
+  });
+
+  describe('standalone render methods', () => {
+    it('renders empty state message with headers and fixed columns', () => {
+      const columns: Column[] = [
+        { key: 'id', title: 'ID', width: 80, fixed: 'left', type: 'number' },
+        { key: 'name', title: 'Name', width: 120, type: 'text' },
+        { key: 'active', title: 'Active', width: 60, type: 'checkbox' },
+        { key: 'progress', title: 'Progress', width: 100, fixed: 'right', type: 'progress' },
+      ];
+      layoutManager.calculateLayout(columns, []);
+      const fillTextSpy = jest.spyOn(renderer.getCanvasContext(), 'fillText');
+
+      renderer.renderEmptyState(
+        '暂无匹配数据',
+        [{ column: 'name', direction: 'asc' }],
+        [{ column: 'active', operator: 'eq', value: true }],
+        'name',
+        30,
+      );
+
+      expect(fillTextSpy).toHaveBeenCalledWith(
+        '暂无匹配数据',
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(fillTextSpy).toHaveBeenCalledWith('ID', expect.any(Number), expect.any(Number));
+      expect(fillTextSpy).toHaveBeenCalledWith('Progress', expect.any(Number), expect.any(Number));
+    });
+
+    it('renders empty state sort and filter indicators', () => {
+      const columns: Column[] = [
+        { key: 'name', title: 'Name', width: 120, type: 'text', filterable: true, align: 'center' },
+        {
+          key: 'id',
+          title: 'ID',
+          width: 80,
+          type: 'number',
+          sortable: true,
+          filterable: true,
+          align: 'right',
+        },
+      ];
+      layoutManager.calculateLayout(columns, []);
+      const ctx = renderer.getCanvasContext();
+      const moveToSpy = jest.spyOn(ctx, 'moveTo');
+      const lineToSpy = jest.spyOn(ctx, 'lineTo');
+
+      renderer.renderEmptyState(
+        '空',
+        [{ column: 'id', direction: 'desc' }],
+        [{ column: 'name', operator: 'contains', value: 'x' }],
+        undefined,
+        0,
+      );
+
+      expect(moveToSpy).toHaveBeenCalled();
+      expect(lineToSpy).toHaveBeenCalled();
+    });
+
+    it('renders fixed column shadows on both sides', () => {
+      const ctx = renderer.getCanvasContext();
+      const gradient = { addColorStop: jest.fn() } as unknown as CanvasGradient;
+      jest.spyOn(ctx, 'createLinearGradient').mockReturnValue(gradient);
+      const fillRectSpy = jest.spyOn(ctx, 'fillRect');
+
+      renderer.renderFixedColumnsShadow(120, 'left');
+      renderer.renderFixedColumnsShadow(120, 'right');
+
+      expect(fillRectSpy).toHaveBeenCalledWith(120, 0, 10, 600);
+      expect(fillRectSpy).toHaveBeenCalledWith(670, 0, 10, 600);
+      expect(gradient.addColorStop).toHaveBeenCalledTimes(4);
+    });
+
+    it('renders tooltip text content', () => {
+      const fillTextSpy = jest.spyOn(renderer.getCanvasContext(), 'fillText');
+
+      renderer.renderTooltip({
+        cell: { rowIndex: 0, columnIndex: 0 },
+        x: 10,
+        y: 10,
+        width: 100,
+        content: { type: 'text', text: '提示' },
+      });
+
+      expect(fillTextSpy).toHaveBeenCalledWith('提示', expect.any(Number), expect.any(Number));
+    });
+
+    it('reports and renders scrollbars', () => {
+      const ctx = renderer.getCanvasContext();
+      const fillRectSpy = jest.spyOn(ctx, 'fillRect');
+
+      const bounds = renderer.getScrollbarBounds(0, 50, 100, 200);
+      expect(bounds.vertical).toMatchObject({ width: 8 });
+      expect(bounds.horizontal).toMatchObject({ height: 8 });
+
+      renderer.renderScrollbars(0, 50, 100, 200, {
+        verticalHovered: true,
+        horizontalHovered: false,
+        verticalDragging: false,
+        horizontalDragging: false,
+        dragStartY: 0,
+        dragStartScrollTop: 0,
+        dragStartX: 0,
+        dragStartScrollLeft: 0,
+      });
+      expect(fillRectSpy).toHaveBeenCalled();
+    });
+
+    it('returns null scrollbar bounds when nothing can scroll', () => {
+      expect(renderer.getScrollbarBounds(0, 0, 0, 0)).toEqual({
+        vertical: null,
+        horizontal: null,
+      });
+    });
+
+    it('renders watermark only when enabled', () => {
+      const fillTextSpy = jest.spyOn(renderer.getCanvasContext(), 'fillText');
+
+      renderer.setWatermarkConfig({ content: '内部资料', enabled: true });
+      renderer.renderWatermark();
+      expect(fillTextSpy).toHaveBeenCalledWith('内部资料', expect.any(Number), expect.any(Number));
+
+      fillTextSpy.mockClear();
+      renderer.setWatermarkConfig({ content: '内部资料', enabled: false });
+      renderer.renderWatermark();
+      expect(fillTextSpy).not.toHaveBeenCalled();
+
+      renderer.setWatermarkConfig(null);
+      renderer.renderWatermark();
+      expect(fillTextSpy).not.toHaveBeenCalled();
+    });
+
+    it('renders color, date and filter dropdowns', () => {
+      const ctx = renderer.getCanvasContext();
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+      const roundRectSpy = jest.spyOn(ctx, 'roundRect');
+
+      renderer.renderColorDropdown({
+        cell: { rowIndex: 0, columnIndex: 0 },
+        config: { value: '#ffffff', presetColors: ['#ffffff', '#000000'] },
+        x: 0,
+        y: 0,
+        width: 200,
+        hoveredColor: '#000000',
+      });
+      expect(roundRectSpy).toHaveBeenCalled();
+
+      renderer.renderDateDropdown({
+        cell: { rowIndex: 0, columnIndex: 0 },
+        config: {},
+        x: 0,
+        y: 0,
+        width: 224,
+        currentYear: 2026,
+        currentMonth: 1,
+        selectedDate: new Date(2026, 1, 10),
+        hoveredDate: new Date(2026, 1, 12),
+      });
+      expect(fillTextSpy).toHaveBeenCalledWith(
+        '2026年 2月',
+        expect.any(Number),
+        expect.any(Number),
+      );
+
+      renderer.renderFilterDropdown({
+        columnKey: 'name',
+        mode: 'search',
+        x: 0,
+        y: 0,
+        width: 200,
+        scrollTop: 0,
+        hoveredIndex: -1,
+        searchText: '',
+        searchValue: '',
+      });
+      expect(fillTextSpy).toHaveBeenCalledWith(
+        zhCN.filter.searchPlaceholder,
+        expect.any(Number),
+        expect.any(Number),
+      );
+    });
+
+    it('renders select, buttons and image overlays', () => {
+      const ctx = renderer.getCanvasContext();
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+      const fillRectSpy = jest.spyOn(ctx, 'fillRect');
+
+      renderer.renderDropdown({
+        cell: { rowIndex: 0, columnIndex: 1 },
+        config: { options: [{ label: '选项A', value: 'a' }] },
+        x: 0,
+        y: 0,
+        width: 160,
+        scrollTop: 0,
+        hoveredIndex: 0,
+      });
+      expect(fillTextSpy).toHaveBeenCalledWith('选项A', expect.any(Number), expect.any(Number));
+
+      renderer.renderButtonsDropdown({
+        cell: { rowIndex: 0, columnIndex: 1 },
+        x: 0,
+        y: 0,
+        buttons: [{ text: '动作一' }],
+        hoveredIndex: 0,
+        buttonRelativeX: 0,
+        buttonY: 0,
+        buttonHeight: 32,
+        showAbove: false,
+      });
+      expect(fillTextSpy).toHaveBeenCalledWith('动作一', expect.any(Number), expect.any(Number));
+
+      renderer.renderImageTooltip({
+        cell: { rowIndex: 0, columnIndex: 0 },
+        x: 0,
+        y: 0,
+        images: [],
+        hoveredIndex: -1,
+        scrollTop: 0,
+        maxRows: 2,
+        showAbove: false,
+      });
+      renderer.renderImageEditor({
+        cell: { rowIndex: 0, columnIndex: 0 },
+        x: 0,
+        y: 0,
+        images: [],
+        hoveredIndex: -1,
+        scrollTop: 0,
+        maxRows: 2,
+        showAbove: false,
+        isDragging: false,
+        pendingImages: [],
+        isSingleImage: false,
+      });
+      expect(fillRectSpy).toHaveBeenCalled();
+    });
+
+    it('renders context menus', () => {
+      const fillTextSpy = jest.spyOn(renderer.getCanvasContext(), 'fillText');
+
+      renderer.renderContextMenu({
+        x: 10,
+        y: 10,
+        row: { data: {} },
+        hoveredIndex: 0,
+        items: [{ key: 'delete', text: '删除', danger: true }],
+      });
+      expect(fillTextSpy).toHaveBeenCalledWith('删除', expect.any(Number), expect.any(Number));
+
+      renderer.renderHeaderContextMenu({
+        x: 10,
+        y: 10,
+        columnKey: 'name',
+        columnIndex: 1,
+        hoveredIndex: 0,
+      });
+      expect(fillTextSpy).toHaveBeenCalledWith(
+        zhCN.contextMenu.hideColumn,
+        expect.any(Number),
+        expect.any(Number),
+      );
+    });
+  });
+
+  describe('render options overlays', () => {
+    it('paints dropdown, header context menu and column reorder indicator', () => {
+      const columns = createTestColumns();
+      const rows = createTestRows(6);
+      layoutManager.calculateLayout(columns, rows);
+      const ctx = renderer.getCanvasContext();
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+      const setLineDashSpy = jest.spyOn(ctx, 'setLineDash');
+
+      renderer.render(
+        columns,
+        rows,
+        { startRow: 0, endRow: 5, startColumn: 0, endColumn: 3 },
+        0,
+        0,
+        createRenderOptions({
+          dropdown: {
+            cell: { rowIndex: 0, columnIndex: 1 },
+            config: { options: [{ label: '选项A', value: 'a' }] },
+            x: 10,
+            y: 10,
+            width: 160,
+            scrollTop: 0,
+            hoveredIndex: 0,
+          },
+          headerContextMenu: {
+            x: 20,
+            y: 20,
+            columnKey: 'name',
+            columnIndex: 1,
+            hoveredIndex: 0,
+          },
+          columnReorderState: {
+            dragColumnIndex: 1,
+            dragColumnKey: 'name',
+            dragStartX: 0,
+            currentX: 200,
+            targetColumnIndex: 2,
+          },
+        }),
+      );
+
+      expect(fillTextSpy).toHaveBeenCalledWith('选项A', expect.any(Number), expect.any(Number));
+      expect(fillTextSpy).toHaveBeenCalledWith(
+        zhCN.contextMenu.hideColumn,
+        expect.any(Number),
+        expect.any(Number),
+      );
+      expect(setLineDashSpy).toHaveBeenCalledWith([5, 5]);
+    });
+
+    it('renders parent column ghost for grouped columns', () => {
+      const columns: Column[] = [
+        {
+          key: 'group',
+          title: 'Group',
+          children: [
+            { key: 'id', title: 'ID', width: 80, type: 'number' },
+            { key: 'name', title: 'Name', width: 120, type: 'text' },
+          ],
+        },
+        { key: 'active', title: 'Active', width: 60, type: 'checkbox' },
+      ];
+      const rows = createTestRows(4);
+      layoutManager.calculateLayout(columns, rows);
+      const ctx = renderer.getCanvasContext();
+      const fillTextSpy = jest.spyOn(ctx, 'fillText');
+      const setLineDashSpy = jest.spyOn(ctx, 'setLineDash');
+
+      renderer.render(
+        columns,
+        rows,
+        { startRow: 0, endRow: 3, startColumn: 0, endColumn: 2 },
+        0,
+        0,
+        createRenderOptions({
+          columnReorderState: {
+            dragColumnIndex: 0,
+            dragColumnKey: 'group',
+            dragStartX: 0,
+            currentX: 100,
+            targetColumnIndex: 1,
+            isParentColumn: true,
+          },
+        }),
+      );
+
+      const groupTitleCalls = fillTextSpy.mock.calls.filter((call) => call[0] === 'Group');
+      expect(groupTitleCalls.length).toBeGreaterThanOrEqual(2);
+      expect(setLineDashSpy).toHaveBeenCalledWith([5, 5]);
+    });
+  });
+
+  describe('performance monitoring', () => {
+    const columns = createTestColumns() as Column[];
+    const visibleRange: VisibleRange = { startRow: 0, endRow: 0, startColumn: 0, endColumn: 0 };
+
+    it('records frames only while monitoring is enabled', () => {
+      renderer.setPerformanceMonitoring(false);
+      renderer.beginFrame();
+      renderer.endFrame(visibleRange, 0, 0, columns);
+      expect(renderer.getLastFrameDiagnostics()).toBeNull();
+
+      renderer.setPerformanceMonitoring(true);
+      expect(renderer.isPerformanceMonitoringEnabled()).toBe(true);
+
+      renderer.beginFrame();
+      renderer.endFrame(visibleRange, 0, 0, columns);
+      expect(renderer.getLastFrameDiagnostics()).not.toBeNull();
+      expect(renderer.getWorstFrameDiagnostics()).toEqual(renderer.getLastFrameDiagnostics());
+
+      const report = renderer.getPerformanceReport();
+      expect(report).toContain('Status: Enabled');
+      expect(report).toContain('Captured Renderer Frames: 1');
+
+      renderer.setPerformanceMonitoring(false);
+      expect(renderer.getPerformanceReport()).toContain('Status: Disabled');
+
+      renderer.beginFrame();
+      renderer.endFrame(visibleRange, 0, 0, columns);
+      expect(renderer.getPerformanceReport()).toContain('Captured Renderer Frames: 1');
+    });
+
+    it('caps retained frame history at 120 entries', () => {
+      renderer.setPerformanceMonitoring(true);
+
+      for (let index = 0; index < 125; index++) {
+        renderer.beginFrame();
+        renderer.endFrame(visibleRange, 0, 0, columns);
+      }
+
+      const diagnostics = renderer.getPerformanceDiagnostics();
+      expect(diagnostics.frameHistory).toHaveLength(120);
+      expect(diagnostics.lastFrame.frameId).toBe(125);
+    });
+
+    it('writes performance reports to the console', () => {
+      renderer.setPerformanceMonitoring(true);
+      renderer.beginFrame();
+      renderer.endFrame(visibleRange, 0, 0, columns);
+
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      const tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
+      const groupSpy = jest.spyOn(console, 'group').mockImplementation(() => {});
+      const groupEndSpy = jest.spyOn(console, 'groupEnd').mockImplementation(() => {});
+
+      renderer.logPerformanceReport();
+      renderer.printPerformanceReport();
+
+      expect(groupSpy).toHaveBeenCalled();
+      expect(tableSpy).toHaveBeenCalled();
+      expect(groupEndSpy).toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Renderer Performance Report'));
+
+      logSpy.mockRestore();
+      tableSpy.mockRestore();
+      groupSpy.mockRestore();
+      groupEndSpy.mockRestore();
+    });
+
+    it('resets statistics and frame history', () => {
+      renderer.setPerformanceMonitoring(true);
+      renderer.beginFrame();
+      renderer.endFrame(visibleRange, 0, 0, columns);
+
+      renderer.resetPerformanceStats();
+
+      expect(renderer.getLastFrameDiagnostics()).toBeNull();
+      expect(renderer.getWorstFrameDiagnostics()).toBeNull();
+      expect(renderer.getPerformanceStats().size).toBe(0);
+      expect(renderer.getPerformanceReport()).toContain('Captured Renderer Frames: 0');
+    });
+  });
+
+  describe('render cache lifecycle', () => {
+    it('returns null stats without a cache', () => {
+      expect(renderer.getCacheStats()).toBeNull();
+    });
+
+    it('delegates cache lifecycle calls', () => {
+      const cache = new RenderCache(
+        new RowIdManager(),
+        new ColumnIdManager(),
+        new RowVersionManager(),
+      );
+      const clearSpy = jest.spyOn(cache, 'clear');
+      const resetRowIdsSpy = jest.spyOn(cache, 'resetRowIds');
+      const resetColumnIdsSpy = jest.spyOn(cache, 'resetColumnIds');
+      const cleanupRowsSpy = jest.spyOn(cache, 'cleanupInvisibleRows');
+      const cleanupColumnsSpy = jest.spyOn(cache, 'cleanupInvisibleColumns');
+
+      renderer.setRenderCache(cache);
+      expect(renderer.getCacheStats()).toEqual({
+        cellCacheSize: 0,
+        valueCacheSize: 0,
+        maxCellCacheSize: 3000,
+      });
+
+      renderer.clearRenderCache();
+      renderer.resetRowIds();
+      renderer.resetColumnIds();
+      renderer.cleanupInvisibleRows(new Set(['r0']));
+      renderer.cleanupInvisibleColumns(new Set(['c0']));
+
+      expect(clearSpy).toHaveBeenCalled();
+      expect(resetRowIdsSpy).toHaveBeenCalled();
+      expect(resetColumnIdsSpy).toHaveBeenCalled();
+      expect(cleanupRowsSpy).toHaveBeenCalledWith(new Set(['r0']));
+      expect(cleanupColumnsSpy).toHaveBeenCalledWith(new Set(['c0']));
     });
   });
 
