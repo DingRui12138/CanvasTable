@@ -1548,4 +1548,114 @@ describe('InteractionManager', () => {
       expect(interactionManager).toBeInstanceOf(InteractionManager);
     });
   });
+
+  describe('进度条拖拽 - 临时显示值生命周期', () => {
+    const CELL_WIDTH = 200;
+
+    /** 配置一个可交互的 line 进度条列（宽度 200，右侧预留文本 40） */
+    function setupInteractiveProgress(value: number): void {
+      const columns: Column[] = [
+        {
+          key: 'volume',
+          title: '音量',
+          width: CELL_WIDTH,
+          render: (v: unknown) => ({
+            type: 'progress' as const,
+            progress: {
+              value: Number(v ?? 0),
+              interactive: true,
+              shape: 'line' as const,
+            },
+          }),
+        },
+      ];
+      const rows = [{ id: '1', data: { volume: value } }];
+
+      layoutManager.calculateLayout(columns, rows);
+      dataManager.setColumns(columns);
+      dataManager.setRows(rows);
+    }
+
+    /** 计算进度条上指定百分比位置对应的鼠标坐标 */
+    function progressPoint(percent: number): { clientX: number; clientY: number } {
+      const cellPos = layoutManager.getCellPosition(0, 0);
+      // 与 handleProgressClick 保持一致：padding 8，右侧文本预留 40
+      const barWidth = cellPos.width - 16 - 40;
+      const x = cellPos.x + 8 + (barWidth * percent) / 100;
+      const y = layoutManager.getCellViewportY(0, 0) + cellPos.height / 2;
+      const rect = canvas.getBoundingClientRect();
+      return { clientX: rect.left + x, clientY: rect.top + y };
+    }
+
+    it('拖拽结束后保留临时显示值，直到最终值提交完成才清除', () => {
+      setupInteractiveProgress(50);
+
+      const changeSpy = jest.fn();
+      eventEmitter.on(TableEvents.PROGRESS_CHANGE, changeSpy);
+
+      // mousedown 在 50% 处，随后拖拽到 70% 再抬起
+      canvas.dispatchEvent(createMouseEvent('mousedown', progressPoint(50)));
+      canvas.dispatchEvent(createMouseEvent('mousemove', progressPoint(70)));
+      const upPoint = progressPoint(70);
+      canvas.dispatchEvent(createMouseEvent('mouseup', upPoint));
+
+      const state = interactionManager.getInteractionState();
+      expect(state.isDragging).toBe(false);
+      // 提交（可能含异步校验）期间必须保留临时显示值，否则会闪回旧数据
+      expect(state.progressDragState).toBeDefined();
+      expect(state.progressDragState!.displayValue).toBe(70);
+      expect(state.progressDragState!.pendingValue).toBe(70);
+      // mousedown（点击处 50）与 mouseup（拖拽终点 70）各提交一次
+      expect(changeSpy).toHaveBeenCalledTimes(2);
+      expect(changeSpy.mock.calls[1]![1]).toBe(70);
+
+      const cell = { rowIndex: 0, columnIndex: 0 };
+      // mousedown 触发的提前提交（值 50）不应清除临时显示值
+      interactionManager.clearProgressDragState(cell, 50);
+      expect(interactionManager.getInteractionState().progressDragState).toBeDefined();
+
+      // 最终值提交完成后才清除
+      interactionManager.clearProgressDragState(cell, 70);
+      expect(interactionManager.getInteractionState().progressDragState).toBeUndefined();
+    });
+
+    it('未发生拖拽的纯点击，在最终值提交完成后清除临时显示值', () => {
+      setupInteractiveProgress(50);
+
+      const point = progressPoint(50);
+      canvas.dispatchEvent(createMouseEvent('mousedown', point));
+      canvas.dispatchEvent(createMouseEvent('mouseup', point));
+
+      const dragState = interactionManager.getInteractionState().progressDragState;
+      expect(dragState?.pendingValue).toBe(50);
+
+      interactionManager.clearProgressDragState({ rowIndex: 0, columnIndex: 0 }, 50);
+      expect(interactionManager.getInteractionState().progressDragState).toBeUndefined();
+    });
+
+    it('拖拽仍进行中时不清除临时显示值', () => {
+      setupInteractiveProgress(50);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', progressPoint(50)));
+      canvas.dispatchEvent(createMouseEvent('mousemove', progressPoint(70)));
+
+      interactionManager.clearProgressDragState({ rowIndex: 0, columnIndex: 0 }, 70);
+
+      const state = interactionManager.getInteractionState();
+      expect(state.isDragging).toBe(true);
+      expect(state.progressDragState).toBeDefined();
+    });
+
+    it('resetState 会清理进度条拖拽的临时显示值', () => {
+      setupInteractiveProgress(50);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', progressPoint(50)));
+      canvas.dispatchEvent(createMouseEvent('mousemove', progressPoint(70)));
+      canvas.dispatchEvent(createMouseEvent('mouseup', progressPoint(70)));
+      expect(interactionManager.getInteractionState().progressDragState).toBeDefined();
+
+      interactionManager.resetState();
+      expect(interactionManager.getInteractionState().progressDragState).toBeUndefined();
+    });
+  });
 });

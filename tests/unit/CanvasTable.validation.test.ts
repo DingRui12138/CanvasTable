@@ -882,4 +882,78 @@ describe("CanvasTable validation", () => {
       table.destroy();
     });
   });
+
+  // ─── 进度条拖拽闪回 ───
+
+  describe("progress drag display value", () => {
+    const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it("keeps the dragged value until the async validation commit resolves", async () => {
+      const rows: Row[] = [{ id: "row-1", data: { id: 1, volume: 50 } }];
+      const columns: Column[] = [
+        { key: "id", title: "ID", width: 80 },
+        {
+          key: "volume",
+          title: "Volume",
+          width: 100,
+          validate: async () => {
+            await sleep(50);
+            return true;
+          },
+          render: (value) => ({
+            type: "progress" as CellType,
+            progress: { value: Number(value ?? 0), interactive: true, shape: "line" },
+          }),
+        },
+      ];
+
+      const table = new CanvasTable(container, { rows, columns });
+      await flushPromises();
+      await flushRender();
+
+      const internals = table as unknown as {
+        interactionManager: {
+          getInteractionState: () => {
+            progressDragState?: { displayValue: number; pendingValue?: number };
+          };
+        };
+        layoutManager: {
+          getCellPosition: (
+            row: number,
+            col: number,
+          ) => { x: number; y: number; width: number; height: number };
+          getCellViewportY: (row: number, scrollTop: number) => number;
+        };
+      };
+      const interactionManager = internals.interactionManager;
+
+      const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+      const cellPos = internals.layoutManager.getCellPosition(0, 1);
+      const barWidth = cellPos.width - 16 - 40;
+      const point = (percent: number) => ({
+        clientX: cellPos.x + 8 + (barWidth * percent) / 100,
+        clientY: internals.layoutManager.getCellViewportY(0, 0) + cellPos.height / 2,
+      });
+      const dispatch = (type: string, p: { clientX: number; clientY: number }): boolean =>
+        canvas.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, ...p }));
+
+      // 从 50 拖到 70 后抬起
+      dispatch("mousedown", point(50));
+      dispatch("mousemove", point(70));
+      dispatch("mouseup", point(70));
+
+      // 异步校验尚未完成：临时显示值必须保留，否则期间重渲染会闪回旧值 50
+      expect(interactionManager.getInteractionState().progressDragState?.displayValue).toBe(70);
+
+      await sleep(20);
+      expect(interactionManager.getInteractionState().progressDragState?.displayValue).toBe(70);
+
+      // 校验提交完成后清除临时显示值，改由数据接管
+      await sleep(120);
+      expect(interactionManager.getInteractionState().progressDragState).toBeUndefined();
+      expect(table.getRow(0)!.data.volume).toBe(70);
+
+      table.destroy();
+    });
+  });
 });

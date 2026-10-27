@@ -16,7 +16,6 @@ import {
   ScrollbarState,
   FilterConfig,
   FilterDropdownState,
-  FilterMode,
   ButtonsDropdownState,
   ImageTooltipState,
   ImageEditorState,
@@ -38,15 +37,7 @@ import { LayoutManager } from "./LayoutManager";
 import { DataManager } from "./DataManager";
 import { EventEmitter } from "./EventEmitter";
 import { EditorRegistry } from "./editors";
-import {
-  clamp,
-  getCellDisplayText,
-  getRenderResult,
-  getColumnField,
-  getColumnFilterOptions,
-  resolveDisabled,
-  searchFilterOptions,
-} from "../utils";
+import { clamp, getRenderResult, getColumnField, resolveDisabled } from "../utils";
 import { TableEvents } from "../constants/events";
 import type { CTDropdownOnChange, CTInteractiveRegion } from "./jsx";
 import {
@@ -60,6 +51,10 @@ import {
   ControlClickHandler,
   ButtonAnimationHandler,
   TooltipHandler,
+  ClipboardHandler,
+  HoverHandler,
+  WheelHandler,
+  FilterHandler,
   HandlerContext,
 } from "./handlers";
 import { zhCN } from "../locale";
@@ -155,34 +150,26 @@ export class InteractionManager {
   private controlClickHandler!: ControlClickHandler;
   private buttonAnimationHandler!: ButtonAnimationHandler;
   private tooltipHandler!: TooltipHandler;
+  private clipboardHandler!: ClipboardHandler;
+  private hoverHandler!: HoverHandler;
+  private wheelHandler!: WheelHandler;
+  private filterHandler!: FilterHandler;
 
   // Data accessors via DataManager
   private get rows(): Row[] {
     return this.dataManager.getRows();
   }
 
-  private get allRows(): Row[] {
-    return this.dataManager.getAllRows();
-  }
-
   private resizeColumnIndex: number = -1;
   private resizeStartX: number = 0;
   private resizeStartWidth: number = 0;
-
-  // 用于检测双击，防止双击时触发 link 跳转
-  private _lastClickTime: number = 0;
-  private _lastClickCell: { rowIndex: number; columnIndex: number } | null = null;
 
   private getScrollbarBounds: () => {
     vertical: { x: number; y: number; width: number; height: number } | null;
     horizontal: { x: number; y: number; width: number; height: number } | null;
   } = () => ({ vertical: null, horizontal: null });
 
-  // 懒加载相关
-  private lazyLoadEnabled: boolean = false;
-  private lazyLoadThreshold: number = 5;
-  private isLoadingMore: boolean = false;
-  private hasMoreData: boolean = true; // 是否还有更多数据
+  // 懒加载相关（状态由 WheelHandler 持有）
   private rowHeightResizeEnabled: boolean = false;
   private rowResizable: boolean | ((row: Row, rowIndex: number) => boolean) = true;
   private enableRowPinning: boolean = false;
@@ -281,6 +268,8 @@ export class InteractionManager {
       expandColumnKey: this.expandColumnKey,
       locale: this.locale,
       editorRegistry: this.editorRegistry,
+      onDragStart: () => this.bindDocumentEvents(),
+      onDragEnd: () => this.unbindDocumentEvents(),
     };
     this.handlerContext = context;
 
@@ -301,9 +290,29 @@ export class InteractionManager {
       this.sortConfig,
       this.filterConfig,
     );
-    this.controlClickHandler = new ControlClickHandler(context, this.eventEmitter);
     this.buttonAnimationHandler = new ButtonAnimationHandler(context, this.eventEmitter);
+    this.controlClickHandler = new ControlClickHandler(
+      context,
+      this.eventEmitter,
+      this.editingHandler,
+      this.buttonAnimationHandler,
+    );
     this.tooltipHandler = new TooltipHandler(context, this.eventEmitter);
+    this.clipboardHandler = new ClipboardHandler(context, this.eventEmitter, this.selectionHandler);
+    this.hoverHandler = new HoverHandler(context, this.eventEmitter);
+    this.wheelHandler = new WheelHandler(
+      context,
+      this.eventEmitter,
+      this.dropdownHandler,
+      this.imageHandler,
+      this.tooltipHandler,
+    );
+    this.filterHandler = new FilterHandler(
+      context,
+      this.eventEmitter,
+      this.filterConfig,
+      this.headerHandler,
+    );
   }
 
   /**
@@ -1269,7 +1278,7 @@ export class InteractionManager {
       }
 
       const cell = hitResult.cell;
-      this.updateButtonHoverState(cell, viewportX, viewportY);
+      this.buttonAnimationHandler.updateButtonHoverState(cell, viewportX, viewportY);
 
       const leafColumns = this.layoutManager.getLeafColumns();
       const column = cell.columnIndex >= 0 ? leafColumns[cell.columnIndex] : undefined;
@@ -1278,7 +1287,7 @@ export class InteractionManager {
 
       if (isDisabled) {
         this.canvas.style.cursor = "not-allowed";
-      } else if (this.isClickableElement(cell, viewportX, viewportY)) {
+      } else if (this.hoverHandler.isClickableElement(cell, viewportX, viewportY)) {
         this.canvas.style.cursor = "pointer";
       } else if (column && column.key.startsWith("__hidden_placeholder__")) {
         this.canvas.style.cursor = "pointer";
@@ -1295,8 +1304,8 @@ export class InteractionManager {
         this.eventEmitter.emit(TableEvents.CELL_HOVER, cellInfo, e);
       }
 
-      this.updateImageHoverIndex(cell, viewportX, viewportY);
-      this.updateButtonsHoverIndex(cell, viewportX, viewportY);
+      this.hoverHandler.updateImageHoverIndex(cell, viewportX, viewportY);
+      this.hoverHandler.updateButtonsHoverIndex(cell, viewportX, viewportY);
 
       if (this.state.hoveredHeaderColumnKey !== undefined) {
         this.state.hoveredHeaderColumnKey = undefined;
@@ -1306,137 +1315,9 @@ export class InteractionManager {
     }
   };
 
-  private updateButtonHoverState(
-    cell: { rowIndex: number; columnIndex: number } | null,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    const currentHoveredCellKey =
-      cell && cell.rowIndex >= 0 ? `${cell.rowIndex}-${cell.columnIndex}` : null;
-
-    this.state.buttonHoverStates.forEach((state, key) => {
-      if (key !== currentHoveredCellKey && state.progress > 0) {
-        this.state.buttonHoverStates.set(key, {
-          ...state,
-          targetProgress: 0,
-          startTime: Date.now(),
-          startProgress: state.progress,
-        });
-      }
-    });
-
-    if (!cell || cell.rowIndex < 0) {
-      if (this.state.buttonHoverStates.size > 0) {
-        this.startButtonHoverAnimationLoop();
-      }
-      return;
-    }
-
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-
-    if (!column || !row) {
-      this.startButtonHoverAnimationLoop();
-      return;
-    }
-
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-
-    if (
-      renderResult.type !== CellTypes.BUTTON ||
-      !renderResult.button ||
-      Array.isArray(renderResult.button) ||
-      !this.editorRegistry.getStrategy(column).canEdit(cell, row, column)
-    ) {
-      this.startButtonHoverAnimationLoop();
-      return;
-    }
-    const buttonConfig = renderResult.button;
-
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-    const relativeX = mouseX - cellViewportX;
-    const relativeY = mouseY - cellViewportY;
-
-    const buttonHeight =
-      buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
-    const buttonY = (cellPos.height - buttonHeight) / 2;
-
-    // 计算按钮宽度：与 Renderer 保持一致
-    const text = buttonConfig.text ?? this.locale.cell.buttonText;
-    // 使用默认字体大小计算
-    const fontSize = 13;
-    this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    const textWidth = this.ctx.measureText(text).width;
-    const buttonPadding = 16;
-    const cellPadding = 8;
-    const buttonWidth = Math.min(
-      Math.max(textWidth + buttonPadding * 2, 60),
-      cellPos.width - cellPadding * 2,
-    );
-    // 水平居中
-    const buttonX = (cellPos.width - buttonWidth) / 2;
-
-    const isOnButton =
-      relativeY >= buttonY &&
-      relativeY <= buttonY + buttonHeight &&
-      relativeX >= buttonX &&
-      relativeX <= buttonX + buttonWidth;
-
-    const cellKey = `${cell.rowIndex}-${cell.columnIndex}`;
-
-    if (isOnButton) {
-      const existingState = this.state.buttonHoverStates.get(cellKey);
-      if (!existingState || existingState.targetProgress !== 1) {
-        const currentProgress = existingState ? existingState.progress : 0;
-        this.state.buttonHoverStates.set(cellKey, {
-          cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
-          progress: currentProgress,
-          targetProgress: 1,
-          startTime: Date.now(),
-          startProgress: currentProgress,
-        });
-        this.startButtonHoverAnimationLoop();
-      }
-    } else {
-      const existingState = this.state.buttonHoverStates.get(cellKey);
-      if (existingState && existingState.progress > 0) {
-        this.state.buttonHoverStates.set(cellKey, {
-          cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
-          progress: existingState.progress,
-          targetProgress: 0,
-          startTime: Date.now(),
-          startProgress: existingState.progress,
-        });
-        this.startButtonHoverAnimationLoop();
-      }
-    }
-  }
-
   private clearAllButtonHoverStates(): void {
-    let hasChanges = false;
-    this.state.buttonHoverStates.forEach((state, key) => {
-      if (state.progress > 0 || state.targetProgress !== 0) {
-        this.state.buttonHoverStates.set(key, {
-          ...state,
-          targetProgress: 0,
-          startTime: Date.now(),
-          startProgress: state.progress,
-        });
-        hasChanges = true;
-      }
-    });
-    if (hasChanges) {
-      this.startButtonHoverAnimationLoop();
-    }
+    this.buttonAnimationHandler.clearAllButtonHoverStates();
   }
-
-  private startButtonHoverAnimationLoop = (): void => {
-    this.buttonAnimationHandler.startButtonHoverAnimationLoop();
-  };
 
   getButtonHoverStates = (): Map<string, ButtonHoverState> => {
     return this.buttonAnimationHandler.getButtonHoverStates();
@@ -1450,607 +1331,9 @@ export class InteractionManager {
     return this.state.hoveredButtonIndex ?? -1;
   }
 
-  private updateImageHoverIndex(
-    cell: { rowIndex: number; columnIndex: number } | null,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    if (!cell || cell.rowIndex < 0) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-
-    if (!column || !row) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-
-    // 检查是否是图片列
-    if (renderResult.type !== CellTypes.IMAGE || !renderResult.image) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-
-    const config = renderResult.image;
-    const images = config.images;
-
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-    // 计算相对位置
-    const relativeX = mouseX - cellViewportX;
-    const relativeY = mouseY - cellViewportY;
-
-    // 与 Renderer 保持一致的计算逻辑（含 scaleWithRowHeight 处理）
-    const padding = 4;
-    const STANDARD_ROW_HEIGHT = 32;
-    const effectiveCellHeight =
-      config.scaleWithRowHeight === false
-        ? Math.min(cellPos.height, STANDARD_ROW_HEIGHT)
-        : cellPos.height;
-    const maxImgSize = Math.max(0, Math.min(cellPos.width, effectiveCellHeight) - padding * 2);
-    const configWidth = config.width ?? 32;
-    const configHeight = config.height ?? 32;
-    const imgWidth = Math.min(configWidth, maxImgSize);
-    const imgHeight = Math.min(configHeight, maxImgSize);
-    const gap = config.gap ?? 4;
-
-    // 单图模式 - 也需要检查是否在图片区域内
-    if (!images || images.length <= 1) {
-      const imgX = (cellPos.width - imgWidth) / 2;
-      const imgY = (cellPos.height - imgHeight) / 2;
-
-      const isInImage =
-        relativeX >= imgX &&
-        relativeX <= imgX + imgWidth &&
-        relativeY >= imgY &&
-        relativeY <= imgY + imgHeight;
-
-      this.state.hoveredImageIndex = isInImage && config.hoverable !== false ? 0 : -1;
-      return;
-    }
-
-    // 根据单元格宽度计算能显示的图片数量（多行布局，需与 ImageRenderer.renderMultipleImages 保持一致）
-    const availableWidth = cellPos.width - padding * 2;
-    const availableHeight = cellPos.height - padding * 2;
-    const showMoreCount = config.showMoreCount !== false;
-    const userMaxVisible = config.maxVisible;
-
-    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
-    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
-    const slotCapacity = imagesPerRow * maxRows;
-    const requestedMaxVisible = userMaxVisible ?? slotCapacity;
-    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
-    const maxVisibleCapacity = needsMoreCount ? Math.max(0, slotCapacity - 1) : slotCapacity;
-    const maxVisible = Math.min(requestedMaxVisible, maxVisibleCapacity);
-
-    const hasMore = images.length > maxVisible;
-    const displayCount = hasMore ? maxVisible : images.length;
-
-    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
-    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
-    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
-    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
-    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
-
-    let startX = (cellPos.width - contentWidth) / 2;
-    startX = Math.max(padding, startX);
-    const startY = (cellPos.height - contentHeight) / 2;
-
-    const relX = relativeX - startX;
-    const relY = relativeY - startY;
-
-    // 命中图片
-    for (let i = 0; i < displayCount; i++) {
-      const row = Math.floor(i / imagesPerRow);
-      const col = i % imagesPerRow;
-      const imgStartX = col * (imgWidth + gap);
-      const imgStartY = row * (imgHeight + gap);
-      if (
-        relX >= imgStartX &&
-        relX < imgStartX + imgWidth &&
-        relY >= imgStartY &&
-        relY < imgStartY + imgHeight
-      ) {
-        this.state.hoveredImageIndex = config.hoverable !== false ? i : -1;
-        return;
-      }
-    }
-
-    // 命中 +N 块
-    if (hasMore && showMoreCount) {
-      const moreRow = Math.floor(displayCount / imagesPerRow);
-      const moreCol = displayCount % imagesPerRow;
-      const moreStartX = moreCol * (imgWidth + gap);
-      const moreStartY = moreRow * (imgHeight + gap);
-      if (
-        relX >= moreStartX &&
-        relX < moreStartX + imgWidth &&
-        relY >= moreStartY &&
-        relY < moreStartY + imgHeight
-      ) {
-        this.state.hoveredImageIndex = config.hoverable !== false ? displayCount : -1;
-        return;
-      }
-    }
-
-    this.state.hoveredImageIndex = -1;
-  }
-
-  private updateButtonsHoverIndex(
-    cell: { rowIndex: number; columnIndex: number } | null,
-    mouseX: number,
-    mouseY: number,
-  ): void {
-    if (!cell || cell.rowIndex < 0) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-
-    if (!column || !row) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-
-    // 检查是否是按钮组（数组形式）
-    if (
-      renderResult.type !== CellTypes.BUTTON ||
-      !renderResult.button ||
-      !Array.isArray(renderResult.button)
-    ) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-
-    if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-
-    const buttons = renderResult.button;
-    const options = renderResult.buttonOptions ?? {};
-    const visibleButtons = buttons.filter((btn) => btn.visible !== false);
-    const maxVisible = options.maxVisible ?? 3;
-    const gap = options.gap ?? 4;
-    const padding = 8;
-    const buttonHeight = 24;
-
-    const displayButtons = visibleButtons.slice(0, maxVisible);
-    const moreButtons = visibleButtons.slice(maxVisible);
-
-    // 获取单元格位置
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-    const buttonY = cellViewportY + (cellPos.height - buttonHeight) / 2;
-
-    const relativeY = mouseY - buttonY;
-
-    // 检查是否在按钮Y范围内
-    if (relativeY < 0 || relativeY > buttonHeight) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-
-    // 计算每个按钮的位置
-    let currentX = cellViewportX + padding;
-    const fontSize = 13;
-    this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-
-    // 检查显示的按钮
-    for (let i = 0; i < displayButtons.length; i++) {
-      const btn = displayButtons[i]!;
-      const text = btn.text ?? this.locale.cell.buttonText;
-      const textWidth = this.ctx.measureText(text).width;
-      const buttonWidth = Math.max(textWidth + 16, 40);
-
-      if (mouseX >= currentX && mouseX < currentX + buttonWidth) {
-        this.state.hoveredButtonIndex = i;
-        return;
-      }
-
-      currentX += buttonWidth + gap;
-    }
-
-    // 检查"更多"按钮
-    if (moreButtons.length > 0) {
-      const moreText = options.moreButtonText ?? "···";
-      const textWidth = this.ctx.measureText(moreText).width;
-      const buttonWidth = Math.max(textWidth + 16, 32);
-
-      if (mouseX >= currentX && mouseX < currentX + buttonWidth) {
-        // "更多"按钮的索引是 maxVisible
-        this.state.hoveredButtonIndex = maxVisible;
-        return;
-      }
-    }
-
-    this.state.hoveredButtonIndex = -1;
-  }
-
   private checkTooltip = (cell: { rowIndex: number; columnIndex: number } | null): void => {
     this.tooltipHandler.checkTooltip(cell);
   };
-
-  private isClickableElement(
-    cell: { rowIndex: number; columnIndex: number } | null,
-    mouseX: number,
-    mouseY: number,
-  ): boolean {
-    if (!cell) return false;
-
-    if (cell.rowIndex === -1) {
-      return true;
-    }
-
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-
-    if (!column || !row) return false;
-
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-
-    // Check column-level disabled
-    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
-
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-    const relativeX = mouseX - cellViewportX;
-    const relativeY = mouseY - cellViewportY;
-
-    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
-      if (isDisabled) return false;
-      const size = 16;
-      const checkboxX = (cellPos.width - size) / 2;
-      const checkboxY = (cellPos.height - size) / 2;
-      return (
-        relativeX >= checkboxX &&
-        relativeX <= checkboxX + size &&
-        relativeY >= checkboxY &&
-        relativeY <= checkboxY + size
-      );
-    }
-
-    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
-      if (isDisabled) return false;
-      const size = 16;
-
-      if (renderResult.radio.options && renderResult.radio.options.length > 0) {
-        const padding = 8;
-        const gap = 4;
-        const maxX = cellPos.width - padding;
-
-        this.ctx.font = `14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-
-        let currentX = padding;
-
-        for (let i = 0; i < renderResult.radio.options.length; i++) {
-          const option = renderResult.radio.options[i]!;
-          if (option.disabled) {
-            const textWidth = this.ctx.measureText(option.label).width;
-            currentX += size + gap + textWidth + padding;
-            continue;
-          }
-
-          const textWidth = this.ctx.measureText(option.label).width;
-          const optionWidth = size + gap + textWidth + padding;
-
-          if (currentX + optionWidth - padding > maxX) {
-            break;
-          }
-
-          const radioX = currentX;
-          const radioY = (cellPos.height - size) / 2;
-          const centerY = radioY + size / 2;
-
-          const inRadioCircle =
-            relativeX >= radioX &&
-            relativeX <= radioX + size &&
-            relativeY >= radioY &&
-            relativeY <= radioY + size;
-
-          const textX = radioX + size + gap;
-          const inText =
-            relativeX >= textX &&
-            relativeX <= textX + textWidth &&
-            relativeY >= centerY - 10 &&
-            relativeY <= centerY + 10;
-
-          if (inRadioCircle || inText) {
-            return true;
-          }
-
-          currentX += optionWidth;
-        }
-
-        return false;
-      } else {
-        const radioX = (cellPos.width - size) / 2;
-        const radioY = (cellPos.height - size) / 2;
-        return (
-          relativeX >= radioX &&
-          relativeX <= radioX + size &&
-          relativeY >= radioY &&
-          relativeY <= radioY + size
-        );
-      }
-    }
-
-    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
-      if (isDisabled) return false;
-      const button = renderResult.button;
-
-      if (Array.isArray(button)) {
-        const options = renderResult.buttonOptions ?? {};
-        const padding = 8;
-        const gap = options.gap ?? 4;
-        const maxVisible = options.maxVisible ?? 3;
-        const buttonHeight = 24;
-        const buttonY = (cellPos.height - buttonHeight) / 2;
-
-        const visibleButtons = button.filter((btn) => btn.visible !== false);
-        const displayButtons = visibleButtons.slice(0, maxVisible);
-
-        let currentX = padding;
-        for (const btn of displayButtons) {
-          const text = btn.text ?? this.locale.cell.buttonText;
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth = this.ctx.measureText(text).width;
-          const buttonWidth = Math.max(textWidth + 16, 40);
-
-          if (
-            relativeY >= buttonY &&
-            relativeY <= buttonY + buttonHeight &&
-            relativeX >= currentX &&
-            relativeX <= currentX + buttonWidth
-          ) {
-            return true;
-          }
-
-          currentX += buttonWidth + gap;
-        }
-
-        if (visibleButtons.length > maxVisible) {
-          const moreText = options.moreButtonText ?? "···";
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth = this.ctx.measureText(moreText).width;
-          const buttonWidth = Math.max(textWidth + 16, 32);
-
-          if (
-            relativeY >= buttonY &&
-            relativeY <= buttonY + buttonHeight &&
-            relativeX >= currentX &&
-            relativeX <= currentX + buttonWidth
-          ) {
-            return true;
-          }
-        }
-
-        return false;
-      }
-
-      const buttonHeight = button.size === "small" ? 24 : button.size === "large" ? 40 : 32;
-      const buttonY = (cellPos.height - buttonHeight) / 2;
-      const padding = 8;
-      return (
-        relativeY >= buttonY &&
-        relativeY <= buttonY + buttonHeight &&
-        relativeX >= padding &&
-        relativeX <= cellPos.width - padding
-      );
-    }
-
-    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
-      if (isDisabled) return false;
-      const switchWidth = 44;
-      const switchHeight = 22;
-      const switchX = (cellPos.width - switchWidth) / 2;
-      const switchY = (cellPos.height - switchHeight) / 2;
-      return (
-        relativeX >= switchX &&
-        relativeX <= switchX + switchWidth &&
-        relativeY >= switchY &&
-        relativeY <= switchY + switchHeight
-      );
-    }
-
-    if (renderResult.type === CellTypes.SELECT && renderResult.select) {
-      if (isDisabled) return false;
-      return true;
-    }
-
-    if (renderResult.type === CellTypes.TAG && renderResult.tags) {
-      return true;
-    }
-
-    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
-      if (isDisabled || renderResult.input.readonly) return false;
-      return true;
-    }
-
-    if (renderResult.type === CellTypes.LINK && renderResult.link) {
-      const link = renderResult.link;
-      const linkText = link.text || link.link;
-      if (!linkText) return false;
-
-      // 精确检测点击位置是否在链接文字上
-      const padding = 8;
-      const fontSize = 13;
-
-      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-
-      // 计算文字宽度（考虑截断）
-      const maxTextWidth = cellPos.width - padding * 2;
-      let textWidth = this.ctx.measureText(linkText).width;
-      let displayText = linkText;
-
-      if (textWidth > maxTextWidth) {
-        const ellipsis = "...";
-        while (
-          displayText.length > 0 &&
-          this.ctx.measureText(displayText + ellipsis).width > maxTextWidth
-        ) {
-          displayText = displayText.slice(0, -1);
-        }
-        displayText += ellipsis;
-        textWidth = this.ctx.measureText(displayText).width;
-      }
-
-      // 计算文字位置（与 Renderer 保持一致）
-      const align = column.align ?? "left";
-      let textX: number;
-      switch (align) {
-        case "center":
-          textX = (cellPos.width - textWidth) / 2;
-          break;
-        case "right":
-          textX = cellPos.width - padding - textWidth;
-          break;
-        default:
-          textX = padding;
-      }
-      const textY = (cellPos.height - fontSize) / 2;
-
-      return (
-        relativeX >= textX &&
-        relativeX <= textX + textWidth &&
-        relativeY >= textY &&
-        relativeY <= textY + fontSize
-      );
-    }
-
-    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
-      const config = renderResult.image;
-      if (config.clickable === false) return false;
-
-      // 单图模式
-      const images = config.images;
-      if (!images || images.length <= 1) {
-        const src = config.src || (images && images[0]);
-        return !!src;
-      }
-
-      // 多图模式 - 检查是否 hover 在某张图片上
-      const hoveredImageIndex = this.state.hoveredImageIndex ?? -1;
-      return hoveredImageIndex >= 0 && hoveredImageIndex < images.length;
-    }
-
-    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
-      const config = renderResult.progress;
-      // 只有 interactive 进度条才可点击
-      if (config.interactive !== true) return false;
-      if (isDisabled) return false;
-
-      const shape = config.shape ?? "line";
-
-      if (shape === "line") {
-        // 线形进度条热区检测
-        const padding = 8;
-        const size = config.size ?? "medium";
-        const barHeight = config.height ?? (size === "small" ? 6 : size === "large" ? 16 : 10);
-        const textPosition = config.textPosition ?? "right";
-        const showText = config.showText ?? true;
-        const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
-        const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
-
-        const barX = padding;
-        const barY = (cellPos.height - barHeight) / 2;
-
-        return (
-          relativeX >= barX &&
-          relativeX <= barX + barWidth &&
-          relativeY >= barY &&
-          relativeY <= barY + barHeight
-        );
-      }
-
-      if (shape === "circle" || shape === "dashboard") {
-        // 圆环/仪表盘热区检测
-        const size = config.size ?? "medium";
-        let sizeRatio: number;
-        let centerYOffset = 0;
-
-        if (shape === "circle") {
-          sizeRatio = size === "small" ? 0.6 : size === "large" ? 0.9 : 0.75;
-        } else {
-          sizeRatio = size === "small" ? 0.7 : size === "large" ? 0.95 : 0.85;
-          centerYOffset = cellPos.height * 0.05; // 仪表盘有偏移
-        }
-
-        const defaultDiameter = Math.floor(cellPos.height * sizeRatio);
-        const diameter = config.width ?? defaultDiameter;
-        const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.12));
-
-        const centerX = cellPos.width / 2;
-        const centerY = cellPos.height / 2 + centerYOffset;
-        const radius = (diameter - strokeWidth) / 2;
-
-        // 检测是否在圆环范围内
-        const dx = relativeX - centerX;
-        const dy = relativeY - centerY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        // 在圆环范围内（考虑 strokeWidth）
-        return distance >= radius - strokeWidth && distance <= radius + strokeWidth;
-      }
-    }
-
-    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
-      if (isDisabled) return false;
-
-      const config = renderResult.rating;
-      const max = config.max ?? 5;
-      const starSize = config.starSize ?? 16;
-
-      // 计算星星起始位置（与 Renderer.renderRating 保持一致）
-      const totalWidth = max * starSize;
-      const startX = (cellPos.width - totalWidth) / 2;
-      const startY = (cellPos.height - starSize) / 2;
-
-      // 检测是否在星星区域内
-      return (
-        relativeX >= startX &&
-        relativeX <= startX + totalWidth &&
-        relativeY >= startY &&
-        relativeY <= startY + starSize
-      );
-    }
-
-    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
-      if (isDisabled) return false;
-
-      // 检测是否在颜色块区域内
-      const padding = 8;
-      const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
-      const colorBoxX = (cellPos.width - colorBoxSize) / 2;
-      const colorBoxY = (cellPos.height - colorBoxSize) / 2;
-
-      return (
-        relativeX >= colorBoxX &&
-        relativeX <= colorBoxX + colorBoxSize &&
-        relativeY >= colorBoxY &&
-        relativeY <= colorBoxY + colorBoxSize
-      );
-    }
-
-    return false;
-  }
 
   private handleMouseUp = (_e: MouseEvent): void => {
     if (
@@ -2079,13 +1362,16 @@ export class InteractionManager {
     ) {
       const { cell, displayValue } = this.state.progressDragState;
 
-      this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell)!, displayValue);
-
       this.state.isDragging = false;
       this.state.dragType = null;
-      this.state.progressDragState = undefined;
       this.canvas.style.cursor = "default";
       this.unbindDocumentEvents();
+
+      // 保留 progressDragState（临时显示值），由提交完成后的 clearProgressDragState 清除。
+      // 提交可能包含异步校验，若此处立即清除，期间的重渲染会回退到旧数据造成闪回。
+      // 记录本次提交的最终值，用于区分拖拽过程中 mousedown 触发的提前提交（其值不同）。
+      this.state.progressDragState.pendingValue = displayValue;
+      this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell)!, displayValue);
       return;
     }
 
@@ -2390,969 +1676,20 @@ export class InteractionManager {
   };
 
   private handleControlClick = (cell: CellPosition, e: MouseEvent): boolean => {
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-
-    if (!column || !row) return false;
-
-    // 处理占位列点击 - 显示对应的隐藏列
-    if (column.key.startsWith("__hidden_placeholder__")) {
-      const hiddenColumnKey = (column as Column & { _hiddenColumnKey?: string })._hiddenColumnKey;
-      if (hiddenColumnKey) {
-        this.eventEmitter.emit(TableEvents.COLUMN_SHOW, hiddenColumnKey);
-        return true;
-      }
-    }
-
-    if (this.expandColumnKey === column.key && row.children && row.children.length > 0) {
-      const expandClick = this.handleExpandIconClick(cell, e, row);
-      if (expandClick) return true;
-    }
-
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-
-    // Check column-level canEdit
-    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
-
-    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      const checkboxSize = 16;
-      const checkboxX = cellViewportX + (cellPos.width - checkboxSize) / 2;
-      const checkboxY = cellViewportY + (cellPos.height - checkboxSize) / 2;
-
-      const isOnCheckbox =
-        viewportX >= checkboxX &&
-        viewportX <= checkboxX + checkboxSize &&
-        viewportY >= checkboxY &&
-        viewportY <= checkboxY + checkboxSize;
-
-      if (isOnCheckbox && !isDisabled) {
-        const newChecked = !renderResult.checkbox.checked;
-        this.eventEmitter.emit(TableEvents.CHECKBOX_CHANGE, this.getCellInfo(cell)!, newChecked);
-        return true;
-      }
-
-      return false;
-    }
-
-    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
-      if (isDisabled) return false;
-
-      if (renderResult.radio.options && renderResult.radio.options.length > 0) {
-        const clickedOption = this.getClickedRadioOption(cell, e, renderResult.radio.options);
-        if (clickedOption && !clickedOption.disabled) {
-          this.eventEmitter.emit(
-            TableEvents.RADIO_CHANGE,
-            this.getCellInfo(cell)!,
-            clickedOption.value,
-          );
-          return true;
-        }
-        return false;
-      } else {
-        this.eventEmitter.emit(
-          TableEvents.RADIO_CHANGE,
-          this.getCellInfo(cell)!,
-          renderResult.radio.value,
-        );
-        return true;
-      }
-    }
-
-    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
-      if (isDisabled) return false;
-
-      const buttonConfig = renderResult.button;
-
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-
-      if (Array.isArray(buttonConfig)) {
-        const options = renderResult.buttonOptions ?? {};
-        const padding = 8;
-        const gap = options.gap ?? 4;
-        const maxVisible = options.maxVisible ?? 3;
-        const buttonHeight = 24;
-        const buttonY = (cellPos.height - buttonHeight) / 2;
-
-        const visibleButtons = buttonConfig.filter((btn) => btn.visible !== false);
-        const displayButtons = visibleButtons.slice(0, maxVisible);
-        const moreButtons = visibleButtons.slice(maxVisible);
-
-        let currentX = padding;
-        for (let i = 0; i < displayButtons.length; i++) {
-          const btn = displayButtons[i]!;
-          const text = btn.text ?? this.locale.cell.buttonText;
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth = this.ctx.measureText(text).width;
-          const buttonWidth = Math.max(textWidth + 16, 40);
-
-          if (
-            relativeY >= buttonY &&
-            relativeY <= buttonY + buttonHeight &&
-            relativeX >= currentX &&
-            relativeX <= currentX + buttonWidth
-          ) {
-            this.eventEmitter.emit(
-              TableEvents.BUTTON_CLICK,
-              this.getCellInfo(cell)!,
-              btn.actionKey,
-            );
-            return true;
-          }
-
-          currentX += buttonWidth + gap;
-        }
-
-        if (moreButtons.length > 0) {
-          const moreText = options.moreButtonText ?? "···";
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth = this.ctx.measureText(moreText).width;
-          const buttonWidth = Math.max(textWidth + 16, 32);
-
-          if (
-            relativeY >= buttonY &&
-            relativeY <= buttonY + buttonHeight &&
-            relativeX >= currentX &&
-            relativeX <= currentX + buttonWidth
-          ) {
-            const dropdownX = cellViewportX + currentX;
-            const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-            const dropdownHeight = moreButtons.length * itemHeight;
-            const canvasRect = this.canvas.getBoundingClientRect();
-
-            let dropdownY = cellViewportY + buttonY + buttonHeight + 4;
-            let showAbove = false;
-
-            if (dropdownY + dropdownHeight > canvasRect.height) {
-              dropdownY = cellViewportY + buttonY - dropdownHeight - 4;
-              showAbove = true;
-            }
-
-            this.state.buttonsDropdown = {
-              cell,
-              x: dropdownX,
-              y: dropdownY,
-              buttons: moreButtons,
-              hoveredIndex: -1,
-              buttonRelativeX: currentX,
-              buttonY: buttonY,
-              buttonHeight: buttonHeight,
-              showAbove,
-            };
-            this.eventEmitter.emit(TableEvents.DROPDOWN_OPEN);
-            return true;
-          }
-        }
-
-        return false;
-      }
-
-      const buttonHeight =
-        buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
-      const buttonY = (cellPos.height - buttonHeight) / 2;
-
-      // 计算按钮宽度：与 Renderer 保持一致
-      const text = buttonConfig.text ?? this.locale.cell.buttonText;
-      const fontSize = 13;
-      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      const textWidth = this.ctx.measureText(text).width;
-      const buttonPadding = 16;
-      const cellPadding = 8;
-      const buttonWidth = Math.min(
-        Math.max(textWidth + buttonPadding * 2, 60),
-        cellPos.width - cellPadding * 2,
-      );
-      const buttonX = (cellPos.width - buttonWidth) / 2;
-
-      const isOnButton =
-        relativeY >= buttonY &&
-        relativeY <= buttonY + buttonHeight &&
-        relativeX >= buttonX &&
-        relativeX <= buttonX + buttonWidth;
-
-      if (!isOnButton) return false;
-
-      this.eventEmitter.emit(
-        TableEvents.BUTTON_CLICK,
-        this.getCellInfo(cell)!,
-        buttonConfig.actionKey,
-      );
-      return true;
-    }
-
-    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
-      if (isDisabled) return false;
-
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-
-      const switchWidth = 44;
-      const switchHeight = 22;
-      const switchX = (cellPos.width - switchWidth) / 2;
-      const switchY = (cellPos.height - switchHeight) / 2;
-
-      const isOnSwitch =
-        relativeX >= switchX &&
-        relativeX <= switchX + switchWidth &&
-        relativeY >= switchY &&
-        relativeY <= switchY + switchHeight;
-
-      if (!isOnSwitch) return false;
-
-      const cellKey = `${cell.rowIndex}-${cell.columnIndex}`;
-      const existingAnimation = this.state.switchAnimations.get(cellKey);
-      const currentChecked = renderResult.switch.checked ?? false;
-      const currentProgress = existingAnimation
-        ? existingAnimation.progress
-        : currentChecked
-          ? 1
-          : 0;
-      const targetProgress = currentProgress < 0.5 ? 1 : 0;
-      const targetChecked = targetProgress === 1;
-
-      if (currentChecked !== targetChecked) {
-        this.eventEmitter.emit(TableEvents.SWITCH_CHANGE, this.getCellInfo(cell)!, targetChecked);
-      }
-
-      this.state.switchAnimations.set(cellKey, {
-        cell,
-        progress: currentProgress,
-        targetProgress,
-        startTime: Date.now(),
-        startProgress: currentProgress,
-      });
-
-      this.startSwitchAnimationLoop();
-      return true;
-    }
-
-    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
-      if (isDisabled || renderResult.input.readonly) return false;
-
-      return false;
-    }
-
-    if (renderResult.type === CellTypes.LINK && renderResult.link) {
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-
-      const link = renderResult.link;
-      const linkUrl = link.link;
-      const linkText = link.text || link.link;
-      if (!linkUrl || !linkText) return false;
-
-      // 精确检测点击位置是否在链接文字上
-      const padding = 8;
-      const fontSize = 13;
-
-      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-
-      // 计算文字宽度（考虑截断）
-      const maxTextWidth = cellPos.width - padding * 2;
-      let textWidth = this.ctx.measureText(linkText).width;
-      let displayText = linkText;
-
-      if (textWidth > maxTextWidth) {
-        const ellipsis = "...";
-        while (
-          displayText.length > 0 &&
-          this.ctx.measureText(displayText + ellipsis).width > maxTextWidth
-        ) {
-          displayText = displayText.slice(0, -1);
-        }
-        displayText += ellipsis;
-        textWidth = this.ctx.measureText(displayText).width;
-      }
-
-      // 计算文字位置（与 Renderer 保持一致）
-      const align = column.align ?? "left";
-      let textX: number;
-      switch (align) {
-        case "center":
-          textX = (cellPos.width - textWidth) / 2;
-          break;
-        case "right":
-          textX = cellPos.width - padding - textWidth;
-          break;
-        default:
-          textX = padding;
-      }
-      const textY = (cellPos.height - fontSize) / 2;
-
-      const isOnLink =
-        relativeX >= textX &&
-        relativeX <= textX + textWidth &&
-        relativeY >= textY &&
-        relativeY <= textY + fontSize;
-
-      if (!isOnLink) return false;
-
-      // 检测是否为双击，如果是双击则不跳转链接（让 dblclick 事件处理编辑）
-      const now = Date.now();
-      const isDoubleClick =
-        this._lastClickCell?.rowIndex === cell.rowIndex &&
-        this._lastClickCell?.columnIndex === cell.columnIndex &&
-        now - this._lastClickTime < 350;
-
-      // 更新点击记录
-      this._lastClickTime = now;
-      this._lastClickCell = { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex };
-
-      if (isDoubleClick) {
-        return false; // 不跳转，让 dblclick 事件处理
-      }
-
-      window.open(linkUrl, "_blank", "noopener,noreferrer");
-      return true;
-    }
-
-    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
-      const result = this.handleProgressClick(cell, e, renderResult.progress, column, row);
-      if (result) {
-        // 点击成功后启动拖拽状态，只更新显示值不更新数据
-        const precision = renderResult.progress.precision ?? 0;
-        const displayValue =
-          precision === 0
-            ? Math.round(renderResult.progress.value)
-            : Number(renderResult.progress.value.toFixed(precision));
-        this.state.isDragging = true;
-        this.state.dragType = "progress-drag";
-        this.state.progressDragState = {
-          cell,
-          config: renderResult.progress,
-          column,
-          row,
-          startX: e.clientX,
-          startValue: renderResult.progress.value,
-          displayValue: displayValue,
-        };
-        this.canvas.style.cursor = "grabbing";
-        this.bindDocumentEvents();
-      }
-      return result;
-    }
-
-    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
-      return this.handleRatingClick(cell, e, renderResult.rating, column, row);
-    }
-
-    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
-      if (isDisabled) return false;
-
-      // 计算颜色块位置，只有点击颜色块才触发
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      const rect = this.canvas.getBoundingClientRect();
-      const clickViewportX = e.clientX - rect.left;
-      const clickViewportY = e.clientY - rect.top;
-
-      const padding = 8;
-      const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
-      const colorBoxX = cellViewportX + (cellPos.width - colorBoxSize) / 2;
-      const colorBoxY = cellViewportY + (cellPos.height - colorBoxSize) / 2;
-
-      // 检查点击是否在颜色块区域内
-      if (
-        clickViewportX >= colorBoxX &&
-        clickViewportX <= colorBoxX + colorBoxSize &&
-        clickViewportY >= colorBoxY &&
-        clickViewportY <= colorBoxY + colorBoxSize
-      ) {
-        this.startColorEditing(cell, renderResult.color);
-        return true;
-      }
-
-      return false;
-    }
-
-    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
-      if (renderResult.image.clickable === false) return false;
-
-      const config = renderResult.image;
-      const images = config.images;
-
-      // 获取点击位置
-      const rect = this.canvas.getBoundingClientRect();
-      const clickViewportX = e.clientX - rect.left;
-      const clickViewportY = e.clientY - rect.top;
-
-      // 计算单元格视口位置
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      // 计算相对位置
-      const relativeX = clickViewportX - cellViewportX;
-      const relativeY = clickViewportY - cellViewportY;
-
-      // 与 updateImageHoverIndex 保持一致的计算逻辑
-      const padding = 4;
-      const maxImgSize = Math.min(cellPos.width, cellPos.height) - padding * 2;
-      const configWidth = config.width ?? 32;
-      const configHeight = config.height ?? 32;
-      const imgWidth = Math.min(configWidth, maxImgSize);
-      const imgHeight = Math.min(configHeight, maxImgSize);
-      const gap = config.gap ?? 4;
-
-      // 多图模式
-      if (images && images.length > 1) {
-        const maxVisible = config.maxVisible ?? 3;
-        const showMoreCount = config.showMoreCount !== false;
-        const availableWidth = cellPos.width - padding * 2;
-        const maxByWidth = Math.floor((availableWidth + gap) / (imgWidth + gap));
-        const reservedForMore = showMoreCount ? 1 : 0;
-        const calculatedMaxVisible = Math.max(1, maxByWidth - reservedForMore);
-        const actualMaxVisible = Math.min(maxVisible, calculatedMaxVisible);
-        const displayCount = images.length > actualMaxVisible ? actualMaxVisible : images.length;
-        const hasMore = images.length > actualMaxVisible;
-
-        // 计算内容宽度
-        let contentWidth: number;
-        if (hasMore && showMoreCount) {
-          contentWidth = displayCount * imgWidth + displayCount * gap + imgWidth;
-        } else {
-          contentWidth = displayCount * imgWidth + Math.max(0, displayCount - 1) * gap;
-        }
-
-        let startX = (cellPos.width - contentWidth) / 2;
-        startX = Math.max(padding, startX);
-        const imgY = (cellPos.height - imgHeight) / 2;
-
-        const relX = relativeX - startX;
-        const relY = relativeY - imgY;
-
-        // 检查是否在图片区域内
-        if (relX < 0 || relX > contentWidth || relY < 0 || relY > imgHeight) {
-          return false;
-        }
-
-        // 计算点击的图片索引
-        const clickedIndex = Math.floor(relX / (imgWidth + gap));
-
-        // 点击的是 +N 块
-        if (hasMore && showMoreCount && clickedIndex === displayCount) {
-          return false;
-        }
-
-        // 点击的是显示的图片
-        if (clickedIndex >= 0 && clickedIndex < images.length) {
-          const clickedSrc = images[clickedIndex];
-          if (clickedSrc) {
-            this.eventEmitter.emit(TableEvents.IMAGE_CLICK, this.getCellInfo(cell)!, clickedSrc, e);
-            return true;
-          }
-        }
-        return false;
-      }
-
-      // 单图模式或只有一张图片的情况
-      const imgX = (cellPos.width - imgWidth) / 2;
-      const imgY = (cellPos.height - imgHeight) / 2;
-
-      const isInImage =
-        relativeX >= imgX &&
-        relativeX <= imgX + imgWidth &&
-        relativeY >= imgY &&
-        relativeY <= imgY + imgHeight;
-
-      if (!isInImage) return false;
-
-      const src = config.src || (images && images[0]);
-      if (!src) return false;
-
-      this.eventEmitter.emit(TableEvents.IMAGE_CLICK, this.getCellInfo(cell)!, src, e);
-      return true;
-    }
-
-    return false;
-  };
-
-  private handleProgressClick = (
-    cell: CellPosition,
-    e: MouseEvent,
-    config: import("../types").ProgressConfig,
-    column: Column | undefined,
-    row: Row | undefined,
-  ): boolean => {
-    return this.controlClickHandler.handleProgressClick(cell, e, config, column, row);
+    return this.controlClickHandler.handleControlClick(cell, e);
   };
 
   private handleProgressDragMove = (e: MouseEvent): void => {
-    const dragState = this.state.progressDragState;
-    if (!dragState) return;
-
-    const { cell, config, column } = dragState;
-    const rect = this.canvas.getBoundingClientRect();
-    const clickViewportX = e.clientX - rect.left;
-
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-
-    const shape = config.shape ?? "line";
-
-    if (shape === "line") {
-      const padding = 8;
-      const textPosition = config.textPosition ?? "right";
-      const showText = config.showText ?? true;
-      const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
-      const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
-
-      const barX = cellViewportX + padding;
-      const relativeX = clickViewportX - barX;
-
-      const precision = config.precision ?? 0;
-      const rawValue = Math.max(0, Math.min(100, (relativeX / barWidth) * 100));
-      const newValue = precision === 0 ? Math.round(rawValue) : Number(rawValue.toFixed(precision));
-
-      // 只更新显示值，不更新数据
-      dragState.displayValue = newValue;
-      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
-    } else if (shape === "circle" || shape === "dashboard") {
-      const clickViewportY = e.clientY - rect.top;
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-
-      let centerYOffset = 0;
-      if (shape === "dashboard") {
-        centerYOffset = cellPos.height * 0.05;
-      }
-
-      const cellCenterX = cellViewportX + cellPos.width / 2;
-      const cellCenterY = cellViewportY + cellPos.height / 2 + centerYOffset;
-
-      const dx = clickViewportX - cellCenterX;
-      const dy = clickViewportY - cellCenterY;
-
-      let angle = Math.atan2(dy, dx);
-      let newValue: number;
-
-      if (shape === "circle") {
-        angle = angle + Math.PI / 2;
-        if (angle < 0) angle += Math.PI * 2;
-        newValue = (angle / (Math.PI * 2)) * 100;
-      } else {
-        const startAngle = Math.PI * 0.75;
-        const totalAngle = Math.PI * 1.5;
-
-        if (angle < 0) angle += Math.PI * 2;
-
-        let offset = angle - startAngle;
-        if (offset < 0) offset += Math.PI * 2;
-
-        newValue = (offset / totalAngle) * 100;
-      }
-
-      newValue = Math.max(0, Math.min(100, newValue));
-
-      const precision = config.precision ?? 0;
-      newValue = precision === 0 ? Math.round(newValue) : Number(newValue.toFixed(precision));
-
-      // 只更新显示值，不更新数据
-      dragState.displayValue = newValue;
-      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
-    }
-  };
-
-  private handleRatingClick = (
-    cell: CellPosition,
-    e: MouseEvent,
-    config: import("../types").RatingConfig,
-    column: Column | undefined,
-    row: Row | undefined,
-  ): boolean => {
-    return this.controlClickHandler.handleRatingClick(cell, e, config, column, row);
-  };
-
-  private handleExpandIconClick = (cell: CellPosition, e: MouseEvent, row: Row): boolean => {
-    return this.controlClickHandler.handleExpandIconClick(cell, e, row);
-  };
-
-  private getClickedRadioOption = (
-    cell: CellPosition,
-    e: MouseEvent,
-    options: { label: string; value: unknown; disabled?: boolean }[],
-  ): { label: string; value: unknown; disabled?: boolean } | null => {
-    return this.controlClickHandler.getClickedRadioOption(cell, e, options);
+    this.controlClickHandler.handleProgressDragMove(e);
   };
 
   private handleWheel = (e: WheelEvent): void => {
-    const target = e.target as HTMLElement;
-    // 只有鼠标悬停在 TEXTAREA 或 INPUT 上时才不处理表格滚动
-    // 这样用户可以在输入时把鼠标移到表格区域滚动查看数据
-    if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
-      // 检查输入框是否真的有滚动条且可以滚动
-      const element = target as HTMLTextAreaElement | HTMLInputElement;
-      const hasVerticalScrollbar = element.scrollHeight > element.clientHeight;
-      const hasHorizontalScrollbar = element.scrollWidth > element.clientWidth;
-
-      if (hasVerticalScrollbar || hasHorizontalScrollbar) {
-        // 输入框有滚动条，让输入框自己处理滚动
-        return;
-      }
-      // 输入框没有滚动条，继续处理表格滚动
-    }
-
-    if (this.state.imageTooltip) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const { x, y, images, maxRows, scrollTop } = this.state.imageTooltip;
-      const imgSize = InteractionManager.IMAGE_SIZE;
-      const padding = 8;
-      const gap = 8;
-      const imagesPerRow = 4;
-      const scrollbarWidth = 4;
-      const scrollbarGap = 4;
-      const dropdownWidth =
-        imagesPerRow * imgSize +
-        (imagesPerRow - 1) * gap +
-        padding * 2 +
-        scrollbarGap +
-        scrollbarWidth;
-      const rowHeight = imgSize + gap;
-      const visibleHeight = maxRows * rowHeight + padding * 2 - gap;
-
-      const isInDropdown =
-        viewportX >= x &&
-        viewportX <= x + dropdownWidth &&
-        viewportY >= y &&
-        viewportY <= y + visibleHeight;
-
-      if (isInDropdown) {
-        const totalRows = Math.ceil(images.length / imagesPerRow);
-        const maxScrollTop = Math.max(0, (totalRows - maxRows) * rowHeight);
-
-        // 有滚动条且主要是纵向滚动（deltaY 绝对值大于 deltaX）
-        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-        if (maxScrollTop > 0 && isMainlyVertical) {
-          // 检查是否滚动到边界
-          const epsilon = 0.5;
-          const atTop = scrollTop <= epsilon && e.deltaY < 0;
-          const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-
-          if (!atTop && !atBottom) {
-            // 未到边界，dropdown 消费滚动事件
-            this.state.imageTooltip.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
-            e.preventDefault();
-            e.stopPropagation();
-            this.eventEmitter.emit(TableEvents.IMAGE_TOOLTIP_SCROLL);
-            return;
-          }
-          // 到达边界，事件传递到表格
-        }
-        // 没有滚动条或主要横向滚动或到达边界，事件传递到表格
-      }
-      // 鼠标不在 dropdown 区域内或事件传递到表格，更新 dropdown 位置
-      this.imageHandler.updateImageTooltipPosition();
-      // 继续执行，让表格处理滚动
-    }
-
-    if (this.state.imageEditor) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const { x, y, images, maxRows, scrollTop, pendingImages } = this.state.imageEditor;
-      const imgSize = InteractionManager.IMAGE_SIZE;
-      const padding = 8;
-      const gap = 8;
-      const imagesPerRow = 4;
-      const uploadAreaHeight = 60;
-      const rowHeight = imgSize + gap;
-      const editorWidth = imagesPerRow * imgSize + (imagesPerRow - 1) * gap + padding * 2 + 4 + 4;
-      const imagesHeight = maxRows * rowHeight + padding * 2 - gap;
-      const editorHeight = uploadAreaHeight + imagesHeight;
-
-      const isInEditor =
-        viewportX >= x &&
-        viewportX <= x + editorWidth &&
-        viewportY >= y &&
-        viewportY <= y + editorHeight;
-
-      if (isInEditor) {
-        const totalImages = images.length + pendingImages.length;
-        const totalRows = Math.ceil(totalImages / imagesPerRow);
-        const maxScrollTop = Math.max(0, (totalRows - maxRows) * rowHeight);
-
-        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-        if (maxScrollTop > 0 && isMainlyVertical) {
-          const epsilon = 0.5;
-          const atTop = scrollTop <= epsilon && e.deltaY < 0;
-          const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-
-          if (!atTop && !atBottom) {
-            this.state.imageEditor.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
-            e.preventDefault();
-            e.stopPropagation();
-            this.eventEmitter.emit(TableEvents.IMAGE_EDITOR_SCROLL);
-            return;
-          }
-        }
-      }
-      // 更新编辑器位置
-      this.imageHandler.updateImageEditorPosition();
-    }
-
-    if (this.state.filterDropdown) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const { x, y, width, mode, options, scrollTop } = this.state.filterDropdown;
-
-      // 只处理 select 模式的 dropdown 内部滚动
-      if (mode === "select" && options) {
-        const padding = 8;
-        const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-        const maxVisibleItems = InteractionManager.DROPDOWN_MAX_VISIBLE;
-        const visibleCount = Math.min(options.length, maxVisibleItems);
-        const searchHeight = 32;
-        const gap = 4;
-        const listHeight = visibleCount * itemHeight;
-        const dropdownHeight = padding + searchHeight + gap + listHeight + gap + 36;
-
-        const isInDropdown =
-          viewportX >= x &&
-          viewportX <= x + width &&
-          viewportY >= y &&
-          viewportY <= y + dropdownHeight;
-
-        if (isInDropdown) {
-          // 检查是否主要是纵向滚动
-          const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-          const maxScrollTop = Math.max(0, options.length * itemHeight - listHeight);
-
-          if (maxScrollTop > 0 && isMainlyVertical) {
-            // 检查是否滚动到边界
-            const epsilon = 0.5;
-            const atTop = scrollTop <= epsilon && e.deltaY < 0;
-            const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-
-            if (!atTop && !atBottom) {
-              // 未到边界，dropdown 消费滚动事件
-              this.state.filterDropdown.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
-              e.preventDefault();
-              e.stopPropagation();
-              this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
-              return;
-            }
-            // 到达边界，事件传递到表格
-          }
-          // 没有滚动条或主要横向滚动或到达边界，事件传递到表格
-        }
-      }
-
-      // 其他模式（search、range、boolean、dateRange）继续执行表格滚动
-      this.dropdownHandler.updateFilterDropdownPosition();
-    }
-
-    if (this.state.dropdown) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-
-      const { x, y, width, type, tagsConfig, config, scrollTop } = this.state.dropdown;
-      const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-      const maxVisibleItems = InteractionManager.DROPDOWN_MAX_VISIBLE;
-
-      let optionsLength: number;
-      if (type === "tags" && tagsConfig) {
-        optionsLength = tagsConfig.options?.length ?? 0;
-      } else {
-        optionsLength = config.options.length;
-      }
-
-      const visibleCount = Math.min(optionsLength, maxVisibleItems);
-      const dropdownHeight = visibleCount * itemHeight;
-
-      const isInDropdown =
-        viewportX >= x &&
-        viewportX <= x + width &&
-        viewportY >= y &&
-        viewportY <= y + dropdownHeight;
-
-      if (isInDropdown) {
-        // 检查是否主要是纵向滚动
-        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-        const maxScrollTop = Math.max(0, optionsLength * itemHeight - dropdownHeight);
-
-        if (maxScrollTop > 0 && isMainlyVertical) {
-          // 检查是否滚动到边界
-          const epsilon = 0.5;
-          const currentScrollTop = scrollTop ?? 0;
-          const atTop = currentScrollTop <= epsilon && e.deltaY < 0;
-          const atBottom = currentScrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-
-          if (!atTop && !atBottom) {
-            // 未到边界，dropdown 消费滚动事件
-            this.state.dropdown.scrollTop = clamp(currentScrollTop + e.deltaY, 0, maxScrollTop);
-            e.preventDefault();
-            e.stopPropagation();
-            this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
-            return;
-          }
-          // 到达边界，事件传递到表格
-        }
-        // 没有滚动条或主要横向滚动或到达边界，事件传递到表格
-      }
-
-      this.dropdownHandler.updateDropdownPosition();
-    }
-
-    // 更新其他 dropdown 位置
-    this.updateAllDropdownPositions();
-
-    e.preventDefault();
-
-    const deltaX = e.deltaX;
-    const deltaY = e.deltaY;
-
-    const newScrollLeft = clamp(
-      this.scrollState.scrollLeft + deltaX,
-      0,
-      this.scrollState.maxScrollLeft,
-    );
-
-    const newScrollTop = clamp(
-      this.scrollState.scrollTop + deltaY,
-      0,
-      this.scrollState.maxScrollTop,
-    );
-
-    if (
-      newScrollLeft !== this.scrollState.scrollLeft ||
-      newScrollTop !== this.scrollState.scrollTop
-    ) {
-      this.scrollState.scrollLeft = newScrollLeft;
-      this.scrollState.scrollTop = newScrollTop;
-      this.scrollState.isScrolling = true;
-
-      this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
-
-      // 懒加载检测
-      this.checkLazyLoad(newScrollTop, deltaY);
-
-      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
-      this.scrollTimeout = setTimeout(() => {
-        this.scrollState.isScrolling = false;
-      }, 150);
-    }
+    this.wheelHandler.handleWheel(e);
   };
-
-  /**
-   * 检查是否需要触发懒加载
-   */
-  private checkLazyLoad(newScrollTop: number, deltaY: number): void {
-    if (!this.lazyLoadEnabled) return;
-    if (this.isLoadingMore) return;
-    if (!this.hasMoreData) return; // 没有更多数据时不再触发
-    if (deltaY <= 0) return; // 只在向下滚动时触发
-
-    const rows = this.rows;
-    if (rows.length === 0) return;
-
-    const layoutInfo = this.layoutManager.getLayoutInfo();
-    const viewportHeight = layoutInfo.viewportHeight;
-    const headerHeight = layoutInfo.headerHeight;
-
-    // 动态行高模式：使用实际的 totalHeight
-    const totalContentHeight = layoutInfo.totalHeight - headerHeight;
-    const scrollBottom = newScrollTop + viewportHeight - headerHeight;
-    const distanceToBottom = totalContentHeight - scrollBottom;
-
-    // 使用最后一行的高度作为估算单位
-    const lastRowHeight = this.layoutManager.getRowHeightByIndex(rows.length - 1);
-    const rowsToBottom = Math.ceil(distanceToBottom / lastRowHeight);
-
-    // 当距离底部小于阈值时触发加载
-    if (rowsToBottom <= this.lazyLoadThreshold) {
-      this.isLoadingMore = true;
-      this.eventEmitter.emit(TableEvents.LOAD_MORE, {
-        startIndex: rows.length,
-        scrollTop: newScrollTop,
-        direction: "down",
-      });
-    }
-  }
 
   handleExternalWheel(deltaX: number, deltaY: number): void {
-    if (this.state.dropdown) {
-      this.dropdownHandler.updateDropdownPosition();
-    }
-
-    if (this.state.tooltip) {
-      this.updateTooltipPosition();
-    }
-
-    const newScrollLeft = clamp(
-      this.scrollState.scrollLeft + deltaX,
-      0,
-      this.scrollState.maxScrollLeft,
-    );
-
-    const newScrollTop = clamp(
-      this.scrollState.scrollTop + deltaY,
-      0,
-      this.scrollState.maxScrollTop,
-    );
-
-    if (
-      newScrollLeft !== this.scrollState.scrollLeft ||
-      newScrollTop !== this.scrollState.scrollTop
-    ) {
-      this.scrollState.scrollLeft = newScrollLeft;
-      this.scrollState.scrollTop = newScrollTop;
-      this.scrollState.isScrolling = true;
-
-      this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
-
-      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
-      this.scrollTimeout = setTimeout(() => {
-        this.scrollState.isScrolling = false;
-      }, 150);
-    }
+    this.wheelHandler.handleExternalWheel(deltaX, deltaY);
   }
-
-  private updateTooltipPosition = (): void => {
-    this.tooltipHandler.updateTooltipPosition();
-  };
-
-  private scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private handleKeyDown = async (e: KeyboardEvent): Promise<void> => {
     if (this.state.editingCell) {
@@ -3644,6 +1981,31 @@ export class InteractionManager {
     this.state.editingValue = null;
   }
 
+  /**
+   * 清除进度条拖拽的临时显示值（提交完成后调用）
+   *
+   * 仅在「提交完成的值为拖拽结束时记录的最终值」时才清除，
+   * 以避免拖拽过程中 mousedown 触发的提前提交（值不同）或在拖拽进行中误清除。
+   *
+   * @param cell 提交的单元格；仅当与当前拖拽单元格一致时才清除
+   * @param value 提交完成的值；仅当与 pendingValue 一致时才清除
+   */
+  clearProgressDragState(cell?: CellPosition, value?: number): void {
+    const dragState = this.state.progressDragState;
+    if (!dragState) return;
+    // 拖拽进行中（可能是用户开始的新拖拽）不清理临时显示值
+    if (this.state.isDragging && this.state.dragType === "progress-drag") return;
+    if (
+      cell &&
+      (dragState.cell.rowIndex !== cell.rowIndex || dragState.cell.columnIndex !== cell.columnIndex)
+    ) {
+      return;
+    }
+    // 只有拖拽结束时的最终提交才清除；mousedown 的提前提交值不同，会被忽略
+    if (dragState.pendingValue === undefined || dragState.pendingValue !== value) return;
+    this.state.progressDragState = undefined;
+  }
+
   isEditing(): boolean {
     return this.state.editingCell !== null;
   }
@@ -3690,6 +2052,7 @@ export class InteractionManager {
     this.state.dragType = null;
     this.state.rowResizeState = undefined;
     this.state.dragTarget = null;
+    this.state.progressDragState = undefined;
     this.state.tooltip = null;
     this.closeAllDropdowns();
     this.sortConfig = [];
@@ -3757,55 +2120,10 @@ export class InteractionManager {
     this.closeButtonsDropdown();
   }
 
-  /** 更新所有 dropdown 位置（滚动时调用） */
-  private updateAllDropdownPositions(): void {
-    // 只更新没有内部滚动逻辑的 dropdown
-    // imageTooltip, imageEditor, filterDropdown, dropdown 已在 handleWheel 中单独处理
-    if (this.state.dateDropdown) this.dropdownHandler.updateDateDropdownPosition();
-    if (this.state.colorDropdown) this.dropdownHandler.updateColorDropdownPosition();
-    if (this.state.buttonsDropdown) this.dropdownHandler.updateButtonsDropdownPosition();
-    if (this.state.tooltip) this.updateTooltipPosition();
-  }
-
   // ==================== End Dropdown 公共方法 ====================
 
   private copySelection(): void {
-    if (this.state.selectedCells.length === 0) return;
-
-    const text = this.getSelectedText();
-    navigator.clipboard.writeText(text).catch(() => {});
-  }
-
-  private getSelectedText(): string {
-    const lines: string[] = [];
-    const leafColumns = this.layoutManager.getLeafColumns();
-
-    for (const range of this.state.selectedCells) {
-      const { minRow, maxRow, minCol, maxCol } = this.getNormalizedRange(range);
-
-      for (let row = minRow; row <= maxRow; row++) {
-        const rowData: string[] = [];
-        for (let col = minCol; col <= maxCol; col++) {
-          const column = leafColumns[col];
-          if (!column) {
-            rowData.push("");
-            continue;
-          }
-
-          const row_ = this.rows[row];
-          if (!row_) {
-            rowData.push("");
-            continue;
-          }
-
-          const cellText = getCellDisplayText(column, row_, row);
-          rowData.push(cellText);
-        }
-        lines.push(rowData.join("\t"));
-      }
-    }
-
-    return lines.join("\n");
+    void this.clipboardHandler.copySelection();
   }
 
   setScrollPosition(scrollLeft: number, scrollTop: number): void {
@@ -3829,22 +2147,26 @@ export class InteractionManager {
   }
 
   setFilterConfig(config: FilterConfig[]): void {
-    this.filterConfig = config;
-    this.headerHandler.updateFilterConfig(config);
+    // 原地变更，保持与 FilterHandler / HeaderHandler 共享的数组引用
+    this.filterConfig.length = 0;
+    this.filterConfig.push(...config);
+    this.headerHandler.updateFilterConfig(this.filterConfig);
   }
 
   setExpandColumnKey(key: string | null): void {
     this.expandColumnKey = key;
+    // HandlerContext 是构造时的快照，需要同步以保持展开列点击生效
+    if (this.handlerContext) {
+      this.handlerContext.expandColumnKey = key;
+    }
   }
 
   setLazyLoadConfig(enabled: boolean, threshold: number = 5): void {
-    this.lazyLoadEnabled = enabled;
-    this.lazyLoadThreshold = threshold;
-    this.hasMoreData = true; // 重置状态
+    this.wheelHandler.setLazyLoadConfig(enabled, threshold);
   }
 
   setLoadingMore(loading: boolean): void {
-    this.isLoadingMore = loading;
+    this.wheelHandler.setLoadingMore(loading);
   }
 
   /**
@@ -3852,10 +2174,7 @@ export class InteractionManager {
    * @param hasMore 是否还有更多数据，false 表示加载完成
    */
   setHasMore(hasMore: boolean): void {
-    this.hasMoreData = hasMore;
-    if (!hasMore) {
-      this.isLoadingMore = true; // 没有更多数据时也停止加载状态
-    }
+    this.wheelHandler.setHasMore(hasMore);
   }
 
   getFilterDropdown(): FilterDropdownState | null {
@@ -3883,128 +2202,11 @@ export class InteractionManager {
   }
 
   applyFilter(): void {
-    if (!this.state.filterDropdown) return;
-
-    const { columnKey, mode } = this.state.filterDropdown;
-
-    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
-    if (existingIndex >= 0) {
-      this.filterConfig.splice(existingIndex, 1);
-    }
-
-    // 根据筛选模式处理不同的筛选值
-    let filterValue: unknown = null;
-    let hasFilter = false;
-
-    switch (mode) {
-      case "search": {
-        // 关键字搜索模式
-        const searchValue = this.state.filterDropdown.searchValue?.trim();
-        if (searchValue) {
-          filterValue = searchValue;
-          hasFilter = true;
-        }
-        break;
-      }
-
-      case "select": {
-        // 多选模式
-        const options = this.state.filterDropdown.options;
-        if (options) {
-          const checkedOptions = options.filter((o) => o.checked);
-          if (checkedOptions.length > 0 && checkedOptions.length < options.length) {
-            filterValue = checkedOptions.map((o) => o.value);
-            hasFilter = true;
-          }
-        }
-        break;
-      }
-
-      case "range": {
-        // 范围筛选模式
-        const minVal = this.state.filterDropdown.minValue;
-        const maxVal = this.state.filterDropdown.maxValue;
-        if (minVal !== "" || maxVal !== "") {
-          filterValue = {
-            min: minVal !== "" ? Number(minVal) : undefined,
-            max: maxVal !== "" ? Number(maxVal) : undefined,
-          };
-          hasFilter = true;
-        }
-        break;
-      }
-
-      case "dateRange": {
-        // 日期范围筛选模式
-        const startDate = this.state.filterDropdown.startDate;
-        const endDate = this.state.filterDropdown.endDate;
-        if (startDate || endDate) {
-          filterValue = {
-            start: startDate,
-            end: endDate,
-          };
-          hasFilter = true;
-        }
-        break;
-      }
-
-      case "boolean": {
-        // 布尔筛选模式
-        const boolValue = this.state.filterDropdown.boolValue;
-        if (boolValue !== "all") {
-          filterValue = boolValue;
-          hasFilter = true;
-        }
-        break;
-      }
-    }
-
-    if (hasFilter) {
-      this.filterConfig.push({
-        column: columnKey,
-        operator: this.getOperatorByMode(mode),
-        value: filterValue,
-      });
-    }
-
-    this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
-    this.state.filterDropdown = null;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
-  }
-
-  /**
-   * 根据筛选模式获取操作符
-   */
-  private getOperatorByMode(mode: FilterMode): string {
-    switch (mode) {
-      case "search":
-        return "contains";
-      case "select":
-        return "in";
-      case "range":
-        return "between";
-      case "dateRange":
-        return "dateRange";
-      case "boolean":
-        return "equals";
-      default:
-        return "contains";
-    }
+    this.filterHandler.applyFilter();
   }
 
   clearFilter(): void {
-    if (!this.state.filterDropdown) return;
-
-    const { columnKey } = this.state.filterDropdown;
-    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
-    if (existingIndex >= 0) {
-      this.filterConfig.splice(existingIndex, 1);
-    }
-
-    this.headerHandler.updateFilterConfig(this.filterConfig);
-    this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
-    this.state.filterDropdown = null;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
+    this.filterHandler.clearFilter();
   }
 
   /**
@@ -4012,21 +2214,7 @@ export class InteractionManager {
    * 用于重置按钮
    */
   resetFilterValue(): void {
-    if (!this.state.filterDropdown) return;
-
-    const { columnKey } = this.state.filterDropdown;
-
-    // 清除 filterConfig 中该列的筛选条件
-    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
-    if (existingIndex >= 0) {
-      this.filterConfig.splice(existingIndex, 1);
-      this.headerHandler.updateFilterConfig(this.filterConfig);
-      this.dataManager.filter(this.filterConfig);
-      this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
-    }
-
-    // 保持 dropdown 打开，只触发重新渲染
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.resetFilterValue();
   }
 
   /**
@@ -4034,86 +2222,28 @@ export class InteractionManager {
    * 用于延迟加载模式下的选项搜索
    */
   handleFilterDropdownSearch(searchText: string): void {
-    if (!this.state.filterDropdown) return;
-
-    const { mode, columnKey } = this.state.filterDropdown;
-
-    if (mode === "select") {
-      // 更新搜索文本
-      this.state.filterDropdown.searchText = searchText;
-
-      // 查找列配置
-      const leafColumns = this.layoutManager.getLeafColumns();
-      const column = leafColumns.find((col) => col.key === columnKey);
-      if (!column) return;
-
-      const rowsToUse = this.allRows.length > 0 ? this.allRows : this.rows;
-
-      if (searchText.trim()) {
-        // 有搜索文本时，搜索匹配的选项
-        const matchedOptions = searchFilterOptions(column, rowsToUse, searchText);
-        this.state.filterDropdown.options = matchedOptions.map((opt) => ({
-          label: opt.label,
-          value: opt.value,
-          checked: false,
-        }));
-        this.state.filterDropdown.isLoading = false;
-      } else {
-        // 无搜索文本时，使用采样策略
-        const sampledOptions = getColumnFilterOptions(column, rowsToUse, 0);
-        if (sampledOptions.length === 0 && rowsToUse.length > 0) {
-          this.state.filterDropdown.isLoading = true;
-          this.state.filterDropdown.options = undefined;
-        } else {
-          this.state.filterDropdown.options = sampledOptions.map((opt) => ({
-            label: opt.label,
-            value: opt.value,
-            checked: false,
-          }));
-          this.state.filterDropdown.isLoading = false;
-        }
-      }
-
-      this.state.filterDropdown.scrollTop = 0;
-      this.state.filterDropdown.hoveredIndex = -1;
-      this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
-    } else if (mode === "search") {
-      // 关键字搜索模式 - 直接更新搜索值
-      this.state.filterDropdown.searchValue = searchText;
-      this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
-    }
+    this.filterHandler.handleFilterDropdownSearch(searchText);
   }
 
   /**
    * 处理筛选下拉框的范围值更新
    */
   handleFilterDropdownRangeUpdate(minValue: string, maxValue: string): void {
-    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "range") return;
-
-    this.state.filterDropdown.minValue = minValue;
-    this.state.filterDropdown.maxValue = maxValue;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.handleFilterDropdownRangeUpdate(minValue, maxValue);
   }
 
   /**
    * 处理筛选下拉框的布尔值更新
    */
   handleFilterDropdownBooleanUpdate(value: "all" | "true" | "false"): void {
-    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "boolean") return;
-
-    this.state.filterDropdown.boolValue = value;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.handleFilterDropdownBooleanUpdate(value);
   }
 
   /**
    * 处理筛选下拉框的日期范围更新
    */
   handleFilterDropdownDateRangeUpdate(startDate: Date | null, endDate: Date | null): void {
-    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "dateRange") return;
-
-    this.state.filterDropdown.startDate = startDate;
-    this.state.filterDropdown.endDate = endDate;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.handleFilterDropdownDateRangeUpdate(startDate, endDate);
   }
 
   getScrollState(): ScrollState {
@@ -4250,20 +2380,13 @@ export class InteractionManager {
     return row ? this.rowResizable(row, rowIndex) : false;
   }
 
-  private startSwitchAnimationLoop = (): void => {
-    this.buttonAnimationHandler.startSwitchAnimationLoop();
-  };
-
   getSwitchAnimations = (): Map<string, SwitchAnimationState> => {
     return this.buttonAnimationHandler.getSwitchAnimations();
   };
 
   destroy(): void {
     this.isDestroyed = true;
-    if (this.scrollTimeout) {
-      clearTimeout(this.scrollTimeout);
-      this.scrollTimeout = null;
-    }
+    this.wheelHandler.destroy();
     this.unbindEvents();
     this.unbindDocumentEvents();
     this.buttonAnimationHandler.setDestroyed(true);

@@ -1230,6 +1230,7 @@ export interface InteractionState {
     startX: number;
     startValue: number;
     displayValue: number; // 拖拽过程中的临时显示值
+    pendingValue?: number; // 拖拽结束时已提交的最终值，仅当提交完成的值为它时才清除临时显示值
   };
   tooltip: TooltipState | null;
   dropdown: DropdownState | null;

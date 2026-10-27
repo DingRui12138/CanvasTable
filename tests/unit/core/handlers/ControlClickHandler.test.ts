@@ -1,4 +1,6 @@
 import { ControlClickHandler } from "@/core/handlers/ControlClickHandler";
+import { ButtonAnimationHandler } from "@/core/handlers/ButtonAnimationHandler";
+import type { EditingHandler } from "@/core/handlers/EditingHandler";
 import type { InteractionEvents } from "@/core/handlers/BaseHandler";
 import type { LayoutManager } from "@/core/LayoutManager";
 import { EventEmitter } from "@/core/EventEmitter";
@@ -128,20 +130,20 @@ function setup(options: SetupOptions = {}) {
     );
 
   const emitter = new EventEmitter<InteractionEvents>();
-  const handler = new ControlClickHandler(
-    {
-      state,
-      scrollState,
-      layoutManager: layout,
-      dataManager,
-      canvas: createMockCanvas(),
-      ctx: ctx as unknown as CanvasRenderingContext2D,
-      expandColumnKey: null,
-      locale: zhCN,
-      editorRegistry: registry,
-    },
-    emitter,
-  );
+  const context = {
+    state,
+    scrollState,
+    layoutManager: layout,
+    dataManager,
+    canvas: createMockCanvas(),
+    ctx: ctx as unknown as CanvasRenderingContext2D,
+    expandColumnKey: null,
+    locale: zhCN,
+    editorRegistry: registry,
+  };
+  const buttonAnimationHandler = new ButtonAnimationHandler(context, emitter);
+  const editingHandler = { startColorEditing: jest.fn() } as unknown as EditingHandler;
+  const handler = new ControlClickHandler(context, emitter, editingHandler, buttonAnimationHandler);
 
   return { handler, state, emitter, mocks, sets, ctx, registry, column, rows };
 }

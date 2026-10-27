@@ -218,7 +218,7 @@
 
 | 模块               | 行数       | 方法数 | 备注         |
 | ------------------ | ---------- | ------ | ------------ |
-| InteractionManager | 5,551      | 117    | ⚠️ God Class |
+| InteractionManager | 2,371      | 103    | 已拆分（见 handlers/） |
 | Renderer           | 2,859      | 58     | 较大         |
 | LayoutManager      | 1,498      | 39     | 正常         |
 | DataManager        | 1,325      | 34     | 正常         |
@@ -233,13 +233,17 @@
 
 ### 阶段二：核心重构（Phase 2）
 
-- [x] **InteractionManager 拆分** - 拆分为 5-6 个子模块
+- [x] **InteractionManager 拆分** - 拆分为多个职责单一的子模块
   - SelectionHandler - 处理选择逻辑
   - EditingHandler - 处理编辑逻辑
   - NavigationHandler - 处理键盘导航
   - DragHandler - 处理拖拽逻辑
   - EventHandler - 处理事件分发
   - ClipboardHandler - 处理复制粘贴
+  - ControlClickHandler / ButtonAnimationHandler - 处理控件点击与按钮动画
+  - HoverHandler - 处理鼠标命中检测与 hover 状态
+  - WheelHandler - 处理滚轮滚动与懒加载
+  - FilterHandler - 处理筛选逻辑
 
 - [x] **Renderer 策略模式重构** - 使用策略模式处理不同列类型渲染
   - TextRenderer
@@ -277,7 +281,7 @@
 
 | 问题                          | 严重程度 | 状态   |
 | ----------------------------- | -------- | ------ |
-| InteractionManager 代码量过大 | 高       | 待处理 |
+| InteractionManager代码量过大 | 高       | 已解决（4,272 → 2,371 行，逻辑迁入 12+ Handler） |
 | Renderer 缺少单元测试         | 高       | 已解决（行覆盖 ~74%） |
 | 类型定义分散                  | 中       | 待处理 |
 | 部分函数过长                  | 中       | 待处理 |

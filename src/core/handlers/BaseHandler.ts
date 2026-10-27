@@ -36,6 +36,10 @@ export interface HandlerContext {
   expandColumnKey: string | null;
   locale: CanvasTableLocale;
   editorRegistry: EditorRegistry;
+  /** 开始拖拽时绑定 document 级 mousemove/mouseup 监听 */
+  onDragStart?: () => void;
+  /** 拖拽结束后解绑 document 级监听 */
+  onDragEnd?: () => void;
 }
 
 // Event emitter type for interaction events

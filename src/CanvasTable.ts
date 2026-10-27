@@ -693,6 +693,8 @@ export class CanvasTable implements CanvasTableAPI {
         _value as number,
         this.props.onProgressChange,
       );
+      this.interactionManager.clearProgressDragState(_cell as CellPosition, _value as number);
+      this.render();
     });
 
     this.eventEmitter.on(Events.PROGRESS_DRAG, () => {

@@ -22,3 +22,6 @@ export { HeaderHandler, type SiblingColumnInfo as HeaderSiblingColumnInfo } from
 export { ControlClickHandler } from "./ControlClickHandler";
 export { ButtonAnimationHandler } from "./ButtonAnimationHandler";
 export { TooltipHandler } from "./TooltipHandler";
+export { HoverHandler } from "./HoverHandler";
+export { WheelHandler } from "./WheelHandler";
+export { FilterHandler } from "./FilterHandler";
