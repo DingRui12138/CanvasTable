@@ -2172,18 +2172,22 @@ exampleWindow.table = table;
 // 小数据量使用同步方式（可以对比 Worker 和主线程的差异）
 // 大数据量也使用同步方式，因为 postMessage 的结构化克隆开销太大
 document.getElementById("load1k")!.addEventListener("click", () => {
+  table.setColumns(columns);
   setRowsWithMeasure(table, () => generateData(1000), "Load 1K rows");
 });
 
 document.getElementById("load10k")!.addEventListener("click", () => {
+  table.setColumns(columns);
   setRowsWithMeasure(table, () => generateData(10000), "Load 10K rows");
 });
 
 document.getElementById("load100k")!.addEventListener("click", () => {
+  table.setColumns(columns);
   setRowsWithMeasure(table, () => generateData(100_000), "Load 100K rows");
 });
 
 document.getElementById("load1m")!.addEventListener("click", () => {
+  table.setColumns(columns);
   setRowsWithMeasure(table, () => generateData(1_000_000), "Load 1M rows");
 });
 

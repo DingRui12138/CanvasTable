@@ -640,10 +640,10 @@ function initDemo() {
   });
 
   // Button handlers
-  document.getElementById('load1k').addEventListener('click', function() { setRowsWithMeasure(table, function() { return generateData(1000); }, 'Load 1K rows'); });
-  document.getElementById('load10k').addEventListener('click', function() { setRowsWithMeasure(table, function() { return generateData(10000); }, 'Load 10K rows'); });
-  document.getElementById('load100k').addEventListener('click', function() { setRowsWithMeasure(table, function() { return generateData(100000); }, 'Load 100K rows'); });
-  document.getElementById('load1m').addEventListener('click', function() { setRowsWithMeasure(table, function() { return generateData(1000000); }, 'Load 1M rows'); });
+  document.getElementById('load1k').addEventListener('click', function() { table.setColumns(columns); setRowsWithMeasure(table, function() { return generateData(1000); }, 'Load 1K rows'); });
+  document.getElementById('load10k').addEventListener('click', function() { table.setColumns(columns); setRowsWithMeasure(table, function() { return generateData(10000); }, 'Load 10K rows'); });
+  document.getElementById('load100k').addEventListener('click', function() { table.setColumns(columns); setRowsWithMeasure(table, function() { return generateData(100000); }, 'Load 100K rows'); });
+  document.getElementById('load1m').addEventListener('click', function() { table.setColumns(columns); setRowsWithMeasure(table, function() { return generateData(1000000); }, 'Load 1M rows'); });
   document.getElementById('clearSort').addEventListener('click', function() { table.sort([]); });
   document.getElementById('clearFilter').addEventListener('click', function() { table.clearFilters(); });
   document.getElementById('exportCsv').addEventListener('click', function() {
