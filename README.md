@@ -1,8 +1,15 @@
 # Canvas Table
 
+[![npm version](https://img.shields.io/npm/v/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
+[![npm downloads](https://img.shields.io/npm/dm/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
+[![license](https://img.shields.io/npm/l/@canvas-table/core.svg)](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)
+[![gzip size](https://img.shields.io/bundlephobia/minzip/@canvas-table/core)](https://bundlephobia.com/package/@canvas-table/core)
+
 一个基于 Canvas 的高性能数据表格组件，支持百万级数据流畅渲染。
 
-**Demo**：本地打开 `docs/index.html`，或将 `docs/` 发布到 GitHub Pages。
+- npm 包：[`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
+- 源码与 Issue：[DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
+- **Demo**：本地打开 `docs/index.html`，或将 `docs/` 发布到 GitHub Pages。
 
 ## 特性
 
@@ -50,14 +57,23 @@
 ## 安装
 
 ```bash
-npm install canvas-table
+npm install @canvas-table/core
 ```
+
+或使用 pnpm / yarn：
+
+```bash
+pnpm add @canvas-table/core
+yarn add @canvas-table/core
+```
+
+包内同时提供 ESM、UMD 与 TypeScript 类型声明，无运行时依赖。
 
 ## 快速开始
 
 ```typescript
-import { CanvasTable } from 'canvas-table';
-import type { Column, Row } from 'canvas-table/types';
+import { CanvasTable } from '@canvas-table/core';
+import type { Column, Row } from '@canvas-table/core';
 
 const columns: Column[] = [
   { key: 'id', title: 'ID', width: 80, type: 'number' },
@@ -85,6 +101,93 @@ const table = new CanvasTable(container, {
   editing: { enabled: true, mode: 'dblclick' }
 });
 ```
+
+### CDN / UMD
+
+不经过构建工具，直接用 `<script>` 引入：
+
+```html
+<div id="table-container" style="height: 600px"></div>
+
+<script src="https://unpkg.com/@canvas-table/core/dist/canvas-table.umd.min.js"></script>
+<script>
+  const { CanvasTable } = window.CanvasTable;
+
+  new CanvasTable(document.getElementById('table-container'), {
+    rows: [{ data: { id: 1, name: '张三' } }],
+    columns: [{ key: 'id', title: 'ID', width: 80 }, { key: 'name', title: '姓名', width: 160 }],
+    height: 600
+  });
+</script>
+```
+
+UMD 的全局变量名为 `CanvasTable`，命名导出都挂在它下面。
+
+### 在 React 中使用
+
+```tsx
+import { useEffect, useRef } from 'react';
+import { CanvasTable, type Column, type Row } from '@canvas-table/core';
+
+export function DataTable({ rows, columns }: { rows: Row[]; columns: Column[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<CanvasTable | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const table = new CanvasTable(containerRef.current, { rows, columns, height: 600 });
+    tableRef.current = table;
+    return () => {
+      table.destroy();
+      tableRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    tableRef.current?.setColumns(columns);
+    tableRef.current?.setRows(rows);
+  }, [rows, columns]);
+
+  return <div ref={containerRef} style={{ width: '100%', height: 600 }} />;
+}
+```
+
+### 在 Vue 中使用
+
+```vue
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { CanvasTable, type Column, type Row } from '@canvas-table/core';
+
+const props = defineProps<{ rows: Row[]; columns: Column[] }>();
+const container = ref<HTMLDivElement | null>(null);
+const table = shallowRef<CanvasTable | null>(null);
+
+onMounted(() => {
+  table.value = new CanvasTable(container.value!, {
+    rows: props.rows,
+    columns: props.columns,
+    height: 600
+  });
+});
+
+watch(
+  () => [props.rows, props.columns],
+  () => {
+    table.value?.setColumns(props.columns);
+    table.value?.setRows(props.rows);
+  }
+);
+
+onBeforeUnmount(() => table.value?.destroy());
+</script>
+
+<template>
+  <div ref="container" style="width: 100%; height: 600px" />
+</template>
+```
+
+> 表格依赖真实 DOM 与 Canvas 2D 上下文，不参与 SSR。请只在客户端挂载后创建实例（React 的 `useEffect`、Vue 的 `onMounted`，或 Next.js 中 `ssr: false` 动态导入）。
 
 ## 配置选项
 
@@ -426,7 +529,7 @@ CanvasTable 提供 JSX 公共组件，可在 `jsxRender` 中使用声明式布�
 **示例：**
 
 ```typescript
-import { createCTElement, Box, Text, Row, Column, Circle } from 'canvas-table';
+import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/core';
 
 {
   key: 'status',
@@ -1312,6 +1415,11 @@ Canvas Table 采用多种优化策略实现大数据量的流畅渲染：
 - **100000 行** - 加载时间 < 500ms
 - **1000000 行** - 加载时间 < 2s
 
+### 文本测量缓存
+- **截断结果缓存**：单行文本按 `字体 + 最大宽度 + 文本` 缓存截断结果（上限 5000 条，FIFO 淘汰），多行文本额外带上最大行数（上限 2000 条）
+- **短文本快速路径**：少于 40 字符的文本直接测量，不拼缓存 key、不查 Map，避免短文本场景下缓存开销大于计算开销
+- **二分截断**：需要省略号的长文本用二分查找最长可显示前缀，把逐字符测量从 O(n) 次降为 O(log n) 次
+
 ### 内存优化
 - **历史记录栈**：撤销/重做使用操作记录栈，仅存储变更值，避免深拷贝整个数据集
 - **图片懒加载**：仅加载可视区域内的图片，支持大图预览
@@ -1493,6 +1601,27 @@ const stats = table.getImageLoadStats();
 - Safari >= 12
 - Edge >= 79
 
+需要浏览器支持 Canvas 2D 与 `ResizeObserver`。
+
+## 本地开发
+
+```bash
+pnpm install        # 也可使用 npm install
+pnpm dev            # 启动 demo：http://localhost:3030
+pnpm test           # 单元测试
+pnpm test:e2e       # Playwright 端到端测试
+pnpm lint           # oxlint 检查
+pnpm build          # 构建 dist/（ESM、UMD、压缩版与类型声明）
+```
+
+## 发布
+
+```bash
+pnpm build
+npm pack --dry-run   # 预览将发布到 npm 的文件
+npm publish          # @canvas-table/core 为 scoped 包，需 publishConfig.access = "public"
+```
+
 ## License
 
-MIT
+[MIT](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)

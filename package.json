@@ -1,5 +1,5 @@
 {
-  "name": "canvas-table",
+  "name": "@canvas-table/core",
   "version": "1.0.0",
   "description": "High-performance Canvas-based table component for large data rendering",
   "type": "module",
@@ -7,6 +7,17 @@
   "main": "dist/canvas-table.umd.cjs",
   "module": "dist/canvas-table.js",
   "types": "dist/src/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DingRui12138/CanvasTable.git"
+  },
+  "homepage": "https://github.com/DingRui12138/CanvasTable#readme",
+  "bugs": {
+    "url": "https://github.com/DingRui12138/CanvasTable/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/src/index.d.ts",
