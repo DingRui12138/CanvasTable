@@ -1,75 +1,77 @@
 # Canvas Table
 
+**English** | [简体中文](README.zh-CN.md)
+
 [![npm version](https://img.shields.io/npm/v/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
 [![npm downloads](https://img.shields.io/npm/dm/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
 [![license](https://img.shields.io/npm/l/@canvas-table/core.svg)](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)
 [![gzip size](https://img.shields.io/bundlephobia/minzip/@canvas-table/core)](https://bundlephobia.com/package/@canvas-table/core)
 
-一个基于 Canvas 的高性能数据表格组件，支持百万级数据流畅渲染。
+A high-performance data table component built on Canvas that renders millions of rows smoothly.
 
-- npm 包：[`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
-- 源码与 Issue：[DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
-- **Demo**：本地打开 `docs/index.html`，或将 `docs/` 发布到 GitHub Pages。
+- npm package: [`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
+- Source and issues: [DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
+- **Demo**: open `docs/index.html` locally, or publish `docs/` to GitHub Pages.
 
-## 特性
+## Features
 
-### 核心功能
-- **虚拟滚动** - 仅渲染可视区域，支持百万级数据
-- **多级表头** - 支持无限层级嵌套的列分组
-- **固定列** - 支持左侧、右侧固定列
-- **固定行** - 支持右键将行固定到顶部/底部
-- **合计行** - 支持顶部/底部合计、当前视图/全量数据范围、跨列合计单元格
-- **合并单元格** - 支持行合并、列合并
-- **层级数据** - 支持树形结构展示，可展开/折叠
+### Core capabilities
+- **Virtual scrolling** - renders only the visible area, supporting millions of rows
+- **Multi-level headers** - supports column groups nested to any depth
+- **Fixed columns** - supports left and right fixed columns
+- **Pinned rows** - right-click to pin a row to the top or bottom
+- **Summary rows** - supports top/bottom summaries, current-view/full-data scope, and cross-column summary cells
+- **Merged cells** - supports row merging and column merging
+- **Hierarchical data** - supports tree-structured display with expand/collapse
 
-### 列类型
-- `text` - 文本类型
-- `number` - 数字类型
-- `date` - 日期类型
-- `checkbox` - 复选框
-- `radio` - 单选框
-- `switch` - 开关
-- `button` - 按钮（支持 default、primary、danger、warning、link 变体）
-- `tag` - 标签（支持单选、多选）
-- `select` - 下拉选择
-- `input` - 输入框（支持多行）
-- `image` - 图片（支持单图/多图、上传、预览）
-- `progress` - 进度条（支持线型、环型、仪表盘，颜色区间）
-- `custom` - 自定义渲染
+### Column types
+- `text` - text
+- `number` - number
+- `date` - date
+- `checkbox` - checkbox
+- `radio` - radio button
+- `switch` - switch
+- `button` - button (supports default, primary, danger, warning, and link variants)
+- `tag` - tag (supports single and multiple selection)
+- `select` - dropdown select
+- `input` - input (supports multiple lines)
+- `image` - image (single/multiple images, upload, preview)
+- `progress` - progress bar (line, circle, and dashboard shapes, color ranges)
+- `custom` - custom rendering
 
-### 交互功能
-- **排序** - 单列/多列排序，支持升序、降序
-- **筛选** - 列筛选功能
-- **选择** - 单元格、行、列选择，支持范围选择和多选
-- **编辑** - 双击或 Enter 进入编辑模式
-- **右键菜单** - 删除行、上方插入行、下方插入行、固定/取消固定行
-- **键盘导航** - 方向键导航，快捷键操作
-- **撤销** - Ctrl+Z (Windows/Linux) / Cmd+Z (macOS) 撤销操作
-- **重做** - Ctrl+Y (Windows/Linux) / Cmd+Y (macOS) 重做操作
+### Interactions
+- **Sorting** - single-column/multi-column sorting, ascending and descending
+- **Filtering** - column filtering
+- **Selection** - cell, row, and column selection, with range selection and multi-select
+- **Editing** - enter edit mode by double-clicking or pressing Enter
+- **Context menu** - delete row, insert row above, insert row below, pin/unpin row
+- **Keyboard navigation** - arrow-key navigation and keyboard shortcuts
+- **Undo** - Ctrl+Z (Windows/Linux) / Cmd+Z (macOS)
+- **Redo** - Ctrl+Y (Windows/Linux) / Cmd+Y (macOS)
 
-### 其他特性
-- **主题** - 支持亮色、暗色、自动三种主题模式，可自定义主题颜色
-- **多语言** - 内置中文/英文文案，支持运行时切换和自定义文案覆盖
-- **水印** - 支持自定义水印内容、样式
-- **导出** - 支持 CSV、JSON、Excel 格式导出
-- **自适应** - 响应式布局，自适应容器大小
+### Other features
+- **Themes** - light, dark, and auto theme modes, with customizable theme colors
+- **Localization** - built-in Chinese/English messages, with runtime switching and custom message overrides
+- **Watermark** - customizable watermark content and style
+- **Export** - export to CSV, JSON, and Excel
+- **Responsive** - responsive layout that adapts to the container size
 
-## 安装
+## Installation
 
 ```bash
 npm install @canvas-table/core
 ```
 
-或使用 pnpm / yarn：
+Or with pnpm / yarn:
 
 ```bash
 pnpm add @canvas-table/core
 yarn add @canvas-table/core
 ```
 
-包内同时提供 ESM、UMD 与 TypeScript 类型声明，无运行时依赖。
+The package ships ESM, UMD, and TypeScript type declarations, with no runtime dependencies.
 
-## 快速开始
+## Quick start
 
 ```typescript
 import { CanvasTable } from '@canvas-table/core';
@@ -77,14 +79,14 @@ import type { Column, Row } from '@canvas-table/core';
 
 const columns: Column[] = [
   { key: 'id', title: 'ID', width: 80, type: 'number' },
-  { key: 'name', title: '姓名', width: 120, editable: true },
-  { key: 'age', title: '年龄', width: 80, type: 'number', sortable: true },
-  { key: 'department', title: '部门', width: 120 }
+  { key: 'name', title: 'Name', width: 120, editable: true },
+  { key: 'age', title: 'Age', width: 80, type: 'number', sortable: true },
+  { key: 'department', title: 'Department', width: 120 }
 ];
 
 const rows: Row[] = [
-  { data: { id: 1, name: '张三', age: 28, department: '技术部' } },
-  { data: { id: 2, name: '李四', age: 32, department: '市场部' } }
+  { data: { id: 1, name: 'Alice', age: 28, department: 'Engineering' } },
+  { data: { id: 2, name: 'Bob', age: 32, department: 'Marketing' } }
 ];
 
 const container = document.getElementById('table-container')!;
@@ -104,7 +106,7 @@ const table = new CanvasTable(container, {
 
 ### CDN / UMD
 
-不经过构建工具，直接用 `<script>` 引入：
+Use a `<script>` tag directly without a build tool:
 
 ```html
 <div id="table-container" style="height: 600px"></div>
@@ -114,16 +116,16 @@ const table = new CanvasTable(container, {
   const { CanvasTable } = window.CanvasTable;
 
   new CanvasTable(document.getElementById('table-container'), {
-    rows: [{ data: { id: 1, name: '张三' } }],
-    columns: [{ key: 'id', title: 'ID', width: 80 }, { key: 'name', title: '姓名', width: 160 }],
+    rows: [{ data: { id: 1, name: 'Alice' } }],
+    columns: [{ key: 'id', title: 'ID', width: 80 }, { key: 'name', title: 'Name', width: 160 }],
     height: 600
   });
 </script>
 ```
 
-UMD 的全局变量名为 `CanvasTable`，命名导出都挂在它下面。
+The UMD global is named `CanvasTable`, and all named exports are attached to it.
 
-### 在 React 中使用
+### Using with React
 
 ```tsx
 import { useEffect, useRef } from 'react';
@@ -152,7 +154,7 @@ export function DataTable({ rows, columns }: { rows: Row[]; columns: Column[] })
 }
 ```
 
-### 在 Vue 中使用
+### Using with Vue
 
 ```vue
 <script setup lang="ts">
@@ -187,67 +189,67 @@ onBeforeUnmount(() => table.value?.destroy());
 </template>
 ```
 
-> 表格依赖真实 DOM 与 Canvas 2D 上下文，不参与 SSR。请只在客户端挂载后创建实例（React 的 `useEffect`、Vue 的 `onMounted`，或 Next.js 中 `ssr: false` 动态导入）。
+> The table relies on a real DOM and a Canvas 2D context, so it does not participate in SSR. Create the instance only after client-side mount (React's `useEffect`, Vue's `onMounted`, or a dynamic import with `ssr: false` in Next.js).
 
-## 配置选项
+## Configuration options
 
 ### TableOptions
 
-| 属性 | 类型 | 默认值 | 说明 |
+| Property | Type | Default | Description |
 |------|------|--------|------|
-| `rows` | `Row[]` | - | 表格行数据 |
-| `columns` | `Column[]` | - | 表格列定义 |
-| `width` | `number \| '100%'` | `'100%'` | 表格宽度 |
-| `height` | `number \| '100%'` | `'100%'` | 表格高度 |
-| `stripeRows` | `boolean` | `false` | 是否显示斑马纹 |
-| `hoverable` | `boolean` | `true` | 是否启用行悬浮效果 |
-| `themeMode` | `'light' \| 'dark' \| 'auto'` | `'auto'` | 主题模式 |
-| `theme` | `TableTheme` | - | 自定义主题 |
-| `selection` | `SelectionOptions` | - | 选择配置 |
-| `editing` | `EditingOptions` | - | 编辑配置 |
-| `watermark` | `WatermarkOptions` | - | 水印配置 |
-| `loadingText` | `string` | locale.loadingText | Loading overlay 文本 |
-| `emptyText` | `string` | locale.emptyText | 空数据文本 |
-| `locale` | `LocaleConfig` | `'zh-CN'` | 多语言文案配置，支持 `'zh-CN'`、`'en-US'` 或局部覆盖 |
-| `lazyLoad` | `LazyLoadConfig` | - | 懒加载配置 |
-| `imageLoad` | `ImageLoadConfig` | - | 图片加载配置 |
-| `rowHeight` | `(row: Row, rowIndex: number) => number` | - | 动态行高计算函数，不指定则使用主题默认行高 |
-| `enableRowHeightResize` | `boolean` | `false` | 是否启用拖拽调整行高 |
-| `rowResizable` | `boolean \| ((row: Row, rowIndex: number) => boolean)` | `true` | 是否允许调整行高，可按行控制 |
-| `enableRowPinning` | `boolean` | `false` | 是否启用右键固定行到顶部/底部 |
-| `rowPinnable` | `boolean \| ((row: Row) => boolean)` | `true` | 是否允许固定行，可按行控制 |
-| `summary` | `SummaryConfig` | - | 合计行配置，支持顶部/底部和当前视图/全量数据范围 |
-| `createRowData` | `(columns: Column[]) => Record<string, unknown>` | - | 新增行时的数据初始化函数 |
+| `rows` | `Row[]` | - | Table row data |
+| `columns` | `Column[]` | - | Table column definitions |
+| `width` | `number \| '100%'` | `'100%'` | Table width |
+| `height` | `number \| '100%'` | `'100%'` | Table height |
+| `stripeRows` | `boolean` | `false` | Whether to show zebra stripes |
+| `hoverable` | `boolean` | `true` | Whether to enable the row hover effect |
+| `themeMode` | `'light' \| 'dark' \| 'auto'` | `'auto'` | Theme mode |
+| `theme` | `TableTheme` | - | Custom theme |
+| `selection` | `SelectionOptions` | - | Selection options |
+| `editing` | `EditingOptions` | - | Editing options |
+| `watermark` | `WatermarkOptions` | - | Watermark options |
+| `loadingText` | `string` | locale.loadingText | Loading overlay text |
+| `emptyText` | `string` | locale.emptyText | Empty data text |
+| `locale` | `LocaleConfig` | `'zh-CN'` | Localized message configuration; supports `'zh-CN'`, `'en-US'`, or partial overrides |
+| `lazyLoad` | `LazyLoadConfig` | - | Lazy loading options |
+| `imageLoad` | `ImageLoadConfig` | - | Image loading options |
+| `rowHeight` | `(row: Row, rowIndex: number) => number` | - | Dynamic row height function; uses the theme default row height when not specified |
+| `enableRowHeightResize` | `boolean` | `false` | Whether to enable drag-to-resize row height |
+| `rowResizable` | `boolean \| ((row: Row, rowIndex: number) => boolean)` | `true` | Whether row height can be resized, configurable per row |
+| `enableRowPinning` | `boolean` | `false` | Whether to enable right-click pinning of rows to the top/bottom |
+| `rowPinnable` | `boolean \| ((row: Row) => boolean)` | `true` | Whether a row can be pinned, configurable per row |
+| `summary` | `SummaryConfig` | - | Summary row configuration; supports top/bottom and current-view/full-data scope |
+| `createRowData` | `(columns: Column[]) => Record<string, unknown>` | - | Data initialization function used when adding a new row |
 
-### Column 配置
+### Column configuration
 
 ```typescript
 interface Column {
-  key: string;                    // 列标识
-  title: string;                  // 列标题
-  width?: number;                 // 列宽度
-  type?: ColumnType;              // 列类型
-  align?: 'left' | 'center' | 'right';  // 对齐方式
-  fixed?: 'left' | 'right';       // 固定列
-  sortable?: boolean;             // 是否可排序
-  filterable?: boolean;           // 是否可筛选
-  editable?: boolean;             // 是否可编辑
-  formatter?: (value: unknown) => string;  // 格式化函数
-  placeholder?: string;            // 空值占位提示（number 等列类型生效）
-  render?: (value: unknown, row: Row, rowIndex: number) => CellRenderResult;  // 自定义渲染
-  editRender?: (value: unknown, row: Row, rowIndex: number) => EditRenderResult;  // 编辑渲染
-  children?: Column[];            // 子列（多级表头）
+  key: string;                    // Column identifier
+  title: string;                  // Column title
+  width?: number;                 // Column width
+  type?: ColumnType;              // Column type
+  align?: 'left' | 'center' | 'right';  // Alignment
+  fixed?: 'left' | 'right';       // Fixed column
+  sortable?: boolean;             // Whether sortable
+  filterable?: boolean;           // Whether filterable
+  editable?: boolean;             // Whether editable
+  formatter?: (value: unknown) => string;  // Formatter
+  placeholder?: string;            // Placeholder shown for empty values (applies to number and other column types)
+  render?: (value: unknown, row: Row, rowIndex: number) => CellRenderResult;  // Custom rendering
+  editRender?: (value: unknown, row: Row, rowIndex: number) => EditRenderResult;  // Edit rendering
+  children?: Column[];            // Child columns (multi-level headers)
 }
 ```
 
-### 列类型示例
+### Column type examples
 
-#### 复选框列
+#### Checkbox column
 
 ```typescript
 {
   key: 'selected',
-  title: '选择',
+  title: 'Select',
   width: 60,
   type: 'checkbox',
   render: (value, row) => ({
@@ -259,12 +261,12 @@ interface Column {
 }
 ```
 
-#### 单选框列
+#### Radio column
 
 ```typescript
 {
   key: 'priority',
-  title: '优先级',
+  title: 'Priority',
   width: 150,
   type: 'radio',
   render: (value, row) => ({
@@ -272,21 +274,21 @@ interface Column {
     radio: {
       value: value as string,
       options: [
-        { label: '高', value: 'high' },
-        { label: '中', value: 'medium' },
-        { label: '低', value: 'low' }
+        { label: 'High', value: 'high' },
+        { label: 'Medium', value: 'medium' },
+        { label: 'Low', value: 'low' }
       ]
     }
   })
 }
 ```
 
-#### 开关列
+#### Switch column
 
 ```typescript
 {
   key: 'enabled',
-  title: '启用',
+  title: 'Enabled',
   width: 80,
   type: 'switch',
   render: (value, row) => ({
@@ -298,18 +300,18 @@ interface Column {
 }
 ```
 
-#### 按钮列
+#### Button column
 
 ```typescript
 {
   key: 'action',
-  title: '操作',
+  title: 'Actions',
   width: 80,
   type: 'button',
   render: () => ({
     type: 'button',
     button: {
-      text: '编辑',
+      text: 'Edit',
       variant: 'primary',  // default | primary | danger | warning | link
       size: 'small'        // small | medium | large
     }
@@ -317,35 +319,35 @@ interface Column {
 }
 ```
 
-#### 标签列
+#### Tag column
 
 ```typescript
 {
   key: 'status',
-  title: '状态',
+  title: 'Status',
   width: 100,
   type: 'tag',
   render: (value) => ({
     type: 'tag',
     tags: {
-      tags: [{ text: '在职', value: 'active', bgColor: '#52c41a', color: '#fff' }],
+      tags: [{ text: 'Active', value: 'active', bgColor: '#52c41a', color: '#fff' }],
       editable: true,
-      multiple: false,  // 单选模式
+      multiple: false,  // single-select mode
       options: [
-        { text: '在职', value: 'active', bgColor: '#52c41a', color: '#fff' },
-        { text: '离职', value: 'inactive', bgColor: '#ff4d4f', color: '#fff' }
+        { text: 'Active', value: 'active', bgColor: '#52c41a', color: '#fff' },
+        { text: 'Inactive', value: 'inactive', bgColor: '#ff4d4f', color: '#fff' }
       ]
     }
   })
 }
 ```
 
-#### 下拉选择列
+#### Select column
 
 ```typescript
 {
   key: 'level',
-  title: '级别',
+  title: 'Level',
   width: 120,
   type: 'select',
   render: (value) => ({
@@ -353,29 +355,29 @@ interface Column {
     select: {
       value: value as string,
       options: [
-        { label: '初级', value: 'junior' },
-        { label: '中级', value: 'middle' },
-        { label: '高级', value: 'senior' }
+        { label: 'Junior', value: 'junior' },
+        { label: 'Mid-level', value: 'middle' },
+        { label: 'Senior', value: 'senior' }
       ],
-      placeholder: '请选择'
+      placeholder: 'Please select'
     }
   })
 }
 ```
 
-#### 进度条列
+#### Progress column
 
 ```typescript
-// 基础线型进度条
+// Basic line progress bar
 {
   key: 'progress',
-  title: '进度',
+  title: 'Progress',
   width: 120,
   render: (value) => ({
     type: 'progress',
     progress: {
       value: value as number,
-      shape: 'line',           // 线型
+      shape: 'line',           // line shape
       size: 'medium',          // small | medium | large
       showText: true,
       textPosition: 'right'    // inside | right
@@ -383,100 +385,100 @@ interface Column {
   })
 }
 
-// 带颜色区间的进度条（根据进度自动变色）
+// Progress bar with color ranges (changes color automatically based on progress)
 {
   key: 'completion',
-  title: '完成度',
+  title: 'Completion',
   width: 150,
   render: (value) => ({
     type: 'progress',
     progress: {
       value: value as number,
       color: [
-        { value: 0, color: '#ff4d4f' },     // 红色
-        { value: 50, color: '#faad14' },    // 黄色
-        { value: 100, color: '#52c41a' }    // 绿色
+        { value: 0, color: '#ff4d4f' },     // red
+        { value: 50, color: '#faad14' },    // yellow
+        { value: 100, color: '#52c41a' }    // green
       ]
     }
   })
 }
 
-// 环型进度条
+// Circle progress bar
 {
   key: 'score',
-  title: '得分',
+  title: 'Score',
   width: 80,
   render: (value) => ({
     type: 'progress',
     progress: {
       value: value as number,
-      shape: 'circle',         // 圆环
+      shape: 'circle',         // ring
       size: 'small',
-      format: (v) => `${v}分`
+      format: (v) => `${v} pts`
     }
   })
 }
 
-// 仪表盘进度条
+// Dashboard progress bar
 {
   key: 'dashboard',
-  title: '仪表盘',
+  title: 'Dashboard',
   width: 100,
   render: (value) => ({
     type: 'progress',
     progress: {
       value: value as number,
-      shape: 'dashboard',      // 仪表盘（半圆）
+      shape: 'dashboard',      // dashboard (semicircle)
       size: 'medium',
       status: 'success'        // normal | success | warning | error
     }
   })
 }
 
-// 可交互进度条（点击调整）
+// Interactive progress bar (click to adjust)
 {
   key: 'volume',
-  title: '音量',
+  title: 'Volume',
   width: 100,
   render: (value) => ({
     type: 'progress',
     progress: {
       value: value as number,
-      interactive: true,       // 允许点击调整
+      interactive: true,       // allow click-to-adjust
       shape: 'line'
     }
   })
 }
 
-// 自定义圆角进度条
+// Custom rounded progress bar
 {
   key: 'custom',
-  title: '自定义',
+  title: 'Custom',
   width: 120,
   render: (value) => ({
     type: 'progress',
     progress: {
       value: value as number,
       shape: 'line',
-      borderRadius: 0,         // 直角（默认为高度的一半，胶囊形）
-      height: 12               // 自定义高度
+      borderRadius: 0,         // right angles (defaults to half the height, capsule shape)
+      height: 12               // custom height
     }
   })
 }
 ```
 
-#### 自定义渲染
+#### Custom rendering
 
 ```typescript
 {
   key: 'name',
-  title: '姓名',
+  title: 'Name',
   width: 140,
   render: (value, row, rowIndex) => ({
     type: 'custom',
     customRender: (context) => {
       const { ctx, x, y, width, height, padding, theme } = context;
-      // 使用 Canvas API 自定义绘制
+      // Draw with the Canvas API
       ctx.fillStyle = theme.colors.cellText;
       ctx.fillText(String(value), x + padding, y + height / 2);
     }
@@ -484,17 +486,17 @@ interface Column {
 }
 ```
 
-#### 自定义渲染 + 编辑
+#### Custom rendering + editing
 
-当使用 `type: 'custom'` 自定义渲染时，可以通过 `editRender` 指定编辑时使用的控件：
+When using `type: 'custom'` custom rendering, you can specify the control used for editing through `editRender`:
 
 ```typescript
 {
   key: 'priority',
-  title: '优先级',
+  title: 'Priority',
   width: 100,
   editable: true,
-  // 自定义显示：图标 + 文字
+  // Custom display: icon + text
   render: (value, row) => {
     const icons: Record<string, string> = { high: '🔴', medium: '🟡', low: '🟢' };
     return {
@@ -506,34 +508,34 @@ interface Column {
       }
     };
   },
-  // 编辑时使用 select 下拉框
+  // Use a select dropdown while editing
   editRender: (value, row, rowIndex) => ({
     type: 'select',
     select: {
       options: [
-        { label: '🔴 高', value: 'high' },
-        { label: '🟡 中', value: 'medium' },
-        { label: '🟢 低', value: 'low' }
+        { label: '🔴 High', value: 'high' },
+        { label: '🟡 Medium', value: 'medium' },
+        { label: '🟢 Low', value: 'low' }
       ]
     }
   })
 }
 ```
 
-#### JSX 公共组件
+#### JSX shared components
 
-CanvasTable 提供 JSX 公共组件，可在 `jsxRender` 中使用声明式布局。`jsxRender` 从单元格左上角开始绘制，不应用内置 padding 或居中，样式完全由用户决定。根元素默认撑满单元格（`width: "100%"`、`height: "100%"`）。
+CanvasTable provides shared JSX components for declarative layout inside `jsxRender`. `jsxRender` draws from the top-left corner of the cell, without applying the built-in padding or centering; styling is entirely up to you. The root element fills the cell by default (`width: "100%"`, `height: "100%"`).
 
-**可用组件：** `Box`、`Row`（= `Box { direction: "row" }`）、`Column`（= `Box { direction: "column" }`）、`Stack`（= `Box`）、`Text`、`Circle`、`Image`、`Line` + `createCTElement`
+**Available components:** `Box`, `Row` (= `Box { direction: "row" }`), `Column` (= `Box { direction: "column" }`), `Stack` (= `Box`), `Text`, `Circle`, `Image`, `Line`, plus `createCTElement`
 
-**示例：**
+**Example:**
 
 ```typescript
 import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/core';
 
 {
   key: 'status',
-  title: '状态',
+  title: 'Status',
   width: 180,
   type: 'custom',
   render: () => ({
@@ -547,8 +549,8 @@ import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/c
           { gap: 8, align: "center" },
           createCTElement(Circle, { radius: 4, bgColor: '#52c41a' }),
           createCTElement(Column, { gap: 2 },
-            createCTElement(Text, { text: '在线', fontWeight: 'bold' }),
-            createCTElement(Text, { text: '刚刚更新', fontSize: 12, color: '#8c8c8c' }),
+            createCTElement(Text, { text: 'Online', fontWeight: 'bold' }),
+            createCTElement(Text, { text: 'Updated just now', fontSize: 12, color: '#8c8c8c' }),
           ),
         ),
       ),
@@ -556,156 +558,156 @@ import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/c
 }
 ```
 
-##### Box / Row / Column / Stack 属性
+##### Box / Row / Column / Stack props
 
-Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，Stack 是 Box 的别名。
+Row is `Box { direction: "row" }`, Column is `Box { direction: "column" }`, and Stack is an alias for Box.
 
-**布局属性：**
+**Layout props:**
 
-| 属性 | 别名 | 类型 | 默认值 | 说明 |
+| Property | Alias | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `display` | — | `"flex"` | `"flex"` | Flex 布局模式 |
-| `position` | — | `"relative"` | — | 定位模式，子元素用 x/y 定位 |
-| `flexDirection` | `direction` | `"row" \| "column" \| "row-reverse" \| "column-reverse"` | `"row"` | 排列方向 |
-| `justifyContent` | `justify` | `"flex-start" \| "flex-end" \| "center" \| "space-between" \| "space-around" \| "space-evenly"` | `"flex-start"` | 主轴对齐 |
-| `alignItems` | `align` | `"flex-start" \| "flex-end" \| "center" \| "stretch"` | `"flex-start"` | 交叉轴对齐 |
-| `alignSelf` | `selfAlign` | `"flex-start" \| "flex-end" \| "center" \| "stretch"` | — | 单个子元素交叉轴对齐覆盖 |
-| `gap` | — | `number` | `0` | 子元素间距 |
-| `padding` | — | `number \| { top?, right?, bottom?, left? }` | `0` | 内边距 |
-| `margin` | `mg` | `number \| { top?, right?, bottom?, left? }` | `0` | 外边距 |
+| `display` | — | `"flex"` | `"flex"` | Flex layout mode |
+| `position` | — | `"relative"` | — | Positioning mode; children are positioned with x/y |
+| `flexDirection` | `direction` | `"row" \| "column" \| "row-reverse" \| "column-reverse"` | `"row"` | Main axis direction |
+| `justifyContent` | `justify` | `"flex-start" \| "flex-end" \| "center" \| "space-between" \| "space-around" \| "space-evenly"` | `"flex-start"` | Main axis alignment |
+| `alignItems` | `align` | `"flex-start" \| "flex-end" \| "center" \| "stretch"` | `"flex-start"` | Cross axis alignment |
+| `alignSelf` | `selfAlign` | `"flex-start" \| "flex-end" \| "center" \| "stretch"` | — | Cross axis alignment override for a single child |
+| `gap` | — | `number` | `0` | Spacing between children |
+| `padding` | — | `number \| { top?, right?, bottom?, left? }` | `0` | Inner padding |
+| `margin` | `mg` | `number \| { top?, right?, bottom?, left? }` | `0` | Outer margin |
 
-**尺寸属性：**
+**Size props:**
 
-| 属性 | 别名 | 类型 | 默认值 | 说明 |
+| Property | Alias | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `width` | — | `number \| string` | `"100%"`（根元素） | 宽度，支持百分比 `"100%"` |
-| `height` | — | `number \| string` | `"100%"`（根元素） | 高度，支持百分比 `"100%"` |
-| `minWidth` | `minW` | `number \| string` | — | 最小宽度 |
-| `maxWidth` | `maxW` | `number \| string` | — | 最大宽度 |
-| `minHeight` | `minH` | `number \| string` | — | 最小高度 |
-| `maxHeight` | `maxH` | `number \| string` | — | 最大高度 |
+| `width` | — | `number \| string` | `"100%"` (root element) | Width, supports percentage `"100%"` |
+| `height` | — | `number \| string` | `"100%"` (root element) | Height, supports percentage `"100%"` |
+| `minWidth` | `minW` | `number \| string` | — | Minimum width |
+| `maxWidth` | `maxW` | `number \| string` | — | Maximum width |
+| `minHeight` | `minH` | `number \| string` | — | Minimum height |
+| `maxHeight` | `maxH` | `number \| string` | — | Maximum height |
 
-**定位属性：**
+**Positioning props:**
 
-| 属性 | 类型 | 说明 |
+| Property | Type | Description |
 | --- | --- | --- |
-| `x` | `number` | 相对父容器水平偏移（仅 `position: "relative"` 模式） |
-| `y` | `number` | 相对父容器垂直偏移 |
-| `zIndex` | `number` | 绘制顺序 |
+| `x` | `number` | Horizontal offset relative to the parent container (only in `position: "relative"` mode) |
+| `y` | `number` | Vertical offset relative to the parent container |
+| `zIndex` | `number` | Paint order |
 
-**视觉属性：**
+**Visual props:**
 
-| 属性 | 别名 | 类型 | 默认值 | 说明 |
+| Property | Alias | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `backgroundColor` | `bgColor` | `string` | — | 背景颜色 |
-| `backgroundGradient` | `gradient` | `{ type: "linear", angle: number, colors: string[] } \| { type: "radial", colors: string[] }` | — | 渐变背景 |
-| `borderRadius` | `radius` | `number` | `0` | 统一圆角半径 |
-| `borderTopLeftRadius` | `borderTLR` | `number` | — | 左上圆角 |
-| `borderTopRightRadius` | `borderTRR` | `number` | — | 右上圆角 |
-| `borderBottomLeftRadius` | `borderBLR` | `number` | — | 左下圆角 |
-| `borderBottomRightRadius` | `borderBRR` | `number` | — | 右下圆角 |
-| `borderWidth` | — | `number` | — | 统一边框宽度 |
-| `borderColor` | — | `string` | — | 统一边框颜色 |
-| `border` | — | `string \| { width?: number, color?: string }` | — | 边框快捷方式 |
-| `borderTop / borderRight / borderBottom / borderLeft` | — | `{ width?: number, color?: string } \| string` | — | 单侧边框 |
-| `opacity` | — | `number` | — | 不透明度 (0-1) |
-| `overflow` | — | `"hidden" \| "clip" \| "visible"` | — | 内容溢出裁剪 |
+| `backgroundColor` | `bgColor` | `string` | — | Background color |
+| `backgroundGradient` | `gradient` | `{ type: "linear", angle: number, colors: string[] } \| { type: "radial", colors: string[] }` | — | Gradient background |
+| `borderRadius` | `radius` | `number` | `0` | Uniform corner radius |
+| `borderTopLeftRadius` | `borderTLR` | `number` | — | Top-left corner radius |
+| `borderTopRightRadius` | `borderTRR` | `number` | — | Top-right corner radius |
+| `borderBottomLeftRadius` | `borderBLR` | `number` | — | Bottom-left corner radius |
+| `borderBottomRightRadius` | `borderBRR` | `number` | — | Bottom-right corner radius |
+| `borderWidth` | — | `number` | — | Uniform border width |
+| `borderColor` | — | `string` | — | Uniform border color |
+| `border` | — | `string \| { width?: number, color?: string }` | — | Border shorthand |
+| `borderTop / borderRight / borderBottom / borderLeft` | — | `{ width?: number, color?: string } \| string` | — | Per-side border |
+| `opacity` | — | `number` | — | Opacity (0-1) |
+| `overflow` | — | `"hidden" \| "clip" \| "visible"` | — | Clip overflowing content |
 | `clip` | — | `boolean` | — | `clip: true` = `overflow: "hidden"` |
-| `boxShadow` | `shadow` | `{ offsetX, offsetY, blur, spread?, color } \| string` | — | 盒阴影，字符串格式 `"offsetX offsetY blur color"` |
+| `boxShadow` | `shadow` | `{ offsetX, offsetY, blur, spread?, color } \| string` | — | Box shadow; string format `"offsetX offsetY blur color"` |
 
-##### Text 属性
+##### Text props
 
-| 属性 | 类型 | 默认值 | 说明 |
+| Property | Type | Default | Description |
 | --- | --- | --- | --- |
-| `text` | `string` | — | 文本内容 |
-| `fontSize` | `number` | 主题 `font.size` | 字体大小 |
-| `fontFamily` | `string` | 主题 `font.family` | 字体 |
-| `fontWeight` | `"normal" \| "bold"` | `"normal"` | 字重 |
-| `fontStyle` | `"normal" \| "italic"` | `"normal"` | 字体样式 |
-| `color` | `string` | 主题 `cellText` | 文字颜色 |
-| `lineHeight` | `number` | `fontSize` | 行高 |
-| `maxWidth` | `number` | — | 最大文本宽度 |
-| `textAlign` | `"left" \| "center" \| "right"` | `"left"` | 水平对齐 |
-| `textDecoration` | `"underline" \| "line-through" \| "none"` | `"none"` | 文字装饰线 |
-| `letterSpacing` | `number` | `0` | 字符间距 |
+| `text` | `string` | — | Text content |
+| `fontSize` | `number` | theme `font.size` | Font size |
+| `fontFamily` | `string` | theme `font.family` | Font family |
+| `fontWeight` | `"normal" \| "bold"` | `"normal"` | Font weight |
+| `fontStyle` | `"normal" \| "italic"` | `"normal"` | Font style |
+| `color` | `string` | theme `cellText` | Text color |
+| `lineHeight` | `number` | `fontSize` | Line height |
+| `maxWidth` | `number` | — | Maximum text width |
+| `textAlign` | `"left" \| "center" \| "right"` | `"left"` | Horizontal alignment |
+| `textDecoration` | `"underline" \| "line-through" \| "none"` | `"none"` | Text decoration line |
+| `letterSpacing` | `number` | `0` | Letter spacing |
 
-##### Circle 属性
+##### Circle props
 
-| 属性 | 别名 | 类型 | 说明 |
+| Property | Alias | Type | Description |
 | --- | --- | --- | --- |
-| `radius` | — | `number` | 圆半径 |
-| `backgroundColor` | `bgColor` | `string` | 填充颜色 |
-| `borderColor` | — | `string` | 边框颜色 |
-| `borderWidth` | — | `number` | 边框宽度 |
-| `startAngle` | — | `number` | 起始角度（弧度） |
-| `endAngle` | — | `number` | 结束角度（弧度） |
+| `radius` | — | `number` | Circle radius |
+| `backgroundColor` | `bgColor` | `string` | Fill color |
+| `borderColor` | — | `string` | Border color |
+| `borderWidth` | — | `number` | Border width |
+| `startAngle` | — | `number` | Start angle (radians) |
+| `endAngle` | — | `number` | End angle (radians) |
 
-##### Image 属性
+##### Image props
 
-| 属性 | 类型 | 说明 |
+| Property | Type | Description |
 | --- | --- | --- |
-| `src` | `string` | 图片地址 |
-| `width` | `number` | 图片宽度 |
-| `height` | `number` | 图片高度 |
-| `borderRadius` | `number` | 圆角 |
-| `objectFit` | `"fill" \| "contain" \| "cover"` | 缩放模式 |
+| `src` | `string` | Image URL |
+| `width` | `number` | Image width |
+| `height` | `number` | Image height |
+| `borderRadius` | `number` | Corner radius |
+| `objectFit` | `"fill" \| "contain" \| "cover"` | Scaling mode |
 
-##### Line 属性
+##### Line props
 
-| 属性 | 类型 | 说明 |
+| Property | Type | Description |
 | --- | --- | --- |
-| `points` | `Array<{ x: number, y: number }>` | 线条点坐标 |
-| `strokeWidth` | `number` | 线宽 |
-| `strokeColor` | `string` | 线条颜色 |
-| `strokeLinecap` | `"butt" \| "round" \| "square"` | 端点形状 |
+| `points` | `Array<{ x: number, y: number }>` | Line point coordinates |
+| `strokeWidth` | `number` | Line width |
+| `strokeColor` | `string` | Line color |
+| `strokeLinecap` | `"butt" \| "round" \| "square"` | Line cap style |
 
-#### 编辑校验
+#### Edit validation
 
-列可以通过 `validate` 限制提交值。校验失败时不会写入 `row.data`，单元格会显示错误边框，悬浮错误单元格会显示错误信息，并触发 `onValidationError`。
+Columns can restrict submitted values through `validate`. When validation fails, the value is not written to `row.data`; the cell shows an error border, hovering over the erroneous cell shows the error message, and `onValidationError` is fired.
 
-`validate` 支持同步和异步两种方式。返回 `true` 表示通过，返回 `string`/`false` 表示失败，返回 `{ valid, message?, level? }` 对象可指定 warning 级别（值仍会被提交但显示黄色边框）。异步校验返回 `Promise<ValidateResult>`，等待期间单元格显示蓝色脉冲边框动画，DOM 编辑器会进入 disabled + loading 状态。
+`validate` supports both synchronous and asynchronous modes. Returning `true` means it passed; returning a `string`/`false` means it failed; returning a `{ valid, message?, level? }` object lets you specify the `warning` level (the value is still submitted but shows a yellow border). Asynchronous validation returns a `Promise<ValidateResult>`; while it is pending, the cell shows a blue pulsing border animation, and the DOM editor enters a disabled + loading state.
 
-**同步校验示例：**
+**Synchronous validation example:**
 
 ```typescript
 {
   key: 'salary',
-  title: '薪资',
+  title: 'Salary',
   type: 'number',
   editable: true,
   validate: (value, row, column) => {
     const salary = Number(value);
-    if (!Number.isFinite(salary)) return '薪资必须是数字';
-    if (salary < 0) return '薪资不能小于 0';
-    if (salary > 1000000) return '薪资不能超过 100 万';
-    // warning 级别：值会被提交，但显示黄色边框提示
+    if (!Number.isFinite(salary)) return 'Salary must be a number';
+    if (salary < 0) return 'Salary cannot be less than 0';
+    if (salary > 1000000) return 'Salary cannot exceed 1,000,000';
+    // warning level: the value is submitted but a yellow border is shown
     if (salary >= 500000) {
-      return { valid: true, level: 'warning', message: '高薪资，请确认' };
+      return { valid: true, level: 'warning', message: 'High salary, please confirm' };
     }
     return true;
   }
 }
 ```
 
-**异步校验示例：**
+**Asynchronous validation example:**
 
 ```typescript
 {
   key: 'email',
-  title: '邮箱',
+  title: 'Email',
   editable: true,
   validate: async (value, row, column) => {
     const email = String(value);
-    if (!email.includes('@')) return '邮箱格式不正确';
-    // 模拟远程校验
+    if (!email.includes('@')) return 'Invalid email format';
+    // Simulate remote validation
     await new Promise(r => setTimeout(r, 300));
-    if (email.endsWith('@example.com')) return '该邮箱后缀已被占用';
+    if (email.endsWith('@example.com')) return 'This email suffix is already taken';
     return true;
   }
 }
 ```
 
-也可以通过 API 查询或清理校验错误：
+You can also query or clear validation errors through the API:
 
 ```typescript
 const errors = table.getValidationErrors();
@@ -713,19 +715,19 @@ const salaryError = table.getValidationError({ rowIndex: 0, columnIndex: 3 });
 table.clearValidationErrors();
 ```
 
-`updateCell` 和 `updateRow` 现在返回 `Promise<void>`，异步校验完成后才会 resolve：
+`updateCell` and `updateRow` now return `Promise<void>`, which resolves only after asynchronous validation completes:
 
 ```typescript
 await table.updateCell(0, 'email', 'test@example.com');
 ```
 
-#### 图片列
+#### Image column
 
 ```typescript
-// 单图模式（头像）
+// Single-image mode (avatar)
 {
   key: 'avatar',
-  title: '头像',
+  title: 'Avatar',
   width: 80,
   align: 'center',
   editable: true,
@@ -735,22 +737,22 @@ await table.updateCell(0, 'email', 'test@example.com');
       src: row.data.avatar as string,
       width: 32,
       height: 32,
-      scaleWithRowHeight: false, // 行高变化时保持头像尺寸不变
-      circle: true,           // 圆形
-      clickable: true,        // 可点击
-      hoverable: true,        // 悬浮效果
+      scaleWithRowHeight: false, // keep the avatar size unchanged when the row height changes
+      circle: true,           // circular
+      clickable: true,        // clickable
+      hoverable: true,        // hover effect
       onUpload: async (file) => {
-        // 自定义上传处理
+        // Custom upload handling
         return 'https://example.com/avatar.png';
       }
     }
   })
 }
 
-// 多图模式（相册）
+// Multi-image mode (album)
 {
   key: 'photos',
-  title: '相册',
+  title: 'Photos',
   width: 180,
   align: 'center',
   editable: true,
@@ -762,14 +764,14 @@ await table.updateCell(0, 'email', 'test@example.com');
       height: 32,
       borderRadius: 4,
       gap: 4,
-      // maxVisible 不指定时会根据单元格宽高自动计算可显示数量
-      scaleWithRowHeight: false, // 行高变大时多排几行，但单张图片仍保持 32px 配置尺寸
-      maxCount: 9,            // 最大上传数量
+      // When maxVisible is not specified, the visible count is computed from the cell width and height
+      scaleWithRowHeight: false, // taller rows fit more rows of images, but each image keeps the configured 32px size
+      maxCount: 9,            // maximum upload count
       clickable: true,
       hoverable: true,
-      multiple: true,         // 允许多选
+      multiple: true,         // allow multi-select
       onUpload: async (file) => {
-        // 自定义上传处理
+        // Custom upload handling
         return 'https://example.com/photo.png';
       }
     }
@@ -777,145 +779,144 @@ await table.updateCell(0, 'email', 'test@example.com');
 }
 ```
 
-`ImageConfig` 中和动态行高相关的配置：
+`ImageConfig` options related to dynamic row height:
 
-| 属性 | 类型 | 默认值 | 说明 |
+| Property | Type | Default | Description |
 |------|------|--------|------|
-| `width` | `number` | `32` | 图片目标宽度 |
-| `height` | `number` | `32` | 图片目标高度 |
-| `scaleWithRowHeight` | `boolean` | `true` | 是否允许图片尺寸随行高放大。设为 `false` 时按标准行高限制单张图片尺寸，行高变大只会让多图有更多可排布行 |
-| `maxVisible` | `number` | 自动计算 | 多图最多显示数量。不指定时根据单元格宽高和图片尺寸自动计算 |
+| `width` | `number` | `32` | Target image width |
+| `height` | `number` | `32` | Target image height |
+| `scaleWithRowHeight` | `boolean` | `true` | Whether image size may grow with the row height. When set to `false`, a single image is limited to the standard row height; a taller row only gives multi-image layouts more rows to arrange |
+| `maxVisible` | `number` | computed automatically | Maximum number of images to display. When not specified, it is computed from the cell width, cell height, and image size |
 
-### 事件回调
+### Event callbacks
 
-#### CellInfo 类型
+#### CellInfo type
 
-所有单元格相关事件的回调参数中都包含 `CellInfo` 对象，提供完整的单元格信息：
+The callback argument of every cell-related event includes a `CellInfo` object that provides complete cell information:
 
 ```typescript
 interface CellInfo {
-  rowIndex: number;      // 行索引
-  columnIndex: number;   // 列索引
-  row: Row;              // 行数据对象（包含 data, children 等，id 为可选字段）
-  column: Column;        // 列配置对象（包含 key, title, width 等）
+  rowIndex: number;      // Row index
+  columnIndex: number;   // Column index
+  row: Row;              // Row data object (contains data, children, etc.; id is optional)
+  column: Column;        // Column configuration object (contains key, title, width, etc.)
 }
 ```
 
-#### 事件回调示例
+#### Event callback example
 
 ```typescript
 const table = new CanvasTable(container, {
-  // ...其他配置
+  // ...other options
 
   onCellClick: (cell, event) => {
-    console.log('单元格点击:', cell.rowIndex, cell.columnIndex);
-    console.log('行数据:', cell.row.data);
-    console.log('列配置:', cell.column.key, cell.column.title);
+    console.log('Cell click:', cell.rowIndex, cell.columnIndex);
+    console.log('Row data:', cell.row.data);
+    console.log('Column config:', cell.column.key, cell.column.title);
   },
   onCellDoubleClick: (cell, event) => {
-    console.log('单元格双击:', cell);
+    console.log('Cell double click:', cell);
   },
   onSort: (sortInfo) => {
-    console.log('排序变化:', sortInfo);
+    console.log('Sort change:', sortInfo);
   },
   onFilter: (filters) => {
-    console.log('筛选变化:', filters);
+    console.log('Filter change:', filters);
   },
   onEditEnd: (cell, value) => {
-    console.log('编辑结束:', cell.column.key, value);
-    // 可以直接访问行数据进行业务处理
+    console.log('Edit end:', cell.column.key, value);
+    // You can access the row data directly for business logic
     const rowData = cell.row.data;
   },
   onCheckboxChange: (cell, checked) => {
-    console.log('复选框变化:', cell.row.data, checked);
+    console.log('Checkbox change:', cell.row.data, checked);
   },
   onRadioChange: (cell, value) => {
-    console.log('单选框变化:', cell.column.key, value);
+    console.log('Radio change:', cell.column.key, value);
   },
   onSwitchChange: (cell, checked) => {
-    console.log('开关变化:', cell.row.data, checked);
+    console.log('Switch change:', cell.row.data, checked);
   },
   onButtonClick: (cell, actionKey) => {
-    console.log('按钮点击:', actionKey, '行数据:', cell.row.data);
+    console.log('Button click:', actionKey, 'Row data:', cell.row.data);
   },
   onImageClick: (cell, imageSrc, event) => {
-    console.log('图片点击:', imageSrc);
+    console.log('Image click:', imageSrc);
   },
   onScroll: (scrollLeft, scrollTop) => {
-    console.log('滚动:', { scrollLeft, scrollTop });
+    console.log('Scroll:', { scrollLeft, scrollTop });
   }
 });
 ```
 
-#### 可用事件列表
+#### Available events
 
-| 事件名 | 回调参数 | 说明 |
+| Event | Callback arguments | Description |
 |--------|----------|------|
-| `onCellClick` | `(cell: CellInfo, event: MouseEvent)` | 单元格点击 |
-| `onCellDoubleClick` | `(cell: CellInfo, event: MouseEvent)` | 单元格双击 |
-| `onCellHover` | `(cell: CellInfo \| null, event: MouseEvent)` | 单元格悬浮 |
-| `onEditStart` | `(cell: CellInfo)` | 开始编辑 |
-| `onEditEnd` | `(cell: CellInfo, value: unknown)` | 编辑结束 |
-| `onCheckboxChange` | `(cell: CellInfo, checked: boolean)` | 复选框变化 |
-| `onRadioChange` | `(cell: CellInfo, value: unknown)` | 单选框变化 |
-| `onSwitchChange` | `(cell: CellInfo, checked: boolean)` | 开关变化 |
-| `onButtonClick` | `(cell: CellInfo, actionKey?: string)` | 按钮点击 |
-| `onImageClick` | `(cell: CellInfo, imageSrc: string, event: MouseEvent)` | 图片点击 |
-| `onDateSelect` | `(cell: CellInfo, date: string)` | 日期选择 |
-| `onSelectChange` | `(cell: CellInfo, value: unknown)` | 下拉选择变化 |
-| `onTagsChange` | `(cell: CellInfo, values: string[], isMultiple: boolean)` | 标签变化 |
-| `onProgressChange` | `(cell: CellInfo, value: number)` | 进度条变化（可交互模式） |
-| `onSort` | `(sortInfo: SortConfig[])` | 排序变化 |
-| `onFilter` | `(filters: FilterConfig[])` | 筛选变化 |
-| `onScroll` | `(scrollLeft: number, scrollTop: number)` | 滚动变化 |
-| `onRowClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | 行点击 |
-| `onRowDoubleClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | 行双击 |
-| `onRowHeightChange` | `(row: Row, newHeight: number, rowIndex: number)` | 行高拖拽调整完成 |
-| `onHeaderClick` | `(column: Column, columnIndex: number, event: MouseEvent)` | 表头点击 |
-| `onColumnResize` | `(column: Column, width: number)` | 列宽调整 |
-| `onExpand` | `(row: Row, rowIndex: number, expanded: boolean)` | 展开/折叠 |
-| `onLoadMore` | `(params: LoadMoreParams)` | 懒加载触发 |
-```
+| `onCellClick` | `(cell: CellInfo, event: MouseEvent)` | Cell click |
+| `onCellDoubleClick` | `(cell: CellInfo, event: MouseEvent)` | Cell double click |
+| `onCellHover` | `(cell: CellInfo \| null, event: MouseEvent)` | Cell hover |
+| `onEditStart` | `(cell: CellInfo)` | Edit start |
+| `onEditEnd` | `(cell: CellInfo, value: unknown)` | Edit end |
+| `onCheckboxChange` | `(cell: CellInfo, checked: boolean)` | Checkbox change |
+| `onRadioChange` | `(cell: CellInfo, value: unknown)` | Radio change |
+| `onSwitchChange` | `(cell: CellInfo, checked: boolean)` | Switch change |
+| `onButtonClick` | `(cell: CellInfo, actionKey?: string)` | Button click |
+| `onImageClick` | `(cell: CellInfo, imageSrc: string, event: MouseEvent)` | Image click |
+| `onDateSelect` | `(cell: CellInfo, date: string)` | Date selection |
+| `onSelectChange` | `(cell: CellInfo, value: unknown)` | Dropdown selection change |
+| `onTagsChange` | `(cell: CellInfo, values: string[], isMultiple: boolean)` | Tag change |
+| `onProgressChange` | `(cell: CellInfo, value: number)` | Progress change (interactive mode) |
+| `onSort` | `(sortInfo: SortConfig[])` | Sort change |
+| `onFilter` | `(filters: FilterConfig[])` | Filter change |
+| `onScroll` | `(scrollLeft: number, scrollTop: number)` | Scroll change |
+| `onRowClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | Row click |
+| `onRowDoubleClick` | `(row: Row, rowIndex: number, event: MouseEvent)` | Row double click |
+| `onRowHeightChange` | `(row: Row, newHeight: number, rowIndex: number)` | Row height drag resize completed |
+| `onHeaderClick` | `(column: Column, columnIndex: number, event: MouseEvent)` | Header click |
+| `onColumnResize` | `(column: Column, width: number)` | Column width resize |
+| `onExpand` | `(row: Row, rowIndex: number, expanded: boolean)` | Expand/collapse |
+| `onLoadMore` | `(params: LoadMoreParams)` | Lazy loading triggered |
 
-## API 方法
+## API methods
 
-### 数据操作
+### Data operations
 
 ```typescript
-// 设置行数据
+// Set row data
 table.setRows(rows);
 
-// 设置列定义
+// Set column definitions
 table.setColumns(columns);
 
-// 获取行数据
+// Get row data
 const rows = table.getRows();
 
-// 获取列定义
+// Get column definitions
 const columns = table.getColumns();
 
-// 获取指定行数据
+// Get the data of a specific row
 const rowData = table.getRow(rowIndex);
 
-// 更新单元格数据（异步，校验完成后 resolve）
+// Update a cell value (async; resolves after validation completes)
 await table.updateCell(rowIndex, columnKey, value);
 
-// 更新整行数据（异步，校验完成后 resolve）
-await table.updateRow(rowIndex, { name: '新名字', age: 30 });
+// Update a whole row (async; resolves after validation completes)
+await table.updateRow(rowIndex, { name: 'New name', age: 30 });
 
-// 新增行
-table.addRow({ id: 999, name: '新用户' }, 2);  // 在索引 2 处插入
+// Add a row
+table.addRow({ id: 999, name: 'New user' }, 2);  // insert at index 2
 
-// 删除行
+// Delete a row
 table.deleteRow(rowIndex);
 
-// 获取固定行
+// Get pinned rows
 const topPinnedRows = table.getPinnedRows('top');
 ```
 
-### 多语言
+### Localization
 
-默认使用中文文案。可以初始化时指定英文，也可以运行时切换，或只覆盖部分文案：
+Chinese messages are used by default. You can specify English at initialization, switch at runtime, or override only part of the messages:
 
 ```typescript
 const table = new CanvasTable(container, {
@@ -941,82 +942,82 @@ table.setLocale({
 const currentLocale = table.getLocale();
 ```
 
-### 排序与筛选
+### Sorting and filtering
 
 ```typescript
-// 设置排序
+// Set sorting
 table.sort([
   { key: 'age', order: 'desc' },
   { key: 'name', order: 'asc' }
 ]);
 
-// 获取当前排序配置
+// Get the current sort configuration
 const sortConfig = table.getSortConfig();
 
-// 清除排序
+// Clear sorting
 table.sort([]);
 
-// 设置筛选
+// Set filters
 table.filter([
-  { field: 'department', mode: 'select', value: ['技术部', '市场部'] }
+  { field: 'department', mode: 'select', value: ['Engineering', 'Marketing'] }
 ]);
 
-// 获取当前筛选配置
+// Get the current filter configuration
 const filterConfig = table.getFilterConfig();
 
-// 清除所有筛选
+// Clear all filters
 table.clearFilters();
 
-// 调试：打印当前筛选和排序状态
+// Debug: print the current filter and sort state
 table.debugState();
 ```
 
-### 选择操作
+### Selection
 
 ```typescript
-// 选择单元格
+// Select a cell
 table.selectCell(rowIndex, columnIndex);
 
-// 选择行
+// Select a row
 table.selectRow(rowIndex);
 
-// 选择列
+// Select a column
 table.selectColumn(columnIndex);
 
-// 获取选中数据
+// Get the selection
 const selection = table.getSelection();
 
-// 清除选择
+// Clear the selection
 table.clearSelection();
 ```
 
-### 主题
+### Themes
 
 ```typescript
-// 设置主题模式
+// Set the theme mode
 table.setThemeMode('dark');
 
-// 获取当前主题模式
+// Get the current theme mode
 const mode = table.getThemeMode();
 
-// 设置自定义主题
+// Set a custom theme
 table.setTheme({
   colors: {
     background: '#1f1f1f',
     headerBackground: '#2d2d2d',
     cellText: '#e0e0e0',
-    // ...更多颜色配置
+    // ...more color configuration
   }
 });
 ```
 
-### 导出
+### Export
 
 ```typescript
-// 导出 CSV
+// Export CSV
 const blob = await table.export({ format: 'csv', filename: 'data.csv' });
 
-// 导出真实 XLSX 工作簿（第二版）
+// Export a real XLSX workbook (second version)
 const excelBlob = await table.export({
   format: 'excel',
   filename: 'report.xlsx',
@@ -1037,10 +1038,10 @@ const excelBlob = await table.export({
   },
 });
 
-// 导出 JSON
+// Export JSON
 const jsonBlob = await table.export({ format: 'json', filename: 'data.json' });
 
-// 下载文件
+// Download the file
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
 a.href = url;
@@ -1049,69 +1050,69 @@ a.click();
 URL.revokeObjectURL(url);
 ```
 
-Excel 导出默认行为：
+Default Excel export behavior:
 
-- 默认导出完整多级表头，并自动生成横向/纵向合并
-- 默认使用当前视图列宽；也可切换为 schema 宽度或按列覆盖
-- 默认冻结表头行和左固定列
-- 默认使用当前视图中的单元格合并；传入 `excel.merges` 时以导出参数为准
-- `number` 和 `date` 列会尽量导出为 Excel 原生数值/日期单元格，而不是纯文本
-- 右固定列不会自动映射为 Excel 冻结窗格，因为 Excel 仅支持顶部和左侧冻结
+- Exports the full multi-level header by default and generates horizontal/vertical merges automatically
+- Uses the current view column widths by default; you can switch to schema widths or override per column
+- Freezes the header row and left fixed columns by default
+- Uses the cell merges from the current view by default; when `excel.merges` is provided, the export options take precedence
+- `number` and `date` columns are exported as native Excel numeric/date cells where possible, rather than plain text
+- Right fixed columns are not mapped to Excel frozen panes automatically, because Excel only supports freezing at the top and left
 
-### 其他
+### Other
 
 ```typescript
-// 滚动到指定位置
+// Scroll to a specific position
 table.scrollTo(scrollLeft, scrollTop);
 
-// 滚动到指定行
+// Scroll to a specific row
 table.scrollToRow(rowIndex);
 
-// 刷新表格
+// Refresh the table
 table.refresh();
 
-// 销毁表格
+// Destroy the table
 table.destroy();
 ```
 
-### 撤销/重做
+### Undo/redo
 
-Canvas Table 支持撤销和重做编辑、新增行、删除行操作：
+Canvas Table supports undo and redo for editing, adding rows, and deleting rows:
 
-**快捷键：**
-- 撤销：Ctrl+Z (Windows/Linux) / Cmd+Z (macOS)
-- 重做：Ctrl+Y (Windows/Linux) / Cmd+Y (macOS)
+**Shortcuts:**
+- Undo: Ctrl+Z (Windows/Linux) / Cmd+Z (macOS)
+- Redo: Ctrl+Y (Windows/Linux) / Cmd+Y (macOS)
 
 ```typescript
-// 撤销上一步操作
+// Undo the previous operation
 table.undo();
 
-// 检查是否可以撤销
+// Check whether undo is available
 if (table.canUndo()) {
   table.undo();
 }
 
-// 重做上一步撤销的操作
+// Redo the previously undone operation
 table.redo();
 
-// 检查是否可以重做
+// Check whether redo is available
 if (table.canRedo()) {
   table.redo();
 }
 
-// 获取历史记录数量
+// Get the number of history entries
 const count = table.getHistoryLength();
 
-// 清空历史记录
+// Clear the history
 table.clearHistory();
 
-// 设置历史记录配置（最大保存操作数）
-table.setHistoryOptions({ maxActions: 100 }); // 默认 200，设为 0 禁用
+// Configure history options (maximum number of stored operations)
+table.setHistoryOptions({ maxActions: 100 }); // default 200; set to 0 to disable
 ```
 
-## 主题定制
+## Theme customization
 
-### 颜色配置
+### Color configuration
 
 ```typescript
 const customTheme: TableTheme = {
@@ -1177,19 +1178,19 @@ const customTheme: TableTheme = {
       info: '#1890ff'
     },
 
-    // 水印配置
+    // Watermark configuration
     watermark: {
-      color: 'rgba(0, 0, 0, 0.15)',  // 水印颜色
-      fontSize: 16,                   // 字体大小
-      opacity: 1                      // 不透明度
+      color: 'rgba(0, 0, 0, 0.15)',  // Watermark color
+      fontSize: 16,                   // Font size
+      opacity: 1                      // Opacity
     },
 
-    // Loading overlay 配置
+    // Loading overlay configuration
     loading: {
-      background: 'rgba(255, 255, 255, 0.85)',  // 背景
-      spinnerBorder: '#d9d9d9',                  // Spinner 边框颜色
-      spinnerActive: '#1890ff',                  // Spinner 活动颜色
-      text: '#333333'                            // 文字颜色
+      background: 'rgba(255, 255, 255, 0.85)',  // Background
+      spinnerBorder: '#d9d9d9',                  // Spinner border color
+      spinnerActive: '#1890ff',                  // Spinner active color
+      text: '#333333'                            // Text color
     }
   },
   font: {
@@ -1206,12 +1207,12 @@ const customTheme: TableTheme = {
 table.setTheme(customTheme);
 ```
 
-### 水印配置
+### Watermark configuration
 
-水印样式可通过 `theme.colors.watermark` 统一配置，也支持运行时通过 `setWatermark` 方法覆盖：
+Watermark styles can be configured globally through `theme.colors.watermark`, and can also be overridden at runtime with the `setWatermark` method:
 
 ```typescript
-// 方式一：通过 theme 配置（推荐，跟随主题切换）
+// Option 1: configure through the theme (recommended; follows theme switching)
 const table = new CanvasTable(container, {
   rows,
   columns,
@@ -1226,39 +1227,39 @@ const table = new CanvasTable(container, {
   },
   watermark: {
     enabled: true,
-    content: '机密文档'
+    content: 'Confidential document'
   }
 });
 
-// 方式二：运行时设置（可覆盖 theme 配置）
+// Option 2: set at runtime (overrides theme configuration)
 table.setWatermark({
   enabled: true,
-  content: '内部文档',
-  color: 'rgba(255, 0, 0, 0.1)',  // 覆盖 theme 中的颜色
-  fontSize: 20,                    // 覆盖 theme 中的大小
+  content: 'Internal document',
+  color: 'rgba(255, 0, 0, 0.1)',  // Overrides the theme color
+  fontSize: 20,                    // Overrides the theme font size
   rotation: -30,
   gapX: 150,
   gapY: 100
 });
 ```
 
-**WatermarkConfig 配置项：**
+**WatermarkConfig options:**
 
-| 属性 | 类型 | 默认值 | 说明 |
+| Property | Type | Default | Description |
 |------|------|--------|------|
-| `enabled` | `boolean` | `true` | 是否启用水印 |
-| `content` | `string` | `'Watermark'` | 水印内容 |
-| `fontSize` | `number` | `16` | 字体大小（默认取自 theme） |
-| `fontFamily` | `string` | - | 字体（默认取自 theme.font.family） |
-| `color` | `string` | - | 颜色（默认取自 theme.colors.watermark.color） |
-| `opacity` | `number` | `1` | 不透明度（默认取自 theme） |
-| `rotation` | `number` | `-22` | 旋转角度（度） |
-| `gapX` | `number` | `100` | 水平间距 |
-| `gapY` | `number` | `100` | 垂直间距 |
+| `enabled` | `boolean` | `true` | Whether the watermark is enabled |
+| `content` | `string` | `'Watermark'` | Watermark content |
+| `fontSize` | `number` | `16` | Font size (taken from the theme by default) |
+| `fontFamily` | `string` | - | Font family (taken from theme.font.family by default) |
+| `color` | `string` | - | Color (taken from theme.colors.watermark.color by default) |
+| `opacity` | `number` | `1` | Opacity (taken from the theme by default) |
+| `rotation` | `number` | `-22` | Rotation angle (degrees) |
+| `gapX` | `number` | `100` | Horizontal spacing |
+| `gapY` | `number` | `100` | Vertical spacing |
 
-## 动态行高与行高调整
+## Dynamic row height and row resizing
 
-可以通过 `rowHeight` 按行返回不同高度，也可以开启拖拽调整行高：
+You can return different heights per row with `rowHeight`, or enable drag-to-resize row heights:
 
 ```typescript
 const table = new CanvasTable(container, {
@@ -1272,18 +1273,18 @@ const table = new CanvasTable(container, {
   enableRowHeightResize: true,
   rowResizable: (row) => row.data.locked !== true,
   onRowHeightChange: (row, newHeight, rowIndex) => {
-    console.log('行高已调整:', row, newHeight, rowIndex);
+    console.log('Row height changed:', row, newHeight, rowIndex);
   }
 });
 ```
 
-行高拖拽会写入内部覆盖值，优先级高于 `rowHeight` 返回值；数据行对象本身会作为覆盖值的 key，避免和业务数据里的 `id` 字段耦合。
+Drag resizing writes an internal override value whose priority is higher than the value returned by `rowHeight`; the row data object itself is used as the key of the override, avoiding coupling with an `id` field in your business data.
 
-图片列在行高变大后会根据单元格高度自动排布更多图片。如果只想增加可排布行数，不希望单张图片跟着放大，可以在图片配置里设置 `scaleWithRowHeight: false`。
+Image columns automatically lay out more images according to the cell height when the row height grows. If you only want to increase the number of layout rows without scaling individual images, set `scaleWithRowHeight: false` in the image configuration.
 
-## 固定行
+## Pinned rows
 
-开启 `enableRowPinning` 后，右键菜单会出现“固定到顶部 / 固定到底部 / 取消固定”。固定行不复制行数据，只维护顶部/底部固定集合，编辑、选择、hover、图片加载和固定列命中检测都会基于固定区的视口坐标处理。
+After enabling `enableRowPinning`, the context menu offers "Pin to top / Pin to bottom / Unpin". Pinned rows do not copy row data; only the top/bottom pinned sets are maintained. Editing, selection, hover, image loading, and fixed-column hit testing are all handled based on the viewport coordinates of the pinned area.
 
 ```typescript
 const table = new CanvasTable(container, {
@@ -1292,16 +1293,16 @@ const table = new CanvasTable(container, {
   enableRowPinning: true,
   rowPinnable: (row) => row.data.locked !== true,
   onRowPinChange: (row, position) => {
-    console.log('固定状态变化:', row.data, position); // 'top' | 'bottom' | null
+    console.log('Pin state changed:', row.data, position); // 'top' | 'bottom' | null
   }
 });
 ```
 
-## 合计行
+## Summary rows
 
-`summary` 用来配置顶部或底部的合计行。合计行是根据当前数据派生出来的独立行，不属于 `rows`，不会参与编辑、选择、排序、筛选、右键菜单或行固定操作；它会跟随固定列、隐藏列占位、多级表头和横向滚动一起正确对齐。
+`summary` configures a summary row at the top or bottom. A summary row is an independent row derived from the current data; it is not part of `rows` and does not participate in editing, selection, sorting, filtering, the context menu, or row pinning. It stays correctly aligned with fixed columns, hidden-column placeholders, multi-level headers, and horizontal scrolling.
 
-最常见的写法是在 `rows[].build` 中根据 `scopeRows` 计算合计值：
+The most common approach is to compute the summary values from `scopeRows` inside `rows[].build`:
 
 ```typescript
 const table = new CanvasTable(container, {
@@ -1314,7 +1315,7 @@ const table = new CanvasTable(container, {
       {
         key: 'total',
         build: ({ scopeRows }) => [
-          { startColumnKey: 'name', endColumnKey: 'department', text: `合计 ${scopeRows.length} 行` },
+          { startColumnKey: 'name', endColumnKey: 'department', text: `Total: ${scopeRows.length} rows` },
           {
             columnKey: 'amount',
             value: scopeRows.reduce((total, row) => total + Number(row.data.amount ?? 0), 0),
@@ -1328,25 +1329,25 @@ const table = new CanvasTable(container, {
 });
 ```
 
-### 配置字段
+### Configuration fields
 
 ```typescript
 interface SummaryConfig {
-  enabled?: boolean;              // 默认根据 rows 是否存在自动启用
-  position?: 'top' | 'bottom';    // 默认 bottom
-  scope?: 'view' | 'all';         // 默认 view
+  enabled?: boolean;              // Enabled automatically based on whether rows exist by default
+  position?: 'top' | 'bottom';    // Defaults to bottom
+  scope?: 'view' | 'all';         // Defaults to view
   rows: SummaryRowConfig[];
 }
 ```
 
-- `position: 'top'` 会把合计行放在表头下方、顶部固定行上方。
-- `position: 'bottom'` 会把合计行放在底部固定行下方、表格底部。
-- `scope: 'view'` 使用当前排序/筛选后的行计算，适合“当前结果合计”。
-- `scope: 'all'` 使用原始全量行计算，适合“不受筛选影响的总计”。
+- `position: 'top'` places the summary row below the header and above the top pinned rows.
+- `position: 'bottom'` places the summary row below the bottom pinned rows, at the bottom of the table.
+- `scope: 'view'` computes from the currently sorted/filtered rows, suitable for a "summary of the current results".
+- `scope: 'all'` computes from the original full row set, suitable for a "total that is unaffected by filters".
 
-### 合计单元格
+### Summary cells
 
-每个合计行可以通过 `cells` 写静态单元格，也可以通过 `build(context)` 动态返回单元格。`build` 返回的结果优先级高于静态 `cells`。
+Each summary row can define static cells via `cells`, or return cells dynamically via `build(context)`. The result returned by `build` takes precedence over static `cells`.
 
 ```typescript
 summary: {
@@ -1355,7 +1356,7 @@ summary: {
       key: 'static-total',
       height: 40,
       cells: [
-        { columnKey: 'name', text: '合计' },
+        { columnKey: 'name', text: 'Total' },
         { columnKey: 'amount', value: 1000, type: 'number' }
       ]
     }
@@ -1363,12 +1364,12 @@ summary: {
 }
 ```
 
-合计单元格有两种定位方式：
+Summary cells can be positioned in two ways:
 
-- `columnKey`：渲染到单个列，例如 `{ columnKey: 'salary', value: salaryTotal }`。
-- `startColumnKey/endColumnKey`：跨列渲染，例如 `{ startColumnKey: 'name', endColumnKey: 'department', text: '合计 100 行' }`。
+- `columnKey`: render into a single column, for example `{ columnKey: 'salary', value: salaryTotal }`.
+- `startColumnKey/endColumnKey`: render across columns, for example `{ startColumnKey: 'name', endColumnKey: 'department', text: 'Total: 100 rows' }`.
 
-可用字段：
+Available fields:
 
 ```typescript
 interface SummaryCellConfig {
@@ -1383,7 +1384,7 @@ interface SummaryCellConfig {
 }
 ```
 
-如果需要完全自定义内容，可以使用 `render`：
+If you need fully custom content, use `render`:
 
 ```typescript
 {
@@ -1397,39 +1398,39 @@ interface SummaryCellConfig {
 }
 ```
 
-### 注意事项
+### Notes
 
-- 合计单元格按列 `key` 定位，不要按列下标定位；这样在开启序号列、固定列、隐藏列占位和列显隐时仍能对齐。
-- 同一合计行内的单元格不能互相重叠；跨列单元格覆盖的列范围内不能再配置其它合计单元格。
-- 跨固定列边界的合计单元格会按固定区/滚动区分段绘制，避免固定列区域被错误拉宽。
-- Excel 导出默认包含合计行，并会把跨列合计单元格导出为 Excel merge。
+- Summary cells are positioned by column `key`, not by column index; this keeps them aligned when a row-number column, fixed columns, hidden-column placeholders, and column visibility are enabled.
+- Cells within the same summary row must not overlap; no other summary cell can be configured inside the column range covered by a cross-column cell.
+- Summary cells that cross the boundary of fixed columns are drawn in segments for the fixed area and the scrolling area, preventing the fixed-column area from being incorrectly widened.
+- Excel export includes summary rows by default and exports cross-column summary cells as Excel merges.
 
-## 性能优化
+## Performance optimization
 
-Canvas Table 采用多种优化策略实现大数据量的流畅渲染：
+Canvas Table uses a range of optimization strategies to achieve smooth rendering with large datasets:
 
-### 虚拟滚动
-只渲染可视区域内的单元格，支持百万级数据：
-- **1000 行** - 加载时间 < 50ms
-- **10000 行** - 加载时间 < 100ms
-- **100000 行** - 加载时间 < 500ms
-- **1000000 行** - 加载时间 < 2s
+### Virtual scrolling
+Only cells within the visible area are rendered, supporting millions of rows:
+- **1000 rows** - load time < 50ms
+- **10000 rows** - load time < 100ms
+- **100000 rows** - load time < 500ms
+- **1000000 rows** - load time < 2s
 
-### 文本测量缓存
-- **截断结果缓存**：单行文本按 `字体 + 最大宽度 + 文本` 缓存截断结果（上限 5000 条，FIFO 淘汰），多行文本额外带上最大行数（上限 2000 条）
-- **短文本快速路径**：少于 40 字符的文本直接测量，不拼缓存 key、不查 Map，避免短文本场景下缓存开销大于计算开销
-- **二分截断**：需要省略号的长文本用二分查找最长可显示前缀，把逐字符测量从 O(n) 次降为 O(log n) 次
+### Text measurement caching
+- **Truncation result cache**: single-line text truncation results are cached by `font + max width + text` (limit 5000 entries, FIFO eviction); multi-line text additionally includes the maximum line count (limit 2000 entries)
+- **Short-text fast path**: text shorter than 40 characters is measured directly, without building a cache key or looking up the Map, avoiding cases where cache overhead exceeds computation cost for short text
+- **Binary-search truncation**: long text that needs an ellipsis uses binary search to find the longest displayable prefix, reducing per-character measurement from O(n) to O(log n)
 
-### 内存优化
-- **历史记录栈**：撤销/重做使用操作记录栈，仅存储变更值，避免深拷贝整个数据集
-- **图片懒加载**：仅加载可视区域内的图片，支持大图预览
-- **可配置历史记录**：默认保存 200 条操作记录，可根据内存情况调整
+### Memory optimization
+- **History stack**: undo/redo uses an operation-log stack that stores only changed values, avoiding deep copies of the entire dataset
+- **Image lazy loading**: only images within the visible area are loaded, with support for large-image preview
+- **Configurable history**: 200 operation records are kept by default and can be adjusted based on memory conditions
 
-## 懒加载
+## Lazy loading
 
-Canvas Table 支持懒加载功能，当用户滚动到表格底部时自动触发加载更多数据，适用于大数据量的分批加载场景。
+Canvas Table supports lazy loading: when the user scrolls to the bottom of the table, loading more data is triggered automatically. This suits batched loading of large datasets.
 
-### 基本用法
+### Basic usage
 
 ```typescript
 const table = new CanvasTable(container, {
@@ -1437,18 +1438,18 @@ const table = new CanvasTable(container, {
   columns,
   lazyLoad: {
     enabled: true,
-    threshold: 10  // 距离底部 10 行时触发加载
+    threshold: 10  // trigger loading when within 10 rows of the bottom
   },
   onLoadMore: (params) => {
-    console.log('触发加载更多:', params);
+    console.log('Load more triggered:', params);
     // params: { startIndex, scrollTop, direction }
 
-    // 异步加载数据
+    // Load data asynchronously
     fetchData(params.startIndex).then(newRows => {
       if (newRows.length > 0) {
         table.appendRows(newRows);
       } else {
-        // 没有更多数据了
+        // No more data
         table.setHasMore(false);
       }
     });
@@ -1456,35 +1457,35 @@ const table = new CanvasTable(container, {
 });
 ```
 
-### 配置选项
+### Configuration options
 
 ```typescript
 interface LazyLoadConfig {
-  enabled: boolean;   // 是否启用懒加载
-  threshold?: number; // 触发加载的阈值（距离底部的行数），默认 5
+  enabled: boolean;   // Whether lazy loading is enabled
+  threshold?: number; // Trigger threshold (rows from the bottom); defaults to 5
 }
 ```
 
-### API 方法
+### API methods
 
 ```typescript
-// 追加数据行
+// Append data rows
 table.appendRows(newRows);
 
-// 设置加载状态（防止重复触发）
-table.setLoadingMore(true);  // 开始加载
-table.setLoadingMore(false); // 加载完成
+// Set the loading state (prevents duplicate triggers)
+table.setLoadingMore(true);  // Start loading
+table.setLoadingMore(false); // Loading finished
 
-// 显示/隐藏 loading overlay（阻止所有事件，防止滚动穿透）
-table.showLoading('加载中...');  // 显示 loading
-table.hideLoading();            // 隐藏 loading
+// Show/hide the loading overlay (blocks all events to prevent scroll chaining)
+table.showLoading('Loading...');  // Show loading
+table.hideLoading();              // Hide loading
 
-// 设置是否还有更多数据
-table.setHasMore(false);  // 没有更多数据，停止加载
-table.setHasMore(true);   // 重置，允许继续加载
+// Set whether more data is available
+table.setHasMore(false);  // No more data; stop loading
+table.setHasMore(true);   // Reset; allow loading to continue
 ```
 
-### 完整示例
+### Complete example
 
 ```typescript
 const BATCH_SIZE = 100;
@@ -1493,16 +1494,16 @@ let currentPage = 0;
 const table = new CanvasTable(container, {
   rows: [],
   columns,
-  loadingText: '加载中...',  // loading overlay 文本
+  loadingText: 'Loading...',  // loading overlay text
   lazyLoad: {
     enabled: true,
     threshold: 15
   },
   onLoadMore: async (params) => {
-    console.log(`加载第 ${currentPage + 1} 页数据`);
+    console.log(`Loading page ${currentPage + 1} of data`);
 
-    // 显示 loading overlay（阻止事件，防止滚动穿透到 body）
-    table.showLoading('加载更多数据...');
+    // Show the loading overlay (block events to prevent scroll chaining to the body)
+    table.showLoading('Loading more data...');
     table.setLoadingMore(true);
 
     try {
@@ -1510,24 +1511,24 @@ const table = new CanvasTable(container, {
       const data = await response.json();
 
       if (data.rows.length === 0) {
-        // 没有更多数据
+        // No more data
         table.setHasMore(false);
         table.hideLoading();
-        console.log('已加载全部数据');
+        console.log('All data loaded');
       } else {
-        // 追加数据
+        // Append data
         table.appendRows(data.rows);
         currentPage++;
         table.hideLoading();
 
-        // 如果返回数据少于请求数量，说明没有更多了
+        // If fewer rows than requested are returned, there is no more data
         if (data.rows.length < BATCH_SIZE) {
           table.setHasMore(false);
         }
       }
     } catch (error) {
-      console.error('加载失败:', error);
-      // 加载失败，隐藏 loading 并重置状态
+      console.error('Loading failed:', error);
+      // On failure, hide the loading overlay and reset the state
       table.hideLoading();
       table.setLoadingMore(false);
     }
@@ -1535,36 +1536,36 @@ const table = new CanvasTable(container, {
 });
 ```
 
-### 注意事项
+### Notes
 
-1. **防重复触发**：在 `onLoadMore` 回调中，表格会自动设置 `isLoadingMore` 状态，防止滚动过程中重复触发。加载完成后调用 `appendRows` 会自动重置该状态。
+1. **Prevent duplicate triggers**: inside the `onLoadMore` callback, the table automatically sets the `isLoadingMore` state to prevent repeated triggers while scrolling. After loading completes, calling `appendRows` resets this state automatically.
 
-2. **防止滚动穿透**：使用 `showLoading()` 显示 loading overlay 时，会阻止所有事件（包括滚动事件），防止用户滚动触发加载更多时，滚动事件传递到 body 导致页面滚动。
+2. **Prevent scroll chaining**: when the loading overlay is shown with `showLoading()`, all events (including scroll events) are blocked, so that when the user scrolls to trigger loading more, scroll events do not reach the body and scroll the page.
 
-3. **加载完成**：当没有更多数据时，必须调用 `setHasMore(false)` 告知表格加载已完成，否则用户继续滚动时会不断触发 `onLoadMore`。
+3. **Loading complete**: when there is no more data, you must call `setHasMore(false)` to tell the table that loading has finished; otherwise `onLoadMore` keeps firing as the user continues scrolling.
 
-4. **错误处理**：如果加载失败，需要调用 `hideLoading()` 和 `setLoadingMore(false)` 重置状态，允许用户重试。
+4. **Error handling**: if loading fails, call `hideLoading()` and `setLoadingMore(false)` to reset the state so the user can retry.
 
-5. **性能建议**：每次加载的数据量不宜过大，建议 50-200 条，以保证追加时的渲染性能。
+5. **Performance tip**: don't load too much data at once; 50-200 rows is recommended to keep append rendering performant.
 
-## 图片加载配置
+## Image loading configuration
 
-Canvas Table 内置图片加载队列，支持并发限制、缓存管理和延迟加载。
+Canvas Table has a built-in image loading queue with concurrency limits, cache management, and deferred loading.
 
-### 配置选项
+### Configuration options
 
 ```typescript
 interface ImageLoadConfig {
-  /** 最大并发加载数，默认 6 */
+  /** Maximum number of concurrent loads; defaults to 6 */
   maxConcurrent?: number;
-  /** 缓存最大数量，默认 200 */
+  /** Maximum cache size; defaults to 200 */
   maxCacheSize?: number;
-  /** 是否启用图片加载队列，默认 true */
+  /** Whether the image loading queue is enabled; defaults to true */
   enabled?: boolean;
 }
 ```
 
-### 基本用法
+### Basic usage
 
 ```typescript
 const table = new CanvasTable(container, {
@@ -1572,54 +1573,54 @@ const table = new CanvasTable(container, {
   columns,
   imageLoad: {
     enabled: true,
-    maxConcurrent: 6,   // 同时最多加载 6 张图片
-    maxCacheSize: 200   // 最多缓存 200 张图片
+    maxConcurrent: 6,   // load at most 6 images at the same time
+    maxCacheSize: 200   // cache at most 200 images
   }
 });
 
-// 运行时修改配置
+// Change the configuration at runtime
 table.setImageLoadConfig({
   maxConcurrent: 3
 });
 
-// 获取加载统计信息
+// Get loading statistics
 const stats = table.getImageLoadStats();
 // { pending: 5, loading: 2, cached: 50, failed: 1 }
 ```
 
-### 加载策略
+### Loading strategy
 
-- **立即加载**：图片请求进入队列后立即开始加载（如果并发有空位）
-- **加载完成后继续**：一张图片加载完成后自动继续加载队列中的下一张
-- **并发限制**：同时最多加载 `maxConcurrent` 张图片，避免过多请求阻塞网络
-- **LRU 缓存**：缓存最多 `maxCacheSize` 张图片，超出时自动淘汰最早加载的图片
+- **Immediate loading**: an image request starts loading as soon as it enters the queue (if a concurrency slot is free)
+- **Continue after completion**: when an image finishes loading, the next image in the queue is loaded automatically
+- **Concurrency limit**: at most `maxConcurrent` images are loaded at the same time, avoiding too many requests blocking the network
+- **LRU cache**: at most `maxCacheSize` images are cached; when the limit is exceeded, the earliest-loaded images are evicted
 
-## 浏览器支持
+## Browser support
 
 - Chrome >= 60
 - Firefox >= 55
 - Safari >= 12
 - Edge >= 79
 
-需要浏览器支持 Canvas 2D 与 `ResizeObserver`。
+The browser must support Canvas 2D and `ResizeObserver`.
 
-## 本地开发
+## Local development
 
 ```bash
-pnpm install        # 也可使用 npm install
-pnpm dev            # 启动 demo：http://localhost:3030
-pnpm test           # 单元测试
-pnpm test:e2e       # Playwright 端到端测试
-pnpm lint           # oxlint 检查
-pnpm build          # 构建 dist/（ESM、UMD、压缩版与类型声明）
+pnpm install        # npm install also works
+pnpm dev            # start the demo: http://localhost:3030
+pnpm test           # unit tests
+pnpm test:e2e       # Playwright end-to-end tests
+pnpm lint           # oxlint checks
+pnpm build          # build dist/ (ESM, UMD, minified builds, and type declarations)
 ```
 
-## 发布
+## Publishing
 
 ```bash
 pnpm build
-npm pack --dry-run   # 预览将发布到 npm 的文件
-npm publish          # @canvas-table/core 为 scoped 包，需 publishConfig.access = "public"
+npm pack --dry-run   # preview the files that will be published to npm
+npm publish          # @canvas-table/core is a scoped package and requires publishConfig.access = "public"
 ```
 
 ## License
