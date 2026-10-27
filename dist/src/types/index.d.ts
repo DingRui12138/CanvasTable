@@ -1085,6 +1085,7 @@ export interface InteractionState {
         startX: number;
         startValue: number;
         displayValue: number;
+        pendingValue?: number;
     };
     tooltip: TooltipState | null;
     dropdown: DropdownState | null;

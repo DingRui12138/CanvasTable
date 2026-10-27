@@ -91,18 +91,15 @@ export declare class InteractionManager {
     private controlClickHandler;
     private buttonAnimationHandler;
     private tooltipHandler;
+    private clipboardHandler;
+    private hoverHandler;
+    private wheelHandler;
+    private filterHandler;
     private get rows();
-    private get allRows();
     private resizeColumnIndex;
     private resizeStartX;
     private resizeStartWidth;
-    private _lastClickTime;
-    private _lastClickCell;
     private getScrollbarBounds;
-    private lazyLoadEnabled;
-    private lazyLoadThreshold;
-    private isLoadingMore;
-    private hasMoreData;
     private rowHeightResizeEnabled;
     private rowResizable;
     private enableRowPinning;
@@ -164,33 +161,18 @@ export declare class InteractionManager {
     private handleDocumentMouseMove;
     private handleDocumentMouseUp;
     private handleMouseMove;
-    private updateButtonHoverState;
     private clearAllButtonHoverStates;
-    private startButtonHoverAnimationLoop;
     getButtonHoverStates: () => Map<string, ButtonHoverState>;
     getHoveredImageIndex(): number;
     getHoveredButtonIndex(): number;
-    private updateImageHoverIndex;
-    private updateButtonsHoverIndex;
     private checkTooltip;
-    private isClickableElement;
     private handleMouseUp;
     private handleMouseLeave;
     private handleDblClick;
     private handleControlClick;
-    private handleProgressClick;
     private handleProgressDragMove;
-    private handleRatingClick;
-    private handleExpandIconClick;
-    private getClickedRadioOption;
     private handleWheel;
-    /**
-     * 检查是否需要触发懒加载
-     */
-    private checkLazyLoad;
     handleExternalWheel(deltaX: number, deltaY: number): void;
-    private updateTooltipPosition;
-    private scrollTimeout;
     private handleKeyDown;
     private handleEditingKeyDown;
     private handleEnterKey;
@@ -207,6 +189,16 @@ export declare class InteractionManager {
     startImageEditing(cell: CellPosition, imageConfig: ImageConfig): void;
     endEditing(save: boolean): void;
     clearEditingState(): void;
+    /**
+     * 清除进度条拖拽的临时显示值（提交完成后调用）
+     *
+     * 仅在「提交完成的值为拖拽结束时记录的最终值」时才清除，
+     * 以避免拖拽过程中 mousedown 触发的提前提交（值不同）或在拖拽进行中误清除。
+     *
+     * @param cell 提交的单元格；仅当与当前拖拽单元格一致时才清除
+     * @param value 提交完成的值；仅当与 pendingValue 一致时才清除
+     */
+    clearProgressDragState(cell?: CellPosition, value?: number): void;
     isEditing(): boolean;
     getDropdown(): DropdownState | null;
     setJSXInteractiveRegions(regions: CTInteractiveRegion[]): void;
@@ -228,10 +220,7 @@ export declare class InteractionManager {
     private closeButtonsDropdown;
     /** 关闭所有 dropdown */
     private closeAllDropdowns;
-    /** 更新所有 dropdown 位置（滚动时调用） */
-    private updateAllDropdownPositions;
     private copySelection;
-    private getSelectedText;
     setScrollPosition(scrollLeft: number, scrollTop: number): void;
     updateMaxScroll(maxScrollLeft: number, maxScrollTop: number): void;
     setSortConfig(config: SortConfig[]): void;
@@ -251,10 +240,6 @@ export declare class InteractionManager {
     getImageTooltip(): ImageTooltipState | null;
     getImageEditor(): ImageEditorState | null;
     applyFilter(): void;
-    /**
-     * 根据筛选模式获取操作符
-     */
-    private getOperatorByMode;
     clearFilter(): void;
     /**
      * 重置当前筛选 dropdown 的筛选值，但保持 dropdown 打开
@@ -297,7 +282,6 @@ export declare class InteractionManager {
     private isRowPinnable;
     private getRowContextMenuItems;
     private isRowResizable;
-    private startSwitchAnimationLoop;
     getSwitchAnimations: () => Map<string, SwitchAnimationState>;
     destroy(): void;
 }

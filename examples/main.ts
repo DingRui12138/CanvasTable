@@ -202,6 +202,9 @@ function setRowsWithMeasure(
 
 const DATA_SEED = 12345;
 
+const LONG_TEXT_FOR_PERF =
+  "这是一段用于性能测试的超长文本，包含中文、English、数字 1234567890 以及标点符号，用于验证单元格文本截断、测量缓存与滚动渲染性能。";
+
 function createSeededRandom(seed: number) {
   let s = seed;
   return () => {
@@ -385,6 +388,7 @@ function generateData(count: number, seed: number = DATA_SEED): Row[] {
         }：这是一段较长的备注信息，用于测试多行输入功能，可以自动换行显示更多内容。第${
           i + 1
         }行数据。`,
+        longText: `${LONG_TEXT_FOR_PERF}${LONG_TEXT_FOR_PERF}——第 ${i + 1} 行`,
       },
       cellMerges: cellMerges.length > 0 ? cellMerges : undefined,
     });
@@ -708,6 +712,15 @@ const columns: Column[] = [
         link: value as string,
       },
     }),
+  },
+
+  {
+    key: "longText",
+    title: "超长文本",
+    width: 220,
+    type: "text",
+    sortable: false,
+    filterable: false,
   },
 
   {

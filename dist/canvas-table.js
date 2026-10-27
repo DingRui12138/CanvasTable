@@ -10180,6 +10180,7 @@ function Line(props) {
 }
 const CELL_TEXT_CACHE_LIMIT = 5e3;
 const WRAPPED_TEXT_CACHE_LIMIT = 2e3;
+const CELL_TEXT_CACHE_MIN_LENGTH = 40;
 class Renderer {
   canvas;
   ctx;
@@ -10215,12 +10216,17 @@ class Renderer {
   jsxRenderer;
   jsxInteractiveRegions = [];
   jsxUpdateHandlers = null;
-  static SHARED_PLACEHOLDER_COLUMN = {
-    key: "image",
-    title: "image",
-    type: "image"
-  };
-  static SHARED_PLACEHOLDER_ROW = { id: "", data: {} };
+  /** 渲染 context 预分配及行列缺失时的占位列，冻结避免跨单元格污染 */
+  static RENDER_CONTEXT_PLACEHOLDER_COLUMN = Object.freeze({
+    key: "",
+    title: "",
+    type: CellTypes.TEXT
+  });
+  /** 渲染 context 预分配及行列缺失时的占位行，冻结避免跨单元格污染 */
+  static RENDER_CONTEXT_PLACEHOLDER_ROW = Object.freeze({
+    id: "",
+    data: Object.freeze({})
+  });
   /** 当前帧收集的可见图片 URL */
   frameVisibleUrls = /* @__PURE__ */ new Set();
   // 文本宽度缓存（用于按钮等需要测量文本宽度的场景）
@@ -10230,52 +10236,60 @@ class Renderer {
   // 单元格文本截断/换行缓存，key 含字体与最大宽度，滚动重复绘制时直接复用
   cellTextCache = /* @__PURE__ */ new Map();
   wrappedTextCache = /* @__PURE__ */ new Map();
-  // 动态行高支持
-  /**
-   * 根据单元格高度计算可显示行数
-   */
-  calculateMaxRows(cellHeight, lineHeight, padding = 8) {
-    return calculateMaxTextRows(cellHeight, lineHeight, padding);
-  }
   /**
    * 单行文本截断（带缓存）
-   * 相同 (字体, 可用宽度, 文本) 直接复用截断结果与测量宽度，避免每帧重复 measureText
+   * 短文本直接测量，避免缓存 key 拼接和 Map 查找的开销；
+   * 长文本复用截断结果，避免每帧重复 measureText
    */
   measureSingleLineText(text, fontKey, maxWidth) {
+    if (text.length < CELL_TEXT_CACHE_MIN_LENGTH) {
+      const width = this.ctx.measureText(text).width;
+      return width <= maxWidth ? { text, width } : this.truncateSingleLineText(text, maxWidth);
+    }
     const cacheKey = `${fontKey}\0${maxWidth}\0${text}`;
     const cached = this.cellTextCache.get(cacheKey);
     if (cached) {
       return cached;
     }
-    let finalText = text;
-    let textWidth = this.ctx.measureText(text).width;
-    if (textWidth > maxWidth) {
-      const ellipsis = "...";
-      let low = 0;
-      let high = text.length;
-      while (low < high) {
-        const mid = low + high + 1 >> 1;
-        if (this.ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
-          low = mid;
-        } else {
-          high = mid - 1;
-        }
-      }
-      finalText = text.slice(0, low) + ellipsis;
-      textWidth = this.ctx.measureText(finalText).width;
-    }
-    const result = { text: finalText, width: textWidth };
+    const fullWidth = this.ctx.measureText(text).width;
+    const result = fullWidth <= maxWidth ? { text, width: fullWidth } : this.truncateSingleLineText(text, maxWidth);
     if (this.cellTextCache.size >= CELL_TEXT_CACHE_LIMIT) {
-      this.cellTextCache.clear();
+      const oldestKey = this.cellTextCache.keys().next().value;
+      if (oldestKey !== void 0) {
+        this.cellTextCache.delete(oldestKey);
+      }
     }
     this.cellTextCache.set(cacheKey, result);
     return result;
   }
+  truncateSingleLineText(text, maxWidth) {
+    const ellipsis = "...";
+    let low = 0;
+    let high = text.length;
+    while (low < high) {
+      const mid = low + high + 1 >> 1;
+      if (this.ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    const finalText = text.slice(0, low) + ellipsis;
+    return { text: finalText, width: this.ctx.measureText(finalText).width };
+  }
   /**
    * 多行文本换行（带缓存）
-   * 同时缓存每行宽度，供居中对齐/右对齐复用
+   * 短文本且无换行符时直接测量/换行，不走缓存
    */
   measureWrappedText(text, fontKey, maxWidth, maxRows) {
+    if (text.length < CELL_TEXT_CACHE_MIN_LENGTH && !text.includes("\n")) {
+      const width = this.ctx.measureText(text).width;
+      if (width <= maxWidth) {
+        return { lines: [text], widths: [width] };
+      }
+      const lines2 = layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+      return { lines: lines2, widths: lines2.map((line) => this.ctx.measureText(line).width) };
+    }
     const cacheKey = `${fontKey}\0${maxWidth}\0${maxRows}\0${text}`;
     const cached = this.wrappedTextCache.get(cacheKey);
     if (cached) {
@@ -10285,10 +10299,20 @@ class Renderer {
     const widths = lines.map((line) => this.ctx.measureText(line).width);
     const result = { lines, widths };
     if (this.wrappedTextCache.size >= WRAPPED_TEXT_CACHE_LIMIT) {
-      this.wrappedTextCache.clear();
+      const oldestKey = this.wrappedTextCache.keys().next().value;
+      if (oldestKey !== void 0) {
+        this.wrappedTextCache.delete(oldestKey);
+      }
     }
     this.wrappedTextCache.set(cacheKey, result);
     return result;
+  }
+  // 动态行高支持
+  /**
+   * 根据单元格高度计算可显示行数
+   */
+  calculateMaxRows(cellHeight, lineHeight, padding = 8) {
+    return calculateMaxTextRows(cellHeight, lineHeight, padding);
   }
   // 性能监控
   performanceEnabled = false;
@@ -10383,8 +10407,8 @@ class Renderer {
       y: 0,
       width: 0,
       height: 0,
-      column: Renderer.SHARED_PLACEHOLDER_COLUMN,
-      row: Renderer.SHARED_PLACEHOLDER_ROW,
+      column: Renderer.RENDER_CONTEXT_PLACEHOLDER_COLUMN,
+      row: Renderer.RENDER_CONTEXT_PLACEHOLDER_ROW,
       rowIndex: -1,
       colIndex: -1,
       value: void 0,
@@ -10572,13 +10596,18 @@ class Renderer {
         }
       }
       const renderBands = this.shouldRenderRowBands();
+      this.ctx.save();
+      centerClipStateSaved = true;
+      this.ctx.beginPath();
+      this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
+      this.ctx.clip();
       if (renderBands) {
         this.measurePhase("rowBands", () => {
           this.renderRowBands(
             rows,
             centerColumnIndices,
-            leftFixedIndices,
-            rightFixedIndices,
+            [],
+            [],
             scrollLeft,
             scrollTop,
             visibleRange,
@@ -10588,11 +10617,6 @@ class Renderer {
           );
         });
       } else {
-        this.ctx.save();
-        centerClipStateSaved = true;
-        this.ctx.beginPath();
-        this.ctx.rect(centerStartX, 0, centerEndX - centerStartX, viewportHeight);
-        this.ctx.clip();
         this.measurePhase("centerRows", () => {
           this.renderCenterRows(
             leafColumns,
@@ -10609,9 +10633,9 @@ class Renderer {
             }
           );
         });
-        this.ctx.restore();
-        centerClipStateSaved = false;
       }
+      this.ctx.restore();
+      centerClipStateSaved = false;
       this.measurePhase("centerSelections", () => {
         this.renderCenterSelections(
           options.selectedCells,
@@ -10658,6 +10682,22 @@ class Renderer {
             scrollTop,
             visibleRange,
             options
+          );
+        });
+      }
+      if (renderBands && (hasLeftFixed || hasRightFixed)) {
+        this.measurePhase("rowBandsFixed", () => {
+          this.renderRowBands(
+            rows,
+            [],
+            leftFixedIndices,
+            rightFixedIndices,
+            scrollLeft,
+            scrollTop,
+            visibleRange,
+            fixedInfo,
+            options,
+            "rowBandsFixed"
           );
         });
       }
@@ -10738,190 +10778,99 @@ class Renderer {
     const rowBands = this.layoutManager.getRowBandsForRender();
     return this.layoutManager.hasPinnedRows() || rowBands.summaryTop.rows.length > 0 || rowBands.summaryBottom.rows.length > 0;
   }
-  /**
-   * 一次行循环绘制一个 band 的 center + 左右固定列。
-   * 行级信息（行索引/行高/纵坐标/背景色）每行只计算一次，
-   * 背景按区域每行只填充一次，避免 center 与固定列各跑一遍行循环。
-   */
-  renderBandRows(band, centerColumnIndices, leftFixedIndices, rightFixedIndices, scrollLeft, scrollTop, visibleRange, viewportWidth, viewportHeight, leftFixedWidth, rightStartX, options, detailPrefix) {
-    if (band.rows.length === 0) return;
-    const isBody = band.type === "body";
-    const startIndex = isBody ? visibleRange.startRow : 0;
-    const endIndex = isBody ? Math.min(visibleRange.endRow, band.rows.length - 1) : band.rows.length - 1;
-    const layouts = [];
-    this.measureRowBandDetail(`${detailPrefix}.collectRows`, () => {
-      let y = band.y;
-      for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
-        const row = band.rows[bandRowIndex];
-        if (!row) {
-          continue;
-        }
-        const rowIndex = this.layoutManager.getRowIndexByRef(row);
-        if (rowIndex < 0) {
-          continue;
-        }
-        const rowHeight = this.layoutManager.getRowHeightByIndex(rowIndex);
-        if (isBody) {
-          y = band.y - scrollTop + (this.layoutManager.getRowBandOffsetByRef(row) ?? 0);
-        }
-        if (y + rowHeight < 0 || y > viewportHeight) {
-          y += rowHeight;
-          continue;
-        }
-        let backgroundColor = this.theme.colors.rowBackground;
-        if (options.stripeRows && rowIndex % 2 === 1) {
-          backgroundColor = this.theme.colors.rowAltBackground;
-        }
-        if (row.selected) {
-          backgroundColor = this.theme.colors.rowSelectedBackground;
-        }
-        if (options.hoveredCell?.rowIndex === rowIndex) {
-          backgroundColor = this.theme.colors.rowHoverBackground;
-        }
-        layouts.push({ row, rowIndex, y, rowHeight, backgroundColor });
-        y += rowHeight;
+  renderRowBandCells(band, allRows, columnIndices, scrollLeft, scrollTop, visibleRange, options, startX, detailPrefix) {
+    let y = band.y;
+    if (band.type === "body") {
+      y -= scrollTop;
+    }
+    const startIndex = band.type === "body" ? visibleRange.startRow : 0;
+    const endIndex = band.type === "body" ? Math.min(visibleRange.endRow, band.rows.length - 1) : band.rows.length - 1;
+    const measureDetail = (name, fn) => detailPrefix ? this.measureRowBandDetail(`${detailPrefix}.${name}`, fn) : fn();
+    const countDetail = (name) => {
+      if (detailPrefix) {
+        this.recordRowBandDetail(`${detailPrefix}.${name}`, 0);
       }
-    });
-    if (layouts.length === 0) return;
-    let centerFillStart = 0;
-    let centerFillEnd = 0;
-    if (centerColumnIndices.length > 0) {
-      const firstIndex = centerColumnIndices[0];
-      const lastIndex = centerColumnIndices[centerColumnIndices.length - 1];
-      const lastEnd = this.layoutManager.getColumnOffset(lastIndex) + this.layoutManager.getColumnWidthByIndex(lastIndex);
-      centerFillStart = Math.max(
-        leftFixedWidth,
-        this.layoutManager.getColumnOffset(firstIndex) - scrollLeft
+    };
+    for (let bandRowIndex = startIndex; bandRowIndex <= endIndex; bandRowIndex++) {
+      const row = band.rows[bandRowIndex];
+      if (!row) {
+        continue;
+      }
+      countDetail("rows.visited");
+      const rowIndex = measureDetail(
+        "rowIndexLookup",
+        () => this.layoutManager.getRowIndexByRef(row)
       );
-      centerFillEnd = Math.min(rightStartX, lastEnd - scrollLeft);
-    }
-    this.measureRowBandDetail(`${detailPrefix}.background`, () => {
-      for (const item of layouts) {
-        this.ctx.fillStyle = item.backgroundColor;
-        if (leftFixedWidth > 0) {
-          this.ctx.fillRect(0, item.y, leftFixedWidth, item.rowHeight);
-        }
-        if (centerFillEnd > centerFillStart) {
-          this.ctx.fillRect(
-            centerFillStart,
-            item.y,
-            centerFillEnd - centerFillStart,
-            item.rowHeight
-          );
-        }
-        if (viewportWidth > rightStartX) {
-          this.ctx.fillRect(rightStartX, item.y, viewportWidth - rightStartX, item.rowHeight);
-        }
+      if (rowIndex < 0) {
+        continue;
       }
-    });
-    if (centerColumnIndices.length > 0) {
-      this.ctx.save();
-      this.ctx.beginPath();
-      this.ctx.rect(leftFixedWidth, 0, rightStartX - leftFixedWidth, viewportHeight);
-      this.ctx.clip();
-      this.measureRowBandDetail(`${detailPrefix}.centerCells`, () => {
-        for (const item of layouts) {
-          for (const colIndex of centerColumnIndices) {
-            const column = this.layoutManager.getLeafColumn(colIndex);
-            if (!column) continue;
-            const width = this.layoutManager.getColumnWidthByIndex(colIndex);
-            const x = this.layoutManager.getColumnOffset(colIndex) - scrollLeft;
-            this.renderCellWithPosition(
-              column,
-              item.row,
-              item.rowIndex,
-              colIndex,
-              item.row.data[getColumnField(column)],
-              x,
-              item.y,
-              width,
-              item.rowHeight,
-              options,
-              {
-                prefix: `${detailPrefix}.center.cellInternal`,
-                location: {
-                  rowIndex: item.rowIndex,
-                  colIndex,
-                  x,
-                  y: item.y,
-                  width,
-                  height: item.rowHeight
-                },
-                columnKey: column.key
-              }
-            );
-          }
-        }
-      });
-      this.ctx.restore();
-    }
-    const leftFirstOffset = leftFixedIndices.length > 0 ? this.layoutManager.getColumnOffset(leftFixedIndices[0]) : 0;
-    const rightFirstOffset = rightFixedIndices.length > 0 ? this.layoutManager.getColumnOffset(rightFixedIndices[0]) : 0;
-    if (leftFixedIndices.length > 0 || rightFixedIndices.length > 0) {
-      this.measureRowBandDetail(`${detailPrefix}.fixedCells`, () => {
-        for (const item of layouts) {
-          for (const colIndex of leftFixedIndices) {
-            const column = this.layoutManager.getLeafColumn(colIndex);
-            if (!column) continue;
-            const width = this.layoutManager.getColumnWidthByIndex(colIndex);
-            const x = this.layoutManager.getColumnOffset(colIndex) - leftFirstOffset;
-            this.renderCellWithPosition(
-              column,
-              item.row,
-              item.rowIndex,
-              colIndex,
-              item.row.data[getColumnField(column)],
-              x,
-              item.y,
-              width,
-              item.rowHeight,
-              options,
-              {
-                prefix: `${detailPrefix}.leftFixed.cellInternal`,
-                location: {
-                  rowIndex: item.rowIndex,
-                  colIndex,
-                  x,
-                  y: item.y,
-                  width,
-                  height: item.rowHeight
-                },
-                columnKey: column.key
-              }
-            );
-          }
-          for (const colIndex of rightFixedIndices) {
-            const column = this.layoutManager.getLeafColumn(colIndex);
-            if (!column) continue;
-            const width = this.layoutManager.getColumnWidthByIndex(colIndex);
-            const x = rightStartX + this.layoutManager.getColumnOffset(colIndex) - rightFirstOffset;
-            this.renderCellWithPosition(
-              column,
-              item.row,
-              item.rowIndex,
-              colIndex,
-              item.row.data[getColumnField(column)],
-              x,
-              item.y,
-              width,
-              item.rowHeight,
-              options,
-              {
-                prefix: `${detailPrefix}.rightFixed.cellInternal`,
-                location: {
-                  rowIndex: item.rowIndex,
-                  colIndex,
-                  x,
-                  y: item.y,
-                  width,
-                  height: item.rowHeight
-                },
-                columnKey: column.key
-              }
-            );
-          }
-        }
-      });
+      const rowHeight = measureDetail(
+        "rowHeightLookup",
+        () => this.layoutManager.getRowHeightByIndex(rowIndex)
+      );
+      if (band.type === "body") {
+        const rowOffset = measureDetail(
+          "rowOffsetLookup",
+          () => this.layoutManager.getRowBandOffsetByRef(row)
+        );
+        y = band.y - scrollTop + (rowOffset ?? 0);
+      }
+      const viewportHeight = this.canvas.height / this.dpr;
+      if (y + rowHeight < 0 || y > viewportHeight) {
+        y += rowHeight;
+        continue;
+      }
+      let backgroundColor = this.theme.colors.rowBackground;
+      if (options.stripeRows && rowIndex % 2 === 1) {
+        backgroundColor = this.theme.colors.rowAltBackground;
+      }
+      if (row.selected) {
+        backgroundColor = this.theme.colors.rowSelectedBackground;
+      }
+      if (options.hoveredCell?.rowIndex === rowIndex) {
+        backgroundColor = this.theme.colors.rowHoverBackground;
+      }
+      for (const colIndex of columnIndices) {
+        countDetail("cells.visited");
+        const column = measureDetail(
+          "columnLookup",
+          () => this.layoutManager.getLeafColumn(colIndex)
+        );
+        if (!column) continue;
+        const width = measureDetail(
+          "columnWidthLookup",
+          () => this.layoutManager.getColumnWidthByIndex(colIndex)
+        );
+        const x = measureDetail(
+          "columnOffsetLookup",
+          () => startX !== void 0 ? startX + this.layoutManager.getColumnOffset(colIndex) - this.layoutManager.getColumnOffset(columnIndices[0]) : this.layoutManager.getColumnOffset(colIndex) - scrollLeft
+        );
+        measureDetail("backgroundFill", () => {
+          this.ctx.fillStyle = backgroundColor;
+          this.ctx.fillRect(x, y, width, rowHeight);
+        });
+        const cellTrace = detailPrefix ? {
+          prefix: `${detailPrefix}.cellInternal`,
+          location: { rowIndex, colIndex, x, y, width, height: rowHeight },
+          columnKey: column.key
+        } : void 0;
+        measureDetail("cellWithPosition", () => {
+          this.renderCellWithPosition(
+            column,
+            row,
+            rowIndex,
+            colIndex,
+            row.data[getColumnField(column)],
+            x,
+            y,
+            width,
+            rowHeight,
+            options,
+            cellTrace
+          );
+        });
+      }
+      y += rowHeight;
     }
   }
   renderRowBands(rows, centerColumnIndices, leftFixedIndices, rightFixedIndices, scrollLeft, scrollTop, visibleRange, fixedInfo, options, detailRoot) {
@@ -10931,72 +10880,131 @@ class Renderer {
     );
     const pinnedBands = [rowBands.pinnedTop, rowBands.pinnedBottom];
     const summaryBands = [rowBands.summaryTop, rowBands.summaryBottom];
-    const viewportWidth = this.canvas.width / this.dpr;
-    const viewportHeight = this.canvas.height / this.dpr;
-    const leftFixedWidth = leftFixedIndices.length > 0 ? fixedInfo.leftFixed.width : 0;
-    const rightFixedWidth = rightFixedIndices.length > 0 ? fixedInfo.rightFixed.width : 0;
-    const rightStartX = viewportWidth - rightFixedWidth;
     this.ctx.save();
     this.ctx.beginPath();
-    this.ctx.rect(0, rowBands.body.y, viewportWidth, this.layoutManager.getBodyViewportHeight());
+    this.ctx.rect(
+      0,
+      rowBands.body.y,
+      this.canvas.width / this.dpr,
+      this.layoutManager.getBodyViewportHeight()
+    );
     this.ctx.clip();
-    this.renderBandRows(
+    this.renderRowBandCells(
       rowBands.body,
+      rows,
       centerColumnIndices,
-      leftFixedIndices,
-      rightFixedIndices,
       scrollLeft,
       scrollTop,
       visibleRange,
-      viewportWidth,
-      viewportHeight,
-      leftFixedWidth,
-      rightStartX,
       options,
-      `${detailRoot}.body`
+      void 0,
+      `${detailRoot}.center.body`
     );
     this.ctx.restore();
     for (const band of pinnedBands) {
-      this.renderBandRows(
+      this.renderRowBandCells(
         band,
+        rows,
         centerColumnIndices,
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        options,
+        void 0,
+        `${detailRoot}.center.${band.type}`
+      );
+    }
+    for (const band of summaryBands) {
+      this.measureRowBandDetail(`${detailRoot}.center.${band.type}.summaryCells`, () => {
+        this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft);
+      });
+    }
+    if (leftFixedIndices.length > 0) {
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(
+        0,
+        rowBands.body.y,
+        this.canvas.width / this.dpr,
+        this.layoutManager.getBodyViewportHeight()
+      );
+      this.ctx.clip();
+      this.renderRowBandCells(
+        rowBands.body,
+        rows,
         leftFixedIndices,
+        scrollLeft,
+        scrollTop,
+        visibleRange,
+        options,
+        0,
+        `${detailRoot}.leftFixed.body`
+      );
+      this.ctx.restore();
+      for (const band of pinnedBands) {
+        this.renderRowBandCells(
+          band,
+          rows,
+          leftFixedIndices,
+          scrollLeft,
+          scrollTop,
+          visibleRange,
+          options,
+          0,
+          `${detailRoot}.leftFixed.${band.type}`
+        );
+      }
+      for (const band of summaryBands) {
+        this.measureRowBandDetail(`${detailRoot}.leftFixed.${band.type}.summaryCells`, () => {
+          this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0);
+        });
+      }
+    }
+    if (rightFixedIndices.length > 0) {
+      const viewportWidth = this.canvas.width / this.dpr;
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(
+        0,
+        rowBands.body.y,
+        this.canvas.width / this.dpr,
+        this.layoutManager.getBodyViewportHeight()
+      );
+      this.ctx.clip();
+      this.renderRowBandCells(
+        rowBands.body,
+        rows,
         rightFixedIndices,
         scrollLeft,
         scrollTop,
         visibleRange,
-        viewportWidth,
-        viewportHeight,
-        leftFixedWidth,
-        rightStartX,
         options,
-        `${detailRoot}.${band.type}`
+        viewportWidth - fixedInfo.rightFixed.width,
+        `${detailRoot}.rightFixed.body`
       );
-    }
-    for (const band of summaryBands) {
-      if (band.rows.length === 0) continue;
-      if (centerColumnIndices.length > 0) {
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.rect(leftFixedWidth, 0, rightStartX - leftFixedWidth, viewportHeight);
-        this.ctx.clip();
-        this.measureRowBandDetail(
-          `${detailRoot}.${band.type}.summaryCenter`,
-          () => this.renderSummaryBandCells(band, centerColumnIndices, scrollLeft)
-        );
-        this.ctx.restore();
-      }
-      if (leftFixedIndices.length > 0) {
-        this.measureRowBandDetail(
-          `${detailRoot}.${band.type}.summaryLeft`,
-          () => this.renderSummaryBandCells(band, leftFixedIndices, scrollLeft, 0)
+      this.ctx.restore();
+      for (const band of pinnedBands) {
+        this.renderRowBandCells(
+          band,
+          rows,
+          rightFixedIndices,
+          scrollLeft,
+          scrollTop,
+          visibleRange,
+          options,
+          viewportWidth - fixedInfo.rightFixed.width,
+          `${detailRoot}.rightFixed.${band.type}`
         );
       }
-      if (rightFixedIndices.length > 0) {
-        this.measureRowBandDetail(
-          `${detailRoot}.${band.type}.summaryRight`,
-          () => this.renderSummaryBandCells(band, rightFixedIndices, scrollLeft, rightStartX)
-        );
+      for (const band of summaryBands) {
+        this.measureRowBandDetail(`${detailRoot}.rightFixed.${band.type}.summaryCells`, () => {
+          this.renderSummaryBandCells(
+            band,
+            rightFixedIndices,
+            scrollLeft,
+            viewportWidth - fixedInfo.rightFixed.width
+          );
+        });
       }
     }
   }
@@ -11006,16 +11014,12 @@ class Renderer {
     const visibleColumns = new Set(columnIndices);
     for (const row of band.rows) {
       const rowHeight = row.height;
-      const rowStyle = row.style;
-      const rowBackground = rowStyle?.backgroundColor ?? this.theme.colors.headerBackground;
-      const rowBorderColor = rowStyle?.borderColor ?? this.theme.colors.cellBorder;
-      const hasRowTextStyle = rowStyle?.color !== void 0 || rowStyle?.fontWeight !== void 0;
       for (const columnIndex of columnIndices) {
         const x = this.getSummaryColumnX(columnIndex, columnIndices, scrollLeft, startX);
         const width = this.layoutManager.getColumnWidthByIndex(columnIndex);
-        this.ctx.fillStyle = rowBackground;
+        this.ctx.fillStyle = this.theme.colors.headerBackground;
         this.ctx.fillRect(x, y, width, rowHeight);
-        this.ctx.strokeStyle = rowBorderColor;
+        this.ctx.strokeStyle = this.theme.colors.cellBorder;
         this.ctx.lineWidth = this.theme.border.width;
         this.ctx.strokeRect(x, y, width, rowHeight);
       }
@@ -11026,22 +11030,15 @@ class Renderer {
         }
         const column = this.layoutManager.getLeafColumn(cell.startColumnIndex);
         if (!column) continue;
-        const cellStyle = cell.renderResult.style;
-        const textStyle = hasRowTextStyle ? {
-          ...cellStyle,
-          color: cellStyle?.color ?? rowStyle?.color,
-          fontWeight: cellStyle?.fontWeight ?? rowStyle?.fontWeight
-        } : cellStyle;
-        const renderResult = textStyle === cellStyle ? cell.renderResult : { ...cell.renderResult, style: textStyle };
         for (const segment of segments) {
           const x = this.getSummaryColumnX(segment.start, columnIndices, scrollLeft, startX);
           const endOffset = this.layoutManager.getColumnOffset(segment.end) + this.layoutManager.getColumnWidthByIndex(segment.end);
           const width = endOffset - this.layoutManager.getColumnOffset(segment.start);
-          this.ctx.fillStyle = cellStyle?.backgroundColor ?? rowBackground;
+          this.ctx.fillStyle = cell.renderResult.style?.backgroundColor ?? this.theme.colors.headerBackground;
           this.ctx.fillRect(x, y, width, rowHeight);
           if (segment.start <= cell.startColumnIndex && cell.startColumnIndex <= segment.end) {
             this.renderCellContent(
-              renderResult,
+              cell.renderResult,
               x,
               y,
               width,
@@ -11054,8 +11051,8 @@ class Renderer {
               column.key
             );
           }
-          this.ctx.strokeStyle = cellStyle?.borderColor ?? rowBorderColor;
-          this.ctx.lineWidth = cellStyle?.borderWidth ?? this.theme.border.width;
+          this.ctx.strokeStyle = cell.renderResult.style?.borderColor ?? this.theme.colors.cellBorder;
+          this.ctx.lineWidth = cell.renderResult.style?.borderWidth ?? this.theme.border.width;
           this.ctx.strokeRect(x, y, width, rowHeight);
         }
       }
@@ -11787,10 +11784,7 @@ class Renderer {
       "resolveDisabled",
       () => this.resolveDisabled(column.disabled, row, column)
     );
-    let cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
-    if (cacheMode === "value" && column.cacheMode === void 0 && value !== null && typeof value === "object") {
-      cacheMode = false;
-    }
+    const cacheMode = measureCell("cacheMode", () => this.getCacheMode(column));
     let renderResult;
     if (this.renderCache && cacheMode !== false) {
       const cached = measureCell(
@@ -11932,7 +11926,6 @@ class Renderer {
     if (column.cacheMode === false) return false;
     if (column.cacheMode === "value") return "value";
     if (column.cacheMode === "cell") return "cell";
-    if (!column.render && !column.formatter) return "value";
     return false;
   }
   /**
@@ -12040,8 +12033,8 @@ class Renderer {
       const fontFamily = style?.fontFamily ?? this.theme.font.family;
       const fontWeight = style?.fontWeight ?? "normal";
       const fontStyle = style?.fontStyle ?? "normal";
-      const cellLocation = this.performanceEnabled ? { rowIndex, colIndex, x, y, width, height } : void 0;
       const fontKey = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+      const cellLocation = this.performanceEnabled ? { rowIndex, colIndex, x, y, width, height } : void 0;
       this.ctx.font = fontKey;
       if (type === CellTypes.CHECKBOX && checkbox) {
         this.measureRender("checkbox", ck, cellLocation, () => {
@@ -12232,8 +12225,8 @@ class Renderer {
         this.measureRender("jsx", ck, cellLocation, () => {
           this.ctx.save();
           try {
-            const contextRow = row ?? Renderer.SHARED_PLACEHOLDER_ROW;
-            const contextColumn = column ?? Renderer.SHARED_PLACEHOLDER_COLUMN;
+            const contextRow = row ?? Renderer.RENDER_CONTEXT_PLACEHOLDER_ROW;
+            const contextColumn = column ?? Renderer.RENDER_CONTEXT_PLACEHOLDER_COLUMN;
             const jsxContext = this.createJSXRenderContext(
               contextRow,
               contextColumn,
@@ -12370,12 +12363,11 @@ class Renderer {
           } else {
             this.ctx.fillText(displayText, textX, textY);
             if (type === CellTypes.LINK) {
-              const textWidth = displayWidth;
               this.ctx.strokeStyle = color;
               this.ctx.lineWidth = 1;
               this.ctx.beginPath();
               this.ctx.moveTo(textX, textY + fontSize2 / 2 + 2);
-              this.ctx.lineTo(textX + textWidth, textY + fontSize2 / 2 + 2);
+              this.ctx.lineTo(textX + displayWidth, textY + fontSize2 / 2 + 2);
               this.ctx.stroke();
             }
           }
@@ -14355,6 +14347,128 @@ class NavigationHandler extends BaseHandler {
    */
   updateEditingConfig(config) {
     this.editingConfig = config;
+  }
+}
+class ClipboardHandler extends BaseHandler {
+  selectionHandler;
+  constructor(context, eventEmitter, selectionHandler) {
+    super(context, eventEmitter);
+    this.selectionHandler = selectionHandler;
+  }
+  /**
+   * Copy selected cells to clipboard
+   */
+  async copySelection() {
+    const text = this.getSelectedText();
+    if (text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        this.fallbackCopyToClipboard(text);
+      }
+    }
+  }
+  /**
+   * Get selected cells as tab-separated text
+   */
+  getSelectedText() {
+    const selectedCells = this.state.selectedCells;
+    if (selectedCells.length === 0) return "";
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const lines = [];
+    for (const range of selectedCells) {
+      const { minRow, maxRow, minCol, maxCol } = this.selectionHandler.getNormalizedRange(range);
+      for (let row = minRow; row <= maxRow; row++) {
+        const rowData = this.rows[row];
+        if (!rowData) continue;
+        const cells = [];
+        for (let col = minCol; col <= maxCol; col++) {
+          const column = leafColumns[col];
+          if (!column) continue;
+          const displayText = getCellDisplayText(column, rowData, row);
+          cells.push(displayText);
+        }
+        lines.push(cells.join("	"));
+      }
+    }
+    return lines.join("\n");
+  }
+  /**
+   * Get selected cells as a 2D array of values
+   */
+  getSelectedValues() {
+    const selectedCells = this.state.selectedCells;
+    if (selectedCells.length === 0) return [];
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const result = [];
+    for (const range of selectedCells) {
+      const { minRow, maxRow, minCol, maxCol } = this.selectionHandler.getNormalizedRange(range);
+      for (let row = minRow; row <= maxRow; row++) {
+        const rowData = this.rows[row];
+        if (!rowData) continue;
+        const rowValues = [];
+        for (let col = minCol; col <= maxCol; col++) {
+          const column = leafColumns[col];
+          if (!column) continue;
+          const value = rowData.data[getColumnField(column)];
+          rowValues.push(value);
+        }
+        result.push(rowValues);
+      }
+    }
+    return result;
+  }
+  /**
+   * Get selected cells as CSV format
+   */
+  getSelectedCSV() {
+    const values = this.getSelectedValues();
+    return values.map(
+      (row) => row.map((cell) => {
+        const str = String(cell ?? "");
+        if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      }).join(",")
+    ).join("\n");
+  }
+  /**
+   * Fallback copy method for older browsers
+   */
+  fallbackCopyToClipboard(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+  /**
+   * Check if there is any selection
+   */
+  hasSelection() {
+    return this.state.selectedCells.length > 0;
+  }
+  /**
+   * Get selection bounds
+   */
+  getSelectionBounds() {
+    if (this.state.selectedCells.length === 0) return null;
+    let minRow = Infinity;
+    let maxRow = -Infinity;
+    let minCol = Infinity;
+    let maxCol = -Infinity;
+    for (const range of this.state.selectedCells) {
+      const normalized = this.selectionHandler.getNormalizedRange(range);
+      minRow = Math.min(minRow, normalized.minRow);
+      maxRow = Math.max(maxRow, normalized.maxRow);
+      minCol = Math.min(minCol, normalized.minCol);
+      maxCol = Math.max(maxCol, normalized.maxCol);
+    }
+    return { minRow, maxRow, minCol, maxCol };
   }
 }
 class EditingHandler extends BaseHandler {
@@ -16890,10 +17004,430 @@ class HeaderHandler extends BaseHandler {
     this.filterConfig = config;
   }
 }
+const DROPDOWN_ITEM_HEIGHT$1 = 32;
 class ControlClickHandler extends BaseHandler {
-  constructor(context, eventEmitter) {
+  editingHandler;
+  buttonAnimationHandler;
+  constructor(context, eventEmitter, editingHandler, buttonAnimationHandler) {
     super(context, eventEmitter);
+    this.editingHandler = editingHandler;
+    this.buttonAnimationHandler = buttonAnimationHandler;
   }
+  /**
+   * Handle click on any interactive cell control (checkbox/radio/button/switch/link/…).
+   * Returns true when the click has been consumed by a control.
+   */
+  handleControlClick(cell, e) {
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const column = leafColumns[cell.columnIndex];
+    const row = this.rows[cell.rowIndex];
+    if (!column || !row) return false;
+    if (column.key.startsWith("__hidden_placeholder__")) {
+      const hiddenColumnKey = column._hiddenColumnKey;
+      if (hiddenColumnKey) {
+        this.eventEmitter.emit(TableEvents.COLUMN_SHOW, hiddenColumnKey);
+        return true;
+      }
+    }
+    if (this.context.expandColumnKey === column.key && row.children && row.children.length > 0) {
+      const expandClick = this.handleExpandIconClick(cell, e, row);
+      if (expandClick) return true;
+    }
+    const renderResult = getRenderResult(column, row, cell.rowIndex);
+    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
+    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
+      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const cellViewportX = this.getCellViewportX(cellPos, column);
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      const checkboxSize = 16;
+      const checkboxX = cellViewportX + (cellPos.width - checkboxSize) / 2;
+      const checkboxY = cellViewportY + (cellPos.height - checkboxSize) / 2;
+      const isOnCheckbox = viewportX >= checkboxX && viewportX <= checkboxX + checkboxSize && viewportY >= checkboxY && viewportY <= checkboxY + checkboxSize;
+      if (isOnCheckbox && !isDisabled) {
+        const newChecked = !renderResult.checkbox.checked;
+        this.eventEmitter.emit(TableEvents.CHECKBOX_CHANGE, this.getCellInfo(cell), newChecked);
+        return true;
+      }
+      return false;
+    }
+    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
+      if (isDisabled) return false;
+      if (renderResult.radio.options && renderResult.radio.options.length > 0) {
+        const clickedOption = this.getClickedRadioOption(cell, e, renderResult.radio.options);
+        if (clickedOption && !clickedOption.disabled) {
+          this.eventEmitter.emit(
+            TableEvents.RADIO_CHANGE,
+            this.getCellInfo(cell),
+            clickedOption.value
+          );
+          return true;
+        }
+        return false;
+      } else {
+        this.eventEmitter.emit(
+          TableEvents.RADIO_CHANGE,
+          this.getCellInfo(cell),
+          renderResult.radio.value
+        );
+        return true;
+      }
+    }
+    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
+      if (isDisabled) return false;
+      const buttonConfig = renderResult.button;
+      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const cellViewportX = this.getCellViewportX(cellPos, column);
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      const relativeX = viewportX - cellViewportX;
+      const relativeY = viewportY - cellViewportY;
+      if (Array.isArray(buttonConfig)) {
+        const options = renderResult.buttonOptions ?? {};
+        const padding = 8;
+        const gap = options.gap ?? 4;
+        const maxVisible = options.maxVisible ?? 3;
+        const buttonHeight2 = 24;
+        const buttonY2 = (cellPos.height - buttonHeight2) / 2;
+        const visibleButtons = buttonConfig.filter((btn) => btn.visible !== false);
+        const displayButtons = visibleButtons.slice(0, maxVisible);
+        const moreButtons = visibleButtons.slice(maxVisible);
+        let currentX = padding;
+        for (let i = 0; i < displayButtons.length; i++) {
+          const btn = displayButtons[i];
+          const text2 = btn.text ?? this.locale.cell.buttonText;
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth2 = this.ctx.measureText(text2).width;
+          const buttonWidth2 = Math.max(textWidth2 + 16, 40);
+          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth2) {
+            this.eventEmitter.emit(
+              TableEvents.BUTTON_CLICK,
+              this.getCellInfo(cell),
+              btn.actionKey
+            );
+            return true;
+          }
+          currentX += buttonWidth2 + gap;
+        }
+        if (moreButtons.length > 0) {
+          const moreText = options.moreButtonText ?? "···";
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth2 = this.ctx.measureText(moreText).width;
+          const buttonWidth2 = Math.max(textWidth2 + 16, 32);
+          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth2) {
+            const dropdownX = cellViewportX + currentX;
+            const itemHeight = DROPDOWN_ITEM_HEIGHT$1;
+            const dropdownHeight = moreButtons.length * itemHeight;
+            const canvasRect = this.canvas.getBoundingClientRect();
+            let dropdownY = cellViewportY + buttonY2 + buttonHeight2 + 4;
+            let showAbove = false;
+            if (dropdownY + dropdownHeight > canvasRect.height) {
+              dropdownY = cellViewportY + buttonY2 - dropdownHeight - 4;
+              showAbove = true;
+            }
+            this.state.buttonsDropdown = {
+              cell,
+              x: dropdownX,
+              y: dropdownY,
+              buttons: moreButtons,
+              hoveredIndex: -1,
+              buttonRelativeX: currentX,
+              buttonY: buttonY2,
+              buttonHeight: buttonHeight2,
+              showAbove
+            };
+            this.eventEmitter.emit(TableEvents.DROPDOWN_OPEN);
+            return true;
+          }
+        }
+        return false;
+      }
+      const buttonHeight = buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
+      const buttonY = (cellPos.height - buttonHeight) / 2;
+      const text = buttonConfig.text ?? this.locale.cell.buttonText;
+      const fontSize = 13;
+      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      const textWidth = this.ctx.measureText(text).width;
+      const buttonPadding = 16;
+      const cellPadding = 8;
+      const buttonWidth = Math.min(
+        Math.max(textWidth + buttonPadding * 2, 60),
+        cellPos.width - cellPadding * 2
+      );
+      const buttonX = (cellPos.width - buttonWidth) / 2;
+      const isOnButton = relativeY >= buttonY && relativeY <= buttonY + buttonHeight && relativeX >= buttonX && relativeX <= buttonX + buttonWidth;
+      if (!isOnButton) return false;
+      this.eventEmitter.emit(
+        TableEvents.BUTTON_CLICK,
+        this.getCellInfo(cell),
+        buttonConfig.actionKey
+      );
+      return true;
+    }
+    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
+      if (isDisabled) return false;
+      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const cellViewportX = this.getCellViewportX(cellPos, column);
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      const relativeX = viewportX - cellViewportX;
+      const relativeY = viewportY - cellViewportY;
+      const switchWidth = 44;
+      const switchHeight = 22;
+      const switchX = (cellPos.width - switchWidth) / 2;
+      const switchY = (cellPos.height - switchHeight) / 2;
+      const isOnSwitch = relativeX >= switchX && relativeX <= switchX + switchWidth && relativeY >= switchY && relativeY <= switchY + switchHeight;
+      if (!isOnSwitch) return false;
+      const cellKey = `${cell.rowIndex}-${cell.columnIndex}`;
+      const existingAnimation = this.state.switchAnimations.get(cellKey);
+      const currentChecked = renderResult.switch.checked ?? false;
+      const currentProgress = existingAnimation ? existingAnimation.progress : currentChecked ? 1 : 0;
+      const targetProgress = currentProgress < 0.5 ? 1 : 0;
+      const targetChecked = targetProgress === 1;
+      if (currentChecked !== targetChecked) {
+        this.eventEmitter.emit(TableEvents.SWITCH_CHANGE, this.getCellInfo(cell), targetChecked);
+      }
+      this.state.switchAnimations.set(cellKey, {
+        cell,
+        progress: currentProgress,
+        targetProgress,
+        startTime: Date.now(),
+        startProgress: currentProgress
+      });
+      this.buttonAnimationHandler.startSwitchAnimationLoop();
+      return true;
+    }
+    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
+      if (isDisabled || renderResult.input.readonly) return false;
+      return false;
+    }
+    if (renderResult.type === CellTypes.LINK && renderResult.link) {
+      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const cellViewportX = this.getCellViewportX(cellPos, column);
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      const relativeX = viewportX - cellViewportX;
+      const relativeY = viewportY - cellViewportY;
+      const link = renderResult.link;
+      const linkUrl = link.link;
+      const linkText = link.text || link.link;
+      if (!linkUrl || !linkText) return false;
+      const padding = 8;
+      const fontSize = 13;
+      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+      const maxTextWidth = cellPos.width - padding * 2;
+      let textWidth = this.ctx.measureText(linkText).width;
+      let displayText = linkText;
+      if (textWidth > maxTextWidth) {
+        const ellipsis = "...";
+        while (displayText.length > 0 && this.ctx.measureText(displayText + ellipsis).width > maxTextWidth) {
+          displayText = displayText.slice(0, -1);
+        }
+        displayText += ellipsis;
+        textWidth = this.ctx.measureText(displayText).width;
+      }
+      const align = column.align ?? "left";
+      let textX;
+      switch (align) {
+        case "center":
+          textX = (cellPos.width - textWidth) / 2;
+          break;
+        case "right":
+          textX = cellPos.width - padding - textWidth;
+          break;
+        default:
+          textX = padding;
+      }
+      const textY = (cellPos.height - fontSize) / 2;
+      const isOnLink = relativeX >= textX && relativeX <= textX + textWidth && relativeY >= textY && relativeY <= textY + fontSize;
+      if (!isOnLink) return false;
+      const now = Date.now();
+      const isDoubleClick = this.lastClickCell?.rowIndex === cell.rowIndex && this.lastClickCell?.columnIndex === cell.columnIndex && now - this.lastClickTime < 350;
+      this.lastClickTime = now;
+      this.lastClickCell = { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex };
+      if (isDoubleClick) {
+        return false;
+      }
+      window.open(linkUrl, "_blank", "noopener,noreferrer");
+      return true;
+    }
+    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
+      const result = this.handleProgressClick(cell, e, renderResult.progress, column, row);
+      if (result) {
+        const precision = renderResult.progress.precision ?? 0;
+        const displayValue = precision === 0 ? Math.round(renderResult.progress.value) : Number(renderResult.progress.value.toFixed(precision));
+        this.state.isDragging = true;
+        this.state.dragType = "progress-drag";
+        this.state.progressDragState = {
+          cell,
+          config: renderResult.progress,
+          column,
+          row,
+          startX: e.clientX,
+          startValue: renderResult.progress.value,
+          displayValue
+        };
+        this.canvas.style.cursor = "grabbing";
+        this.context.onDragStart?.();
+      }
+      return result;
+    }
+    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
+      return this.handleRatingClick(cell, e, renderResult.rating, column, row);
+    }
+    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
+      if (isDisabled) return false;
+      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const cellViewportX = this.getCellViewportX(cellPos, column);
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      const rect = this.canvas.getBoundingClientRect();
+      const clickViewportX = e.clientX - rect.left;
+      const clickViewportY = e.clientY - rect.top;
+      const padding = 8;
+      const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
+      const colorBoxX = cellViewportX + (cellPos.width - colorBoxSize) / 2;
+      const colorBoxY = cellViewportY + (cellPos.height - colorBoxSize) / 2;
+      if (clickViewportX >= colorBoxX && clickViewportX <= colorBoxX + colorBoxSize && clickViewportY >= colorBoxY && clickViewportY <= colorBoxY + colorBoxSize) {
+        this.editingHandler.startColorEditing(cell, renderResult.color);
+        return true;
+      }
+      return false;
+    }
+    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
+      if (renderResult.image.clickable === false) return false;
+      const config = renderResult.image;
+      const images = config.images;
+      const rect = this.canvas.getBoundingClientRect();
+      const clickViewportX = e.clientX - rect.left;
+      const clickViewportY = e.clientY - rect.top;
+      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+      const cellViewportX = this.getCellViewportX(cellPos, column);
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      const relativeX = clickViewportX - cellViewportX;
+      const relativeY = clickViewportY - cellViewportY;
+      const padding = 4;
+      const maxImgSize = Math.min(cellPos.width, cellPos.height) - padding * 2;
+      const configWidth = config.width ?? 32;
+      const configHeight = config.height ?? 32;
+      const imgWidth = Math.min(configWidth, maxImgSize);
+      const imgHeight = Math.min(configHeight, maxImgSize);
+      const gap = config.gap ?? 4;
+      if (images && images.length > 1) {
+        const maxVisible = config.maxVisible ?? 3;
+        const showMoreCount = config.showMoreCount !== false;
+        const availableWidth = cellPos.width - padding * 2;
+        const maxByWidth = Math.floor((availableWidth + gap) / (imgWidth + gap));
+        const reservedForMore = showMoreCount ? 1 : 0;
+        const calculatedMaxVisible = Math.max(1, maxByWidth - reservedForMore);
+        const actualMaxVisible = Math.min(maxVisible, calculatedMaxVisible);
+        const displayCount = images.length > actualMaxVisible ? actualMaxVisible : images.length;
+        const hasMore = images.length > actualMaxVisible;
+        let contentWidth;
+        if (hasMore && showMoreCount) {
+          contentWidth = displayCount * imgWidth + displayCount * gap + imgWidth;
+        } else {
+          contentWidth = displayCount * imgWidth + Math.max(0, displayCount - 1) * gap;
+        }
+        let startX = (cellPos.width - contentWidth) / 2;
+        startX = Math.max(padding, startX);
+        const imgY2 = (cellPos.height - imgHeight) / 2;
+        const relX = relativeX - startX;
+        const relY = relativeY - imgY2;
+        if (relX < 0 || relX > contentWidth || relY < 0 || relY > imgHeight) {
+          return false;
+        }
+        const clickedIndex = Math.floor(relX / (imgWidth + gap));
+        if (hasMore && showMoreCount && clickedIndex === displayCount) {
+          return false;
+        }
+        if (clickedIndex >= 0 && clickedIndex < images.length) {
+          const clickedSrc = images[clickedIndex];
+          if (clickedSrc) {
+            this.eventEmitter.emit(TableEvents.IMAGE_CLICK, this.getCellInfo(cell), clickedSrc, e);
+            return true;
+          }
+        }
+        return false;
+      }
+      const imgX = (cellPos.width - imgWidth) / 2;
+      const imgY = (cellPos.height - imgHeight) / 2;
+      const isInImage = relativeX >= imgX && relativeX <= imgX + imgWidth && relativeY >= imgY && relativeY <= imgY + imgHeight;
+      if (!isInImage) return false;
+      const src = config.src || images && images[0];
+      if (!src) return false;
+      this.eventEmitter.emit(TableEvents.IMAGE_CLICK, this.getCellInfo(cell), src, e);
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Handle progress bar drag move (display value only, data is committed on mouseup)
+   */
+  handleProgressDragMove(e) {
+    const dragState = this.state.progressDragState;
+    if (!dragState) return;
+    const { cell, config, column } = dragState;
+    const rect = this.canvas.getBoundingClientRect();
+    const clickViewportX = e.clientX - rect.left;
+    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+    const cellViewportX = this.getCellViewportX(cellPos, column);
+    const shape = config.shape ?? "line";
+    if (shape === "line") {
+      const padding = 8;
+      const textPosition = config.textPosition ?? "right";
+      const showText = config.showText ?? true;
+      const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
+      const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
+      const barX = cellViewportX + padding;
+      const relativeX = clickViewportX - barX;
+      const precision = config.precision ?? 0;
+      const rawValue = Math.max(0, Math.min(100, relativeX / barWidth * 100));
+      const newValue = precision === 0 ? Math.round(rawValue) : Number(rawValue.toFixed(precision));
+      dragState.displayValue = newValue;
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    } else if (shape === "circle" || shape === "dashboard") {
+      const clickViewportY = e.clientY - rect.top;
+      const cellViewportY = this.getCellViewportY(cell.rowIndex);
+      let centerYOffset = 0;
+      if (shape === "dashboard") {
+        centerYOffset = cellPos.height * 0.05;
+      }
+      const cellCenterX = cellViewportX + cellPos.width / 2;
+      const cellCenterY = cellViewportY + cellPos.height / 2 + centerYOffset;
+      const dx = clickViewportX - cellCenterX;
+      const dy = clickViewportY - cellCenterY;
+      let angle = Math.atan2(dy, dx);
+      let newValue;
+      if (shape === "circle") {
+        angle = angle + Math.PI / 2;
+        if (angle < 0) angle += Math.PI * 2;
+        newValue = angle / (Math.PI * 2) * 100;
+      } else {
+        const startAngle = Math.PI * 0.75;
+        const totalAngle = Math.PI * 1.5;
+        if (angle < 0) angle += Math.PI * 2;
+        let offset = angle - startAngle;
+        if (offset < 0) offset += Math.PI * 2;
+        newValue = offset / totalAngle * 100;
+      }
+      newValue = Math.max(0, Math.min(100, newValue));
+      const precision = config.precision ?? 0;
+      newValue = precision === 0 ? Math.round(newValue) : Number(newValue.toFixed(precision));
+      dragState.displayValue = newValue;
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    }
+  }
+  /** 记录最近一次点击，用于区分双击（避免链接跳转） */
+  lastClickTime = 0;
+  lastClickCell = null;
   /**
    * Handle progress bar click
    */
@@ -17093,6 +17627,108 @@ class ButtonAnimationHandler extends BaseHandler {
     super(context, eventEmitter);
   }
   /**
+   * Update button hover state for the given cell / mouse position.
+   * Starts the hover animation loop when a transition is needed.
+   */
+  updateButtonHoverState(cell, mouseX, mouseY) {
+    const currentHoveredCellKey = cell && cell.rowIndex >= 0 ? `${cell.rowIndex}-${cell.columnIndex}` : null;
+    this.state.buttonHoverStates.forEach((state, key) => {
+      if (key !== currentHoveredCellKey && state.progress > 0) {
+        this.state.buttonHoverStates.set(key, {
+          ...state,
+          targetProgress: 0,
+          startTime: Date.now(),
+          startProgress: state.progress
+        });
+      }
+    });
+    if (!cell || cell.rowIndex < 0) {
+      if (this.state.buttonHoverStates.size > 0) {
+        this.startButtonHoverAnimationLoop();
+      }
+      return;
+    }
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const column = leafColumns[cell.columnIndex];
+    const row = this.rows[cell.rowIndex];
+    if (!column || !row) {
+      this.startButtonHoverAnimationLoop();
+      return;
+    }
+    const renderResult = getRenderResult(column, row, cell.rowIndex);
+    if (renderResult.type !== CellTypes.BUTTON || !renderResult.button || Array.isArray(renderResult.button) || !this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
+      this.startButtonHoverAnimationLoop();
+      return;
+    }
+    const buttonConfig = renderResult.button;
+    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+    const cellViewportX = this.getCellViewportX(cellPos, column);
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
+    const relativeX = mouseX - cellViewportX;
+    const relativeY = mouseY - cellViewportY;
+    const buttonHeight = buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
+    const buttonY = (cellPos.height - buttonHeight) / 2;
+    const text = buttonConfig.text ?? this.locale.cell.buttonText;
+    const fontSize = 13;
+    this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    const textWidth = this.ctx.measureText(text).width;
+    const buttonPadding = 16;
+    const cellPadding = 8;
+    const buttonWidth = Math.min(
+      Math.max(textWidth + buttonPadding * 2, 60),
+      cellPos.width - cellPadding * 2
+    );
+    const buttonX = (cellPos.width - buttonWidth) / 2;
+    const isOnButton = relativeY >= buttonY && relativeY <= buttonY + buttonHeight && relativeX >= buttonX && relativeX <= buttonX + buttonWidth;
+    const cellKey = `${cell.rowIndex}-${cell.columnIndex}`;
+    if (isOnButton) {
+      const existingState = this.state.buttonHoverStates.get(cellKey);
+      if (!existingState || existingState.targetProgress !== 1) {
+        const currentProgress = existingState ? existingState.progress : 0;
+        this.state.buttonHoverStates.set(cellKey, {
+          cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
+          progress: currentProgress,
+          targetProgress: 1,
+          startTime: Date.now(),
+          startProgress: currentProgress
+        });
+        this.startButtonHoverAnimationLoop();
+      }
+    } else {
+      const existingState = this.state.buttonHoverStates.get(cellKey);
+      if (existingState && existingState.progress > 0) {
+        this.state.buttonHoverStates.set(cellKey, {
+          cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
+          progress: existingState.progress,
+          targetProgress: 0,
+          startTime: Date.now(),
+          startProgress: existingState.progress
+        });
+        this.startButtonHoverAnimationLoop();
+      }
+    }
+  }
+  /**
+   * Fade out all hovered buttons
+   */
+  clearAllButtonHoverStates() {
+    let hasChanges = false;
+    this.state.buttonHoverStates.forEach((state, key) => {
+      if (state.progress > 0 || state.targetProgress !== 0) {
+        this.state.buttonHoverStates.set(key, {
+          ...state,
+          targetProgress: 0,
+          startTime: Date.now(),
+          startProgress: state.progress
+        });
+        hasChanges = true;
+      }
+    });
+    if (hasChanges) {
+      this.startButtonHoverAnimationLoop();
+    }
+  }
+  /**
    * Set destroyed state
    */
   setDestroyed(destroyed) {
@@ -17200,7 +17836,7 @@ class ButtonAnimationHandler extends BaseHandler {
     this.buttonHoverAnimationRunning = false;
   }
 }
-const IMAGE_SIZE = 64;
+const IMAGE_SIZE$1 = 64;
 class TooltipHandler extends BaseHandler {
   constructor(context, eventEmitter) {
     super(context, eventEmitter);
@@ -17209,7 +17845,7 @@ class TooltipHandler extends BaseHandler {
    * Get image size constant
    */
   static get IMAGE_SIZE() {
-    return IMAGE_SIZE;
+    return IMAGE_SIZE$1;
   }
   /**
    * Check and show tooltip for cell content
@@ -17375,7 +18011,7 @@ class TooltipHandler extends BaseHandler {
       return;
     }
     const canvasRect = this.canvas.getBoundingClientRect();
-    const imgSize = IMAGE_SIZE;
+    const imgSize = IMAGE_SIZE$1;
     const dropdownPadding = 8;
     const dropdownGap = 8;
     const imagesPerRow = 4;
@@ -17483,6 +18119,862 @@ class TooltipHandler extends BaseHandler {
     return this.state.imageTooltip;
   }
 }
+class HoverHandler extends BaseHandler {
+  /**
+   * 判断鼠标位置是否落在可点击元素上（用于设置 pointer 光标）
+   */
+  isClickableElement(cell, mouseX, mouseY) {
+    if (!cell) return false;
+    if (cell.rowIndex === -1) {
+      return true;
+    }
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const column = leafColumns[cell.columnIndex];
+    const row = this.rows[cell.rowIndex];
+    if (!column || !row) return false;
+    const renderResult = getRenderResult(column, row, cell.rowIndex);
+    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
+    const cellViewportX = this.getCellViewportX(cellPos, column);
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
+    const relativeX = mouseX - cellViewportX;
+    const relativeY = mouseY - cellViewportY;
+    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
+      if (isDisabled) return false;
+      const size = 16;
+      const checkboxX = (cellPos.width - size) / 2;
+      const checkboxY = (cellPos.height - size) / 2;
+      return relativeX >= checkboxX && relativeX <= checkboxX + size && relativeY >= checkboxY && relativeY <= checkboxY + size;
+    }
+    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
+      if (isDisabled) return false;
+      const size = 16;
+      if (renderResult.radio.options && renderResult.radio.options.length > 0) {
+        const padding = 8;
+        const gap = 4;
+        const maxX = cellPos.width - padding;
+        this.ctx.font = `14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+        let currentX = padding;
+        for (let i = 0; i < renderResult.radio.options.length; i++) {
+          const option = renderResult.radio.options[i];
+          if (option.disabled) {
+            const textWidth2 = this.ctx.measureText(option.label).width;
+            currentX += size + gap + textWidth2 + padding;
+            continue;
+          }
+          const textWidth = this.ctx.measureText(option.label).width;
+          const optionWidth = size + gap + textWidth + padding;
+          if (currentX + optionWidth - padding > maxX) {
+            break;
+          }
+          const radioX = currentX;
+          const radioY = (cellPos.height - size) / 2;
+          const centerY = radioY + size / 2;
+          const inRadioCircle = relativeX >= radioX && relativeX <= radioX + size && relativeY >= radioY && relativeY <= radioY + size;
+          const textX = radioX + size + gap;
+          const inText = relativeX >= textX && relativeX <= textX + textWidth && relativeY >= centerY - 10 && relativeY <= centerY + 10;
+          if (inRadioCircle || inText) {
+            return true;
+          }
+          currentX += optionWidth;
+        }
+        return false;
+      } else {
+        const radioX = (cellPos.width - size) / 2;
+        const radioY = (cellPos.height - size) / 2;
+        return relativeX >= radioX && relativeX <= radioX + size && relativeY >= radioY && relativeY <= radioY + size;
+      }
+    }
+    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
+      if (isDisabled) return false;
+      const button = renderResult.button;
+      if (Array.isArray(button)) {
+        const options = renderResult.buttonOptions ?? {};
+        const padding2 = 8;
+        const gap = options.gap ?? 4;
+        const maxVisible = options.maxVisible ?? 3;
+        const buttonHeight2 = 24;
+        const buttonY2 = (cellPos.height - buttonHeight2) / 2;
+        const visibleButtons = button.filter((btn) => btn.visible !== false);
+        const displayButtons = visibleButtons.slice(0, maxVisible);
+        let currentX = padding2;
+        for (const btn of displayButtons) {
+          const text = btn.text ?? this.locale.cell.buttonText;
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth = this.ctx.measureText(text).width;
+          const buttonWidth = Math.max(textWidth + 16, 40);
+          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth) {
+            return true;
+          }
+          currentX += buttonWidth + gap;
+        }
+        if (visibleButtons.length > maxVisible) {
+          const moreText = options.moreButtonText ?? "···";
+          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+          const textWidth = this.ctx.measureText(moreText).width;
+          const buttonWidth = Math.max(textWidth + 16, 32);
+          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth) {
+            return true;
+          }
+        }
+        return false;
+      }
+      const buttonHeight = button.size === "small" ? 24 : button.size === "large" ? 40 : 32;
+      const buttonY = (cellPos.height - buttonHeight) / 2;
+      const padding = 8;
+      return relativeY >= buttonY && relativeY <= buttonY + buttonHeight && relativeX >= padding && relativeX <= cellPos.width - padding;
+    }
+    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
+      if (isDisabled) return false;
+      const switchWidth = 44;
+      const switchHeight = 22;
+      const switchX = (cellPos.width - switchWidth) / 2;
+      const switchY = (cellPos.height - switchHeight) / 2;
+      return relativeX >= switchX && relativeX <= switchX + switchWidth && relativeY >= switchY && relativeY <= switchY + switchHeight;
+    }
+    if (renderResult.type === CellTypes.SELECT && renderResult.select) {
+      if (isDisabled) return false;
+      return true;
+    }
+    if (renderResult.type === CellTypes.TAG && renderResult.tags) {
+      return true;
+    }
+    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
+      if (isDisabled || renderResult.input.readonly) return false;
+      return true;
+    }
+    if (renderResult.type === CellTypes.LINK && renderResult.link) {
+      const link = renderResult.link;
+      const linkText = link.text || link.link;
+      if (!linkText) return false;
+      const padding = 8;
+      const fontSize = 13;
+      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+      const maxTextWidth = cellPos.width - padding * 2;
+      let textWidth = this.ctx.measureText(linkText).width;
+      let displayText = linkText;
+      if (textWidth > maxTextWidth) {
+        const ellipsis = "...";
+        while (displayText.length > 0 && this.ctx.measureText(displayText + ellipsis).width > maxTextWidth) {
+          displayText = displayText.slice(0, -1);
+        }
+        displayText += ellipsis;
+        textWidth = this.ctx.measureText(displayText).width;
+      }
+      const align = column.align ?? "left";
+      let textX;
+      switch (align) {
+        case "center":
+          textX = (cellPos.width - textWidth) / 2;
+          break;
+        case "right":
+          textX = cellPos.width - padding - textWidth;
+          break;
+        default:
+          textX = padding;
+      }
+      const textY = (cellPos.height - fontSize) / 2;
+      return relativeX >= textX && relativeX <= textX + textWidth && relativeY >= textY && relativeY <= textY + fontSize;
+    }
+    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
+      const config = renderResult.image;
+      if (config.clickable === false) return false;
+      const images = config.images;
+      if (!images || images.length <= 1) {
+        const src = config.src || images && images[0];
+        return !!src;
+      }
+      const hoveredImageIndex = this.state.hoveredImageIndex ?? -1;
+      return hoveredImageIndex >= 0 && hoveredImageIndex < images.length;
+    }
+    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
+      const config = renderResult.progress;
+      if (config.interactive !== true) return false;
+      if (isDisabled) return false;
+      const shape = config.shape ?? "line";
+      if (shape === "line") {
+        const padding = 8;
+        const size = config.size ?? "medium";
+        const barHeight = config.height ?? (size === "small" ? 6 : size === "large" ? 16 : 10);
+        const textPosition = config.textPosition ?? "right";
+        const showText = config.showText ?? true;
+        const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
+        const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
+        const barX = padding;
+        const barY = (cellPos.height - barHeight) / 2;
+        return relativeX >= barX && relativeX <= barX + barWidth && relativeY >= barY && relativeY <= barY + barHeight;
+      }
+      if (shape === "circle" || shape === "dashboard") {
+        const size = config.size ?? "medium";
+        let sizeRatio;
+        let centerYOffset = 0;
+        if (shape === "circle") {
+          sizeRatio = size === "small" ? 0.6 : size === "large" ? 0.9 : 0.75;
+        } else {
+          sizeRatio = size === "small" ? 0.7 : size === "large" ? 0.95 : 0.85;
+          centerYOffset = cellPos.height * 0.05;
+        }
+        const defaultDiameter = Math.floor(cellPos.height * sizeRatio);
+        const diameter = config.width ?? defaultDiameter;
+        const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.12));
+        const centerX = cellPos.width / 2;
+        const centerY = cellPos.height / 2 + centerYOffset;
+        const radius = (diameter - strokeWidth) / 2;
+        const dx = relativeX - centerX;
+        const dy = relativeY - centerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        return distance >= radius - strokeWidth && distance <= radius + strokeWidth;
+      }
+    }
+    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
+      if (isDisabled) return false;
+      const config = renderResult.rating;
+      const max = config.max ?? 5;
+      const starSize = config.starSize ?? 16;
+      const totalWidth = max * starSize;
+      const startX = (cellPos.width - totalWidth) / 2;
+      const startY = (cellPos.height - starSize) / 2;
+      return relativeX >= startX && relativeX <= startX + totalWidth && relativeY >= startY && relativeY <= startY + starSize;
+    }
+    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
+      if (isDisabled) return false;
+      const padding = 8;
+      const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
+      const colorBoxX = (cellPos.width - colorBoxSize) / 2;
+      const colorBoxY = (cellPos.height - colorBoxSize) / 2;
+      return relativeX >= colorBoxX && relativeX <= colorBoxX + colorBoxSize && relativeY >= colorBoxY && relativeY <= colorBoxY + colorBoxSize;
+    }
+    return false;
+  }
+  /**
+   * 更新单元格内被 hover 的图片索引
+   */
+  updateImageHoverIndex(cell, mouseX, mouseY) {
+    if (!cell || cell.rowIndex < 0) {
+      this.state.hoveredImageIndex = -1;
+      return;
+    }
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const column = leafColumns[cell.columnIndex];
+    const row = this.rows[cell.rowIndex];
+    if (!column || !row) {
+      this.state.hoveredImageIndex = -1;
+      return;
+    }
+    const renderResult = getRenderResult(column, row, cell.rowIndex);
+    if (renderResult.type !== CellTypes.IMAGE || !renderResult.image) {
+      this.state.hoveredImageIndex = -1;
+      return;
+    }
+    const config = renderResult.image;
+    const images = config.images;
+    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+    const cellViewportX = this.getCellViewportX(cellPos, column);
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
+    const relativeX = mouseX - cellViewportX;
+    const relativeY = mouseY - cellViewportY;
+    const padding = 4;
+    const STANDARD_ROW_HEIGHT2 = 32;
+    const effectiveCellHeight = config.scaleWithRowHeight === false ? Math.min(cellPos.height, STANDARD_ROW_HEIGHT2) : cellPos.height;
+    const maxImgSize = Math.max(0, Math.min(cellPos.width, effectiveCellHeight) - padding * 2);
+    const configWidth = config.width ?? 32;
+    const configHeight = config.height ?? 32;
+    const imgWidth = Math.min(configWidth, maxImgSize);
+    const imgHeight = Math.min(configHeight, maxImgSize);
+    const gap = config.gap ?? 4;
+    if (!images || images.length <= 1) {
+      const imgX = (cellPos.width - imgWidth) / 2;
+      const imgY = (cellPos.height - imgHeight) / 2;
+      const isInImage = relativeX >= imgX && relativeX <= imgX + imgWidth && relativeY >= imgY && relativeY <= imgY + imgHeight;
+      this.state.hoveredImageIndex = isInImage && config.hoverable !== false ? 0 : -1;
+      return;
+    }
+    const availableWidth = cellPos.width - padding * 2;
+    const availableHeight = cellPos.height - padding * 2;
+    const showMoreCount = config.showMoreCount !== false;
+    const userMaxVisible = config.maxVisible;
+    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
+    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
+    const slotCapacity = imagesPerRow * maxRows;
+    const requestedMaxVisible = userMaxVisible ?? slotCapacity;
+    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
+    const maxVisibleCapacity = needsMoreCount ? Math.max(0, slotCapacity - 1) : slotCapacity;
+    const maxVisible = Math.min(requestedMaxVisible, maxVisibleCapacity);
+    const hasMore = images.length > maxVisible;
+    const displayCount = hasMore ? maxVisible : images.length;
+    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
+    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
+    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
+    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
+    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
+    let startX = (cellPos.width - contentWidth) / 2;
+    startX = Math.max(padding, startX);
+    const startY = (cellPos.height - contentHeight) / 2;
+    const relX = relativeX - startX;
+    const relY = relativeY - startY;
+    for (let i = 0; i < displayCount; i++) {
+      const row2 = Math.floor(i / imagesPerRow);
+      const col = i % imagesPerRow;
+      const imgStartX = col * (imgWidth + gap);
+      const imgStartY = row2 * (imgHeight + gap);
+      if (relX >= imgStartX && relX < imgStartX + imgWidth && relY >= imgStartY && relY < imgStartY + imgHeight) {
+        this.state.hoveredImageIndex = config.hoverable !== false ? i : -1;
+        return;
+      }
+    }
+    if (hasMore && showMoreCount) {
+      const moreRow = Math.floor(displayCount / imagesPerRow);
+      const moreCol = displayCount % imagesPerRow;
+      const moreStartX = moreCol * (imgWidth + gap);
+      const moreStartY = moreRow * (imgHeight + gap);
+      if (relX >= moreStartX && relX < moreStartX + imgWidth && relY >= moreStartY && relY < moreStartY + imgHeight) {
+        this.state.hoveredImageIndex = config.hoverable !== false ? displayCount : -1;
+        return;
+      }
+    }
+    this.state.hoveredImageIndex = -1;
+  }
+  /**
+   * 更新单元格内被 hover 的按钮索引
+   */
+  updateButtonsHoverIndex(cell, mouseX, mouseY) {
+    if (!cell || cell.rowIndex < 0) {
+      this.state.hoveredButtonIndex = -1;
+      return;
+    }
+    const leafColumns = this.layoutManager.getLeafColumns();
+    const column = leafColumns[cell.columnIndex];
+    const row = this.rows[cell.rowIndex];
+    if (!column || !row) {
+      this.state.hoveredButtonIndex = -1;
+      return;
+    }
+    const renderResult = getRenderResult(column, row, cell.rowIndex);
+    if (renderResult.type !== CellTypes.BUTTON || !renderResult.button || !Array.isArray(renderResult.button)) {
+      this.state.hoveredButtonIndex = -1;
+      return;
+    }
+    if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
+      this.state.hoveredButtonIndex = -1;
+      return;
+    }
+    const buttons = renderResult.button;
+    const options = renderResult.buttonOptions ?? {};
+    const visibleButtons = buttons.filter((btn) => btn.visible !== false);
+    const maxVisible = options.maxVisible ?? 3;
+    const gap = options.gap ?? 4;
+    const padding = 8;
+    const buttonHeight = 24;
+    const displayButtons = visibleButtons.slice(0, maxVisible);
+    const moreButtons = visibleButtons.slice(maxVisible);
+    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
+    const cellViewportX = this.getCellViewportX(cellPos, column);
+    const cellViewportY = this.getCellViewportY(cell.rowIndex);
+    const buttonY = cellViewportY + (cellPos.height - buttonHeight) / 2;
+    const relativeY = mouseY - buttonY;
+    if (relativeY < 0 || relativeY > buttonHeight) {
+      this.state.hoveredButtonIndex = -1;
+      return;
+    }
+    let currentX = cellViewportX + padding;
+    const fontSize = 13;
+    this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    for (let i = 0; i < displayButtons.length; i++) {
+      const btn = displayButtons[i];
+      const text = btn.text ?? this.locale.cell.buttonText;
+      const textWidth = this.ctx.measureText(text).width;
+      const buttonWidth = Math.max(textWidth + 16, 40);
+      if (mouseX >= currentX && mouseX < currentX + buttonWidth) {
+        this.state.hoveredButtonIndex = i;
+        return;
+      }
+      currentX += buttonWidth + gap;
+    }
+    if (moreButtons.length > 0) {
+      const moreText = options.moreButtonText ?? "···";
+      const textWidth = this.ctx.measureText(moreText).width;
+      const buttonWidth = Math.max(textWidth + 16, 32);
+      if (mouseX >= currentX && mouseX < currentX + buttonWidth) {
+        this.state.hoveredButtonIndex = maxVisible;
+        return;
+      }
+    }
+    this.state.hoveredButtonIndex = -1;
+  }
+}
+const IMAGE_SIZE = 64;
+const DROPDOWN_ITEM_HEIGHT = 32;
+const DROPDOWN_MAX_VISIBLE = 8;
+class WheelHandler extends BaseHandler {
+  dropdownHandler;
+  imageHandler;
+  tooltipHandler;
+  lazyLoadEnabled = false;
+  lazyLoadThreshold = 5;
+  isLoadingMore = false;
+  hasMoreData = true;
+  scrollTimeout = null;
+  constructor(context, eventEmitter, dropdownHandler, imageHandler, tooltipHandler) {
+    super(context, eventEmitter);
+    this.dropdownHandler = dropdownHandler;
+    this.imageHandler = imageHandler;
+    this.tooltipHandler = tooltipHandler;
+  }
+  setLazyLoadConfig(enabled, threshold) {
+    this.lazyLoadEnabled = enabled;
+    this.lazyLoadThreshold = threshold;
+    this.hasMoreData = true;
+  }
+  setLoadingMore(loading) {
+    this.isLoadingMore = loading;
+  }
+  setHasMore(hasMore) {
+    this.hasMoreData = hasMore;
+    if (!hasMore) {
+      this.isLoadingMore = true;
+    }
+  }
+  destroy() {
+    if (this.scrollTimeout) {
+      clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = null;
+    }
+  }
+  handleWheel(e) {
+    const target = e.target;
+    if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+      const element = target;
+      const hasVerticalScrollbar = element.scrollHeight > element.clientHeight;
+      const hasHorizontalScrollbar = element.scrollWidth > element.clientWidth;
+      if (hasVerticalScrollbar || hasHorizontalScrollbar) {
+        return;
+      }
+    }
+    if (this.state.imageTooltip) {
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const { x, y, images, maxRows, scrollTop } = this.state.imageTooltip;
+      const imgSize = IMAGE_SIZE;
+      const padding = 8;
+      const gap = 8;
+      const imagesPerRow = 4;
+      const scrollbarWidth = 4;
+      const scrollbarGap = 4;
+      const dropdownWidth = imagesPerRow * imgSize + (imagesPerRow - 1) * gap + padding * 2 + scrollbarGap + scrollbarWidth;
+      const rowHeight = imgSize + gap;
+      const visibleHeight = maxRows * rowHeight + padding * 2 - gap;
+      const isInDropdown = viewportX >= x && viewportX <= x + dropdownWidth && viewportY >= y && viewportY <= y + visibleHeight;
+      if (isInDropdown) {
+        const totalRows = Math.ceil(images.length / imagesPerRow);
+        const maxScrollTop = Math.max(0, (totalRows - maxRows) * rowHeight);
+        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+        if (maxScrollTop > 0 && isMainlyVertical) {
+          const epsilon = 0.5;
+          const atTop = scrollTop <= epsilon && e.deltaY < 0;
+          const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
+          if (!atTop && !atBottom) {
+            this.state.imageTooltip.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
+            e.preventDefault();
+            e.stopPropagation();
+            this.eventEmitter.emit(TableEvents.IMAGE_TOOLTIP_SCROLL);
+            return;
+          }
+        }
+      }
+      this.imageHandler.updateImageTooltipPosition();
+    }
+    if (this.state.imageEditor) {
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const { x, y, images, maxRows, scrollTop, pendingImages } = this.state.imageEditor;
+      const imgSize = IMAGE_SIZE;
+      const padding = 8;
+      const gap = 8;
+      const imagesPerRow = 4;
+      const uploadAreaHeight = 60;
+      const rowHeight = imgSize + gap;
+      const editorWidth = imagesPerRow * imgSize + (imagesPerRow - 1) * gap + padding * 2 + 4 + 4;
+      const imagesHeight = maxRows * rowHeight + padding * 2 - gap;
+      const editorHeight = uploadAreaHeight + imagesHeight;
+      const isInEditor = viewportX >= x && viewportX <= x + editorWidth && viewportY >= y && viewportY <= y + editorHeight;
+      if (isInEditor) {
+        const totalImages = images.length + pendingImages.length;
+        const totalRows = Math.ceil(totalImages / imagesPerRow);
+        const maxScrollTop = Math.max(0, (totalRows - maxRows) * rowHeight);
+        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+        if (maxScrollTop > 0 && isMainlyVertical) {
+          const epsilon = 0.5;
+          const atTop = scrollTop <= epsilon && e.deltaY < 0;
+          const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
+          if (!atTop && !atBottom) {
+            this.state.imageEditor.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
+            e.preventDefault();
+            e.stopPropagation();
+            this.eventEmitter.emit(TableEvents.IMAGE_EDITOR_SCROLL);
+            return;
+          }
+        }
+      }
+      this.imageHandler.updateImageEditorPosition();
+    }
+    if (this.state.filterDropdown) {
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const { x, y, width, mode, options, scrollTop } = this.state.filterDropdown;
+      if (mode === "select" && options) {
+        const padding = 8;
+        const itemHeight = DROPDOWN_ITEM_HEIGHT;
+        const maxVisibleItems = DROPDOWN_MAX_VISIBLE;
+        const visibleCount = Math.min(options.length, maxVisibleItems);
+        const searchHeight = 32;
+        const gap = 4;
+        const listHeight = visibleCount * itemHeight;
+        const dropdownHeight = padding + searchHeight + gap + listHeight + gap + 36;
+        const isInDropdown = viewportX >= x && viewportX <= x + width && viewportY >= y && viewportY <= y + dropdownHeight;
+        if (isInDropdown) {
+          const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+          const maxScrollTop = Math.max(0, options.length * itemHeight - listHeight);
+          if (maxScrollTop > 0 && isMainlyVertical) {
+            const epsilon = 0.5;
+            const atTop = scrollTop <= epsilon && e.deltaY < 0;
+            const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
+            if (!atTop && !atBottom) {
+              this.state.filterDropdown.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
+              e.preventDefault();
+              e.stopPropagation();
+              this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+              return;
+            }
+          }
+        }
+      }
+      this.dropdownHandler.updateFilterDropdownPosition();
+    }
+    if (this.state.dropdown) {
+      const rect = this.canvas.getBoundingClientRect();
+      const viewportX = e.clientX - rect.left;
+      const viewportY = e.clientY - rect.top;
+      const { x, y, width, type, tagsConfig, config, scrollTop } = this.state.dropdown;
+      const itemHeight = DROPDOWN_ITEM_HEIGHT;
+      const maxVisibleItems = DROPDOWN_MAX_VISIBLE;
+      let optionsLength;
+      if (type === "tags" && tagsConfig) {
+        optionsLength = tagsConfig.options?.length ?? 0;
+      } else {
+        optionsLength = config.options.length;
+      }
+      const visibleCount = Math.min(optionsLength, maxVisibleItems);
+      const dropdownHeight = visibleCount * itemHeight;
+      const isInDropdown = viewportX >= x && viewportX <= x + width && viewportY >= y && viewportY <= y + dropdownHeight;
+      if (isInDropdown) {
+        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
+        const maxScrollTop = Math.max(0, optionsLength * itemHeight - dropdownHeight);
+        if (maxScrollTop > 0 && isMainlyVertical) {
+          const epsilon = 0.5;
+          const currentScrollTop = scrollTop ?? 0;
+          const atTop = currentScrollTop <= epsilon && e.deltaY < 0;
+          const atBottom = currentScrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
+          if (!atTop && !atBottom) {
+            this.state.dropdown.scrollTop = clamp(currentScrollTop + e.deltaY, 0, maxScrollTop);
+            e.preventDefault();
+            e.stopPropagation();
+            this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
+            return;
+          }
+        }
+      }
+      this.dropdownHandler.updateDropdownPosition();
+    }
+    this.updateAllDropdownPositions();
+    e.preventDefault();
+    const deltaX = e.deltaX;
+    const deltaY = e.deltaY;
+    const newScrollLeft = clamp(
+      this.scrollState.scrollLeft + deltaX,
+      0,
+      this.scrollState.maxScrollLeft
+    );
+    const newScrollTop = clamp(
+      this.scrollState.scrollTop + deltaY,
+      0,
+      this.scrollState.maxScrollTop
+    );
+    if (newScrollLeft !== this.scrollState.scrollLeft || newScrollTop !== this.scrollState.scrollTop) {
+      this.scrollState.scrollLeft = newScrollLeft;
+      this.scrollState.scrollTop = newScrollTop;
+      this.scrollState.isScrolling = true;
+      this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
+      this.checkLazyLoad(newScrollTop, deltaY);
+      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = setTimeout(() => {
+        this.scrollState.isScrolling = false;
+      }, 150);
+    }
+  }
+  handleExternalWheel(deltaX, deltaY) {
+    if (this.state.dropdown) {
+      this.dropdownHandler.updateDropdownPosition();
+    }
+    if (this.state.tooltip) {
+      this.tooltipHandler.updateTooltipPosition();
+    }
+    const newScrollLeft = clamp(
+      this.scrollState.scrollLeft + deltaX,
+      0,
+      this.scrollState.maxScrollLeft
+    );
+    const newScrollTop = clamp(
+      this.scrollState.scrollTop + deltaY,
+      0,
+      this.scrollState.maxScrollTop
+    );
+    if (newScrollLeft !== this.scrollState.scrollLeft || newScrollTop !== this.scrollState.scrollTop) {
+      this.scrollState.scrollLeft = newScrollLeft;
+      this.scrollState.scrollTop = newScrollTop;
+      this.scrollState.isScrolling = true;
+      this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
+      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = setTimeout(() => {
+        this.scrollState.isScrolling = false;
+      }, 150);
+    }
+  }
+  /** 更新所有 dropdown 位置（滚动时调用） */
+  updateAllDropdownPositions() {
+    if (this.state.dateDropdown) this.dropdownHandler.updateDateDropdownPosition();
+    if (this.state.colorDropdown) this.dropdownHandler.updateColorDropdownPosition();
+    if (this.state.buttonsDropdown) this.dropdownHandler.updateButtonsDropdownPosition();
+    if (this.state.tooltip) this.tooltipHandler.updateTooltipPosition();
+  }
+  /**
+   * 检查是否需要触发懒加载
+   */
+  checkLazyLoad(newScrollTop, deltaY) {
+    if (!this.lazyLoadEnabled) return;
+    if (this.isLoadingMore) return;
+    if (!this.hasMoreData) return;
+    if (deltaY <= 0) return;
+    const rows = this.rows;
+    if (rows.length === 0) return;
+    const layoutInfo = this.layoutManager.getLayoutInfo();
+    const viewportHeight = layoutInfo.viewportHeight;
+    const headerHeight = layoutInfo.headerHeight;
+    const totalContentHeight = layoutInfo.totalHeight - headerHeight;
+    const scrollBottom = newScrollTop + viewportHeight - headerHeight;
+    const distanceToBottom = totalContentHeight - scrollBottom;
+    const lastRowHeight = this.layoutManager.getRowHeightByIndex(rows.length - 1);
+    const rowsToBottom = Math.ceil(distanceToBottom / lastRowHeight);
+    if (rowsToBottom <= this.lazyLoadThreshold) {
+      this.isLoadingMore = true;
+      this.eventEmitter.emit(TableEvents.LOAD_MORE, {
+        startIndex: rows.length,
+        scrollTop: newScrollTop,
+        direction: "down"
+      });
+    }
+  }
+}
+class FilterHandler extends BaseHandler {
+  filterConfig;
+  headerHandler;
+  constructor(context, eventEmitter, filterConfig, headerHandler) {
+    super(context, eventEmitter);
+    this.filterConfig = filterConfig;
+    this.headerHandler = headerHandler;
+  }
+  applyFilter() {
+    if (!this.state.filterDropdown) return;
+    const { columnKey, mode } = this.state.filterDropdown;
+    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
+    if (existingIndex >= 0) {
+      this.filterConfig.splice(existingIndex, 1);
+    }
+    let filterValue = null;
+    let hasFilter = false;
+    switch (mode) {
+      case "search": {
+        const searchValue = this.state.filterDropdown.searchValue?.trim();
+        if (searchValue) {
+          filterValue = searchValue;
+          hasFilter = true;
+        }
+        break;
+      }
+      case "select": {
+        const options = this.state.filterDropdown.options;
+        if (options) {
+          const checkedOptions = options.filter((o) => o.checked);
+          if (checkedOptions.length > 0 && checkedOptions.length < options.length) {
+            filterValue = checkedOptions.map((o) => o.value);
+            hasFilter = true;
+          }
+        }
+        break;
+      }
+      case "range": {
+        const minVal = this.state.filterDropdown.minValue;
+        const maxVal = this.state.filterDropdown.maxValue;
+        if (minVal !== "" || maxVal !== "") {
+          filterValue = {
+            min: minVal !== "" ? Number(minVal) : void 0,
+            max: maxVal !== "" ? Number(maxVal) : void 0
+          };
+          hasFilter = true;
+        }
+        break;
+      }
+      case "dateRange": {
+        const startDate = this.state.filterDropdown.startDate;
+        const endDate = this.state.filterDropdown.endDate;
+        if (startDate || endDate) {
+          filterValue = {
+            start: startDate,
+            end: endDate
+          };
+          hasFilter = true;
+        }
+        break;
+      }
+      case "boolean": {
+        const boolValue = this.state.filterDropdown.boolValue;
+        if (boolValue !== "all") {
+          filterValue = boolValue;
+          hasFilter = true;
+        }
+        break;
+      }
+    }
+    if (hasFilter) {
+      this.filterConfig.push({
+        column: columnKey,
+        operator: this.getOperatorByMode(mode),
+        value: filterValue
+      });
+    }
+    this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
+    this.state.filterDropdown = null;
+    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
+  }
+  clearFilter() {
+    if (!this.state.filterDropdown) return;
+    const { columnKey } = this.state.filterDropdown;
+    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
+    if (existingIndex >= 0) {
+      this.filterConfig.splice(existingIndex, 1);
+    }
+    this.headerHandler.updateFilterConfig(this.filterConfig);
+    this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
+    this.state.filterDropdown = null;
+    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
+  }
+  /**
+   * 重置当前筛选 dropdown 的筛选值，但保持 dropdown 打开
+   * 用于重置按钮
+   */
+  resetFilterValue() {
+    if (!this.state.filterDropdown) return;
+    const { columnKey } = this.state.filterDropdown;
+    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
+    if (existingIndex >= 0) {
+      this.filterConfig.splice(existingIndex, 1);
+      this.headerHandler.updateFilterConfig(this.filterConfig);
+      this.dataManager.filter(this.filterConfig);
+      this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
+    }
+    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+  }
+  /**
+   * 处理筛选下拉框的搜索输入
+   * 用于延迟加载模式下的选项搜索
+   */
+  handleFilterDropdownSearch(searchText) {
+    if (!this.state.filterDropdown) return;
+    const { mode, columnKey } = this.state.filterDropdown;
+    if (mode === "select") {
+      this.state.filterDropdown.searchText = searchText;
+      const leafColumns = this.layoutManager.getLeafColumns();
+      const column = leafColumns.find((col) => col.key === columnKey);
+      if (!column) return;
+      const rowsToUse = this.allRows.length > 0 ? this.allRows : this.rows;
+      if (searchText.trim()) {
+        const matchedOptions = searchFilterOptions(column, rowsToUse, searchText);
+        this.state.filterDropdown.options = matchedOptions.map((opt) => ({
+          label: opt.label,
+          value: opt.value,
+          checked: false
+        }));
+        this.state.filterDropdown.isLoading = false;
+      } else {
+        const sampledOptions = getColumnFilterOptions(column, rowsToUse, 0);
+        if (sampledOptions.length === 0 && rowsToUse.length > 0) {
+          this.state.filterDropdown.isLoading = true;
+          this.state.filterDropdown.options = void 0;
+        } else {
+          this.state.filterDropdown.options = sampledOptions.map((opt) => ({
+            label: opt.label,
+            value: opt.value,
+            checked: false
+          }));
+          this.state.filterDropdown.isLoading = false;
+        }
+      }
+      this.state.filterDropdown.scrollTop = 0;
+      this.state.filterDropdown.hoveredIndex = -1;
+      this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    } else if (mode === "search") {
+      this.state.filterDropdown.searchValue = searchText;
+      this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    }
+  }
+  /**
+   * 处理筛选下拉框的范围值更新
+   */
+  handleFilterDropdownRangeUpdate(minValue, maxValue) {
+    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "range") return;
+    this.state.filterDropdown.minValue = minValue;
+    this.state.filterDropdown.maxValue = maxValue;
+    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+  }
+  /**
+   * 处理筛选下拉框的布尔值更新
+   */
+  handleFilterDropdownBooleanUpdate(value) {
+    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "boolean") return;
+    this.state.filterDropdown.boolValue = value;
+    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+  }
+  /**
+   * 处理筛选下拉框的日期范围更新
+   */
+  handleFilterDropdownDateRangeUpdate(startDate, endDate) {
+    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "dateRange") return;
+    this.state.filterDropdown.startDate = startDate;
+    this.state.filterDropdown.endDate = endDate;
+    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+  }
+  /**
+   * 根据筛选模式获取操作符
+   */
+  getOperatorByMode(mode) {
+    switch (mode) {
+      case "search":
+        return "contains";
+      case "select":
+        return "in";
+      case "range":
+        return "between";
+      case "dateRange":
+        return "dateRange";
+      case "boolean":
+        return "equals";
+      default:
+        return "contains";
+    }
+  }
+}
 class InteractionManager {
   // 下拉菜单常量
   static DROPDOWN_ITEM_HEIGHT = 32;
@@ -17518,26 +19010,19 @@ class InteractionManager {
   controlClickHandler;
   buttonAnimationHandler;
   tooltipHandler;
+  clipboardHandler;
+  hoverHandler;
+  wheelHandler;
+  filterHandler;
   // Data accessors via DataManager
   get rows() {
     return this.dataManager.getRows();
   }
-  get allRows() {
-    return this.dataManager.getAllRows();
-  }
   resizeColumnIndex = -1;
   resizeStartX = 0;
   resizeStartWidth = 0;
-  // 用于检测双击，防止双击时触发 link 跳转
-  _lastClickTime = 0;
-  _lastClickCell = null;
   getScrollbarBounds = () => ({ vertical: null, horizontal: null });
-  // 懒加载相关
-  lazyLoadEnabled = false;
-  lazyLoadThreshold = 5;
-  isLoadingMore = false;
-  hasMoreData = true;
-  // 是否还有更多数据
+  // 懒加载相关（状态由 WheelHandler 持有）
   rowHeightResizeEnabled = false;
   rowResizable = true;
   enableRowPinning = false;
@@ -17618,7 +19103,9 @@ class InteractionManager {
       ctx: this.ctx,
       expandColumnKey: this.expandColumnKey,
       locale: this.locale,
-      editorRegistry: this.editorRegistry
+      editorRegistry: this.editorRegistry,
+      onDragStart: () => this.bindDocumentEvents(),
+      onDragEnd: () => this.unbindDocumentEvents()
     };
     this.handlerContext = context;
     this.editingHandler = new EditingHandler(context, this.eventEmitter, this.editingConfig);
@@ -17638,9 +19125,29 @@ class InteractionManager {
       this.sortConfig,
       this.filterConfig
     );
-    this.controlClickHandler = new ControlClickHandler(context, this.eventEmitter);
     this.buttonAnimationHandler = new ButtonAnimationHandler(context, this.eventEmitter);
+    this.controlClickHandler = new ControlClickHandler(
+      context,
+      this.eventEmitter,
+      this.editingHandler,
+      this.buttonAnimationHandler
+    );
     this.tooltipHandler = new TooltipHandler(context, this.eventEmitter);
+    this.clipboardHandler = new ClipboardHandler(context, this.eventEmitter, this.selectionHandler);
+    this.hoverHandler = new HoverHandler(context, this.eventEmitter);
+    this.wheelHandler = new WheelHandler(
+      context,
+      this.eventEmitter,
+      this.dropdownHandler,
+      this.imageHandler,
+      this.tooltipHandler
+    );
+    this.filterHandler = new FilterHandler(
+      context,
+      this.eventEmitter,
+      this.filterConfig,
+      this.headerHandler
+    );
   }
   /**
    * 将 CellPosition 转换为 CellInfo，包含 row 和 column 数据
@@ -18373,14 +19880,14 @@ class InteractionManager {
         return;
       }
       const cell = hitResult.cell;
-      this.updateButtonHoverState(cell, viewportX, viewportY);
+      this.buttonAnimationHandler.updateButtonHoverState(cell, viewportX, viewportY);
       const leafColumns = this.layoutManager.getLeafColumns();
       const column = cell.columnIndex >= 0 ? leafColumns[cell.columnIndex] : void 0;
       const row = cell.rowIndex >= 0 ? this.rows[cell.rowIndex] : void 0;
       const isDisabled = column && row ? resolveDisabled(column.disabled, row, column) : false;
       if (isDisabled) {
         this.canvas.style.cursor = "not-allowed";
-      } else if (this.isClickableElement(cell, viewportX, viewportY)) {
+      } else if (this.hoverHandler.isClickableElement(cell, viewportX, viewportY)) {
         this.canvas.style.cursor = "pointer";
       } else if (column && column.key.startsWith("__hidden_placeholder__")) {
         this.canvas.style.cursor = "pointer";
@@ -18392,8 +19899,8 @@ class InteractionManager {
         const cellInfo = this.state.hoveredCell ? this.getCellInfo(this.state.hoveredCell) : null;
         this.eventEmitter.emit(TableEvents.CELL_HOVER, cellInfo, e);
       }
-      this.updateImageHoverIndex(cell, viewportX, viewportY);
-      this.updateButtonsHoverIndex(cell, viewportX, viewportY);
+      this.hoverHandler.updateImageHoverIndex(cell, viewportX, viewportY);
+      this.hoverHandler.updateButtonsHoverIndex(cell, viewportX, viewportY);
       if (this.state.hoveredHeaderColumnKey !== void 0) {
         this.state.hoveredHeaderColumnKey = void 0;
         this.eventEmitter.emit(TableEvents.HEADER_HOVER, void 0);
@@ -18401,104 +19908,9 @@ class InteractionManager {
       this.checkTooltip(cell);
     }
   };
-  updateButtonHoverState(cell, mouseX, mouseY) {
-    const currentHoveredCellKey = cell && cell.rowIndex >= 0 ? `${cell.rowIndex}-${cell.columnIndex}` : null;
-    this.state.buttonHoverStates.forEach((state, key) => {
-      if (key !== currentHoveredCellKey && state.progress > 0) {
-        this.state.buttonHoverStates.set(key, {
-          ...state,
-          targetProgress: 0,
-          startTime: Date.now(),
-          startProgress: state.progress
-        });
-      }
-    });
-    if (!cell || cell.rowIndex < 0) {
-      if (this.state.buttonHoverStates.size > 0) {
-        this.startButtonHoverAnimationLoop();
-      }
-      return;
-    }
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-    if (!column || !row) {
-      this.startButtonHoverAnimationLoop();
-      return;
-    }
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-    if (renderResult.type !== CellTypes.BUTTON || !renderResult.button || Array.isArray(renderResult.button) || !this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
-      this.startButtonHoverAnimationLoop();
-      return;
-    }
-    const buttonConfig = renderResult.button;
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-    const relativeX = mouseX - cellViewportX;
-    const relativeY = mouseY - cellViewportY;
-    const buttonHeight = buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
-    const buttonY = (cellPos.height - buttonHeight) / 2;
-    const text = buttonConfig.text ?? this.locale.cell.buttonText;
-    const fontSize = 13;
-    this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    const textWidth = this.ctx.measureText(text).width;
-    const buttonPadding = 16;
-    const cellPadding = 8;
-    const buttonWidth = Math.min(
-      Math.max(textWidth + buttonPadding * 2, 60),
-      cellPos.width - cellPadding * 2
-    );
-    const buttonX = (cellPos.width - buttonWidth) / 2;
-    const isOnButton = relativeY >= buttonY && relativeY <= buttonY + buttonHeight && relativeX >= buttonX && relativeX <= buttonX + buttonWidth;
-    const cellKey = `${cell.rowIndex}-${cell.columnIndex}`;
-    if (isOnButton) {
-      const existingState = this.state.buttonHoverStates.get(cellKey);
-      if (!existingState || existingState.targetProgress !== 1) {
-        const currentProgress = existingState ? existingState.progress : 0;
-        this.state.buttonHoverStates.set(cellKey, {
-          cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
-          progress: currentProgress,
-          targetProgress: 1,
-          startTime: Date.now(),
-          startProgress: currentProgress
-        });
-        this.startButtonHoverAnimationLoop();
-      }
-    } else {
-      const existingState = this.state.buttonHoverStates.get(cellKey);
-      if (existingState && existingState.progress > 0) {
-        this.state.buttonHoverStates.set(cellKey, {
-          cell: { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex },
-          progress: existingState.progress,
-          targetProgress: 0,
-          startTime: Date.now(),
-          startProgress: existingState.progress
-        });
-        this.startButtonHoverAnimationLoop();
-      }
-    }
-  }
   clearAllButtonHoverStates() {
-    let hasChanges = false;
-    this.state.buttonHoverStates.forEach((state, key) => {
-      if (state.progress > 0 || state.targetProgress !== 0) {
-        this.state.buttonHoverStates.set(key, {
-          ...state,
-          targetProgress: 0,
-          startTime: Date.now(),
-          startProgress: state.progress
-        });
-        hasChanges = true;
-      }
-    });
-    if (hasChanges) {
-      this.startButtonHoverAnimationLoop();
-    }
+    this.buttonAnimationHandler.clearAllButtonHoverStates();
   }
-  startButtonHoverAnimationLoop = () => {
-    this.buttonAnimationHandler.startButtonHoverAnimationLoop();
-  };
   getButtonHoverStates = () => {
     return this.buttonAnimationHandler.getButtonHoverStates();
   };
@@ -18508,381 +19920,9 @@ class InteractionManager {
   getHoveredButtonIndex() {
     return this.state.hoveredButtonIndex ?? -1;
   }
-  updateImageHoverIndex(cell, mouseX, mouseY) {
-    if (!cell || cell.rowIndex < 0) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-    if (!column || !row) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-    if (renderResult.type !== CellTypes.IMAGE || !renderResult.image) {
-      this.state.hoveredImageIndex = -1;
-      return;
-    }
-    const config = renderResult.image;
-    const images = config.images;
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-    const relativeX = mouseX - cellViewportX;
-    const relativeY = mouseY - cellViewportY;
-    const padding = 4;
-    const STANDARD_ROW_HEIGHT2 = 32;
-    const effectiveCellHeight = config.scaleWithRowHeight === false ? Math.min(cellPos.height, STANDARD_ROW_HEIGHT2) : cellPos.height;
-    const maxImgSize = Math.max(0, Math.min(cellPos.width, effectiveCellHeight) - padding * 2);
-    const configWidth = config.width ?? 32;
-    const configHeight = config.height ?? 32;
-    const imgWidth = Math.min(configWidth, maxImgSize);
-    const imgHeight = Math.min(configHeight, maxImgSize);
-    const gap = config.gap ?? 4;
-    if (!images || images.length <= 1) {
-      const imgX = (cellPos.width - imgWidth) / 2;
-      const imgY = (cellPos.height - imgHeight) / 2;
-      const isInImage = relativeX >= imgX && relativeX <= imgX + imgWidth && relativeY >= imgY && relativeY <= imgY + imgHeight;
-      this.state.hoveredImageIndex = isInImage && config.hoverable !== false ? 0 : -1;
-      return;
-    }
-    const availableWidth = cellPos.width - padding * 2;
-    const availableHeight = cellPos.height - padding * 2;
-    const showMoreCount = config.showMoreCount !== false;
-    const userMaxVisible = config.maxVisible;
-    const imagesPerRow = Math.max(1, Math.floor((availableWidth + gap) / (imgWidth + gap)));
-    const maxRows = Math.max(1, Math.floor((availableHeight + gap) / (imgHeight + gap)));
-    const slotCapacity = imagesPerRow * maxRows;
-    const requestedMaxVisible = userMaxVisible ?? slotCapacity;
-    const needsMoreCount = showMoreCount && images.length > requestedMaxVisible;
-    const maxVisibleCapacity = needsMoreCount ? Math.max(0, slotCapacity - 1) : slotCapacity;
-    const maxVisible = Math.min(requestedMaxVisible, maxVisibleCapacity);
-    const hasMore = images.length > maxVisible;
-    const displayCount = hasMore ? maxVisible : images.length;
-    const renderItemCount = displayCount + (hasMore && showMoreCount ? 1 : 0);
-    const displayRows = Math.max(1, Math.ceil(renderItemCount / imagesPerRow));
-    const widestRowItems = Math.min(renderItemCount, imagesPerRow);
-    const contentWidth = widestRowItems * imgWidth + Math.max(0, widestRowItems - 1) * gap;
-    const contentHeight = displayRows * imgHeight + Math.max(0, displayRows - 1) * gap;
-    let startX = (cellPos.width - contentWidth) / 2;
-    startX = Math.max(padding, startX);
-    const startY = (cellPos.height - contentHeight) / 2;
-    const relX = relativeX - startX;
-    const relY = relativeY - startY;
-    for (let i = 0; i < displayCount; i++) {
-      const row2 = Math.floor(i / imagesPerRow);
-      const col = i % imagesPerRow;
-      const imgStartX = col * (imgWidth + gap);
-      const imgStartY = row2 * (imgHeight + gap);
-      if (relX >= imgStartX && relX < imgStartX + imgWidth && relY >= imgStartY && relY < imgStartY + imgHeight) {
-        this.state.hoveredImageIndex = config.hoverable !== false ? i : -1;
-        return;
-      }
-    }
-    if (hasMore && showMoreCount) {
-      const moreRow = Math.floor(displayCount / imagesPerRow);
-      const moreCol = displayCount % imagesPerRow;
-      const moreStartX = moreCol * (imgWidth + gap);
-      const moreStartY = moreRow * (imgHeight + gap);
-      if (relX >= moreStartX && relX < moreStartX + imgWidth && relY >= moreStartY && relY < moreStartY + imgHeight) {
-        this.state.hoveredImageIndex = config.hoverable !== false ? displayCount : -1;
-        return;
-      }
-    }
-    this.state.hoveredImageIndex = -1;
-  }
-  updateButtonsHoverIndex(cell, mouseX, mouseY) {
-    if (!cell || cell.rowIndex < 0) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-    if (!column || !row) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-    if (renderResult.type !== CellTypes.BUTTON || !renderResult.button || !Array.isArray(renderResult.button)) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-    if (!this.editorRegistry.getStrategy(column).canEdit(cell, row, column)) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-    const buttons = renderResult.button;
-    const options = renderResult.buttonOptions ?? {};
-    const visibleButtons = buttons.filter((btn) => btn.visible !== false);
-    const maxVisible = options.maxVisible ?? 3;
-    const gap = options.gap ?? 4;
-    const padding = 8;
-    const buttonHeight = 24;
-    const displayButtons = visibleButtons.slice(0, maxVisible);
-    const moreButtons = visibleButtons.slice(maxVisible);
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-    const buttonY = cellViewportY + (cellPos.height - buttonHeight) / 2;
-    const relativeY = mouseY - buttonY;
-    if (relativeY < 0 || relativeY > buttonHeight) {
-      this.state.hoveredButtonIndex = -1;
-      return;
-    }
-    let currentX = cellViewportX + padding;
-    const fontSize = 13;
-    this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    for (let i = 0; i < displayButtons.length; i++) {
-      const btn = displayButtons[i];
-      const text = btn.text ?? this.locale.cell.buttonText;
-      const textWidth = this.ctx.measureText(text).width;
-      const buttonWidth = Math.max(textWidth + 16, 40);
-      if (mouseX >= currentX && mouseX < currentX + buttonWidth) {
-        this.state.hoveredButtonIndex = i;
-        return;
-      }
-      currentX += buttonWidth + gap;
-    }
-    if (moreButtons.length > 0) {
-      const moreText = options.moreButtonText ?? "···";
-      const textWidth = this.ctx.measureText(moreText).width;
-      const buttonWidth = Math.max(textWidth + 16, 32);
-      if (mouseX >= currentX && mouseX < currentX + buttonWidth) {
-        this.state.hoveredButtonIndex = maxVisible;
-        return;
-      }
-    }
-    this.state.hoveredButtonIndex = -1;
-  }
   checkTooltip = (cell) => {
     this.tooltipHandler.checkTooltip(cell);
   };
-  isClickableElement(cell, mouseX, mouseY) {
-    if (!cell) return false;
-    if (cell.rowIndex === -1) {
-      return true;
-    }
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-    if (!column || !row) return false;
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const cellViewportY = this.getCellViewportY(cell.rowIndex);
-    const relativeX = mouseX - cellViewportX;
-    const relativeY = mouseY - cellViewportY;
-    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
-      if (isDisabled) return false;
-      const size = 16;
-      const checkboxX = (cellPos.width - size) / 2;
-      const checkboxY = (cellPos.height - size) / 2;
-      return relativeX >= checkboxX && relativeX <= checkboxX + size && relativeY >= checkboxY && relativeY <= checkboxY + size;
-    }
-    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
-      if (isDisabled) return false;
-      const size = 16;
-      if (renderResult.radio.options && renderResult.radio.options.length > 0) {
-        const padding = 8;
-        const gap = 4;
-        const maxX = cellPos.width - padding;
-        this.ctx.font = `14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-        let currentX = padding;
-        for (let i = 0; i < renderResult.radio.options.length; i++) {
-          const option = renderResult.radio.options[i];
-          if (option.disabled) {
-            const textWidth2 = this.ctx.measureText(option.label).width;
-            currentX += size + gap + textWidth2 + padding;
-            continue;
-          }
-          const textWidth = this.ctx.measureText(option.label).width;
-          const optionWidth = size + gap + textWidth + padding;
-          if (currentX + optionWidth - padding > maxX) {
-            break;
-          }
-          const radioX = currentX;
-          const radioY = (cellPos.height - size) / 2;
-          const centerY = radioY + size / 2;
-          const inRadioCircle = relativeX >= radioX && relativeX <= radioX + size && relativeY >= radioY && relativeY <= radioY + size;
-          const textX = radioX + size + gap;
-          const inText = relativeX >= textX && relativeX <= textX + textWidth && relativeY >= centerY - 10 && relativeY <= centerY + 10;
-          if (inRadioCircle || inText) {
-            return true;
-          }
-          currentX += optionWidth;
-        }
-        return false;
-      } else {
-        const radioX = (cellPos.width - size) / 2;
-        const radioY = (cellPos.height - size) / 2;
-        return relativeX >= radioX && relativeX <= radioX + size && relativeY >= radioY && relativeY <= radioY + size;
-      }
-    }
-    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
-      if (isDisabled) return false;
-      const button = renderResult.button;
-      if (Array.isArray(button)) {
-        const options = renderResult.buttonOptions ?? {};
-        const padding2 = 8;
-        const gap = options.gap ?? 4;
-        const maxVisible = options.maxVisible ?? 3;
-        const buttonHeight2 = 24;
-        const buttonY2 = (cellPos.height - buttonHeight2) / 2;
-        const visibleButtons = button.filter((btn) => btn.visible !== false);
-        const displayButtons = visibleButtons.slice(0, maxVisible);
-        let currentX = padding2;
-        for (const btn of displayButtons) {
-          const text = btn.text ?? this.locale.cell.buttonText;
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth = this.ctx.measureText(text).width;
-          const buttonWidth = Math.max(textWidth + 16, 40);
-          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth) {
-            return true;
-          }
-          currentX += buttonWidth + gap;
-        }
-        if (visibleButtons.length > maxVisible) {
-          const moreText = options.moreButtonText ?? "···";
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth = this.ctx.measureText(moreText).width;
-          const buttonWidth = Math.max(textWidth + 16, 32);
-          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth) {
-            return true;
-          }
-        }
-        return false;
-      }
-      const buttonHeight = button.size === "small" ? 24 : button.size === "large" ? 40 : 32;
-      const buttonY = (cellPos.height - buttonHeight) / 2;
-      const padding = 8;
-      return relativeY >= buttonY && relativeY <= buttonY + buttonHeight && relativeX >= padding && relativeX <= cellPos.width - padding;
-    }
-    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
-      if (isDisabled) return false;
-      const switchWidth = 44;
-      const switchHeight = 22;
-      const switchX = (cellPos.width - switchWidth) / 2;
-      const switchY = (cellPos.height - switchHeight) / 2;
-      return relativeX >= switchX && relativeX <= switchX + switchWidth && relativeY >= switchY && relativeY <= switchY + switchHeight;
-    }
-    if (renderResult.type === CellTypes.SELECT && renderResult.select) {
-      if (isDisabled) return false;
-      return true;
-    }
-    if (renderResult.type === CellTypes.TAG && renderResult.tags) {
-      return true;
-    }
-    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
-      if (isDisabled || renderResult.input.readonly) return false;
-      return true;
-    }
-    if (renderResult.type === CellTypes.LINK && renderResult.link) {
-      const link = renderResult.link;
-      const linkText = link.text || link.link;
-      if (!linkText) return false;
-      const padding = 8;
-      const fontSize = 13;
-      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-      const maxTextWidth = cellPos.width - padding * 2;
-      let textWidth = this.ctx.measureText(linkText).width;
-      let displayText = linkText;
-      if (textWidth > maxTextWidth) {
-        const ellipsis = "...";
-        while (displayText.length > 0 && this.ctx.measureText(displayText + ellipsis).width > maxTextWidth) {
-          displayText = displayText.slice(0, -1);
-        }
-        displayText += ellipsis;
-        textWidth = this.ctx.measureText(displayText).width;
-      }
-      const align = column.align ?? "left";
-      let textX;
-      switch (align) {
-        case "center":
-          textX = (cellPos.width - textWidth) / 2;
-          break;
-        case "right":
-          textX = cellPos.width - padding - textWidth;
-          break;
-        default:
-          textX = padding;
-      }
-      const textY = (cellPos.height - fontSize) / 2;
-      return relativeX >= textX && relativeX <= textX + textWidth && relativeY >= textY && relativeY <= textY + fontSize;
-    }
-    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
-      const config = renderResult.image;
-      if (config.clickable === false) return false;
-      const images = config.images;
-      if (!images || images.length <= 1) {
-        const src = config.src || images && images[0];
-        return !!src;
-      }
-      const hoveredImageIndex = this.state.hoveredImageIndex ?? -1;
-      return hoveredImageIndex >= 0 && hoveredImageIndex < images.length;
-    }
-    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
-      const config = renderResult.progress;
-      if (config.interactive !== true) return false;
-      if (isDisabled) return false;
-      const shape = config.shape ?? "line";
-      if (shape === "line") {
-        const padding = 8;
-        const size = config.size ?? "medium";
-        const barHeight = config.height ?? (size === "small" ? 6 : size === "large" ? 16 : 10);
-        const textPosition = config.textPosition ?? "right";
-        const showText = config.showText ?? true;
-        const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
-        const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
-        const barX = padding;
-        const barY = (cellPos.height - barHeight) / 2;
-        return relativeX >= barX && relativeX <= barX + barWidth && relativeY >= barY && relativeY <= barY + barHeight;
-      }
-      if (shape === "circle" || shape === "dashboard") {
-        const size = config.size ?? "medium";
-        let sizeRatio;
-        let centerYOffset = 0;
-        if (shape === "circle") {
-          sizeRatio = size === "small" ? 0.6 : size === "large" ? 0.9 : 0.75;
-        } else {
-          sizeRatio = size === "small" ? 0.7 : size === "large" ? 0.95 : 0.85;
-          centerYOffset = cellPos.height * 0.05;
-        }
-        const defaultDiameter = Math.floor(cellPos.height * sizeRatio);
-        const diameter = config.width ?? defaultDiameter;
-        const strokeWidth = config.strokeWidth ?? Math.max(2, Math.round(diameter * 0.12));
-        const centerX = cellPos.width / 2;
-        const centerY = cellPos.height / 2 + centerYOffset;
-        const radius = (diameter - strokeWidth) / 2;
-        const dx = relativeX - centerX;
-        const dy = relativeY - centerY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        return distance >= radius - strokeWidth && distance <= radius + strokeWidth;
-      }
-    }
-    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
-      if (isDisabled) return false;
-      const config = renderResult.rating;
-      const max = config.max ?? 5;
-      const starSize = config.starSize ?? 16;
-      const totalWidth = max * starSize;
-      const startX = (cellPos.width - totalWidth) / 2;
-      const startY = (cellPos.height - starSize) / 2;
-      return relativeX >= startX && relativeX <= startX + totalWidth && relativeY >= startY && relativeY <= startY + starSize;
-    }
-    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
-      if (isDisabled) return false;
-      const padding = 8;
-      const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
-      const colorBoxX = (cellPos.width - colorBoxSize) / 2;
-      const colorBoxY = (cellPos.height - colorBoxSize) / 2;
-      return relativeX >= colorBoxX && relativeX <= colorBoxX + colorBoxSize && relativeY >= colorBoxY && relativeY <= colorBoxY + colorBoxSize;
-    }
-    return false;
-  }
   handleMouseUp = (_e) => {
     if (this.state.isDragging && this.state.dragType === "row-resize" && this.state.rowResizeState) {
       const { rowIndex, displayHeight } = this.state.rowResizeState;
@@ -18899,12 +19939,12 @@ class InteractionManager {
     }
     if (this.state.isDragging && this.state.dragType === "progress-drag" && this.state.progressDragState) {
       const { cell, displayValue } = this.state.progressDragState;
-      this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell), displayValue);
       this.state.isDragging = false;
       this.state.dragType = null;
-      this.state.progressDragState = void 0;
       this.canvas.style.cursor = "default";
       this.unbindDocumentEvents();
+      this.state.progressDragState.pendingValue = displayValue;
+      this.eventEmitter.emit(TableEvents.PROGRESS_CHANGE, this.getCellInfo(cell), displayValue);
       return;
     }
     if (this.state.isDragging && this.state.dragType === "column-reorder" && this.state.columnReorderState) {
@@ -19128,655 +20168,17 @@ class InteractionManager {
     }
   };
   handleControlClick = (cell, e) => {
-    const leafColumns = this.layoutManager.getLeafColumns();
-    const column = leafColumns[cell.columnIndex];
-    const row = this.rows[cell.rowIndex];
-    if (!column || !row) return false;
-    if (column.key.startsWith("__hidden_placeholder__")) {
-      const hiddenColumnKey = column._hiddenColumnKey;
-      if (hiddenColumnKey) {
-        this.eventEmitter.emit(TableEvents.COLUMN_SHOW, hiddenColumnKey);
-        return true;
-      }
-    }
-    if (this.expandColumnKey === column.key && row.children && row.children.length > 0) {
-      const expandClick = this.handleExpandIconClick(cell, e, row);
-      if (expandClick) return true;
-    }
-    const renderResult = getRenderResult(column, row, cell.rowIndex);
-    const isDisabled = !this.editorRegistry.getStrategy(column).canEdit(cell, row, column);
-    if (renderResult.type === CellTypes.CHECKBOX && renderResult.checkbox) {
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      const checkboxSize = 16;
-      const checkboxX = cellViewportX + (cellPos.width - checkboxSize) / 2;
-      const checkboxY = cellViewportY + (cellPos.height - checkboxSize) / 2;
-      const isOnCheckbox = viewportX >= checkboxX && viewportX <= checkboxX + checkboxSize && viewportY >= checkboxY && viewportY <= checkboxY + checkboxSize;
-      if (isOnCheckbox && !isDisabled) {
-        const newChecked = !renderResult.checkbox.checked;
-        this.eventEmitter.emit(TableEvents.CHECKBOX_CHANGE, this.getCellInfo(cell), newChecked);
-        return true;
-      }
-      return false;
-    }
-    if (renderResult.type === CellTypes.RADIO && renderResult.radio) {
-      if (isDisabled) return false;
-      if (renderResult.radio.options && renderResult.radio.options.length > 0) {
-        const clickedOption = this.getClickedRadioOption(cell, e, renderResult.radio.options);
-        if (clickedOption && !clickedOption.disabled) {
-          this.eventEmitter.emit(
-            TableEvents.RADIO_CHANGE,
-            this.getCellInfo(cell),
-            clickedOption.value
-          );
-          return true;
-        }
-        return false;
-      } else {
-        this.eventEmitter.emit(
-          TableEvents.RADIO_CHANGE,
-          this.getCellInfo(cell),
-          renderResult.radio.value
-        );
-        return true;
-      }
-    }
-    if (renderResult.type === CellTypes.BUTTON && renderResult.button) {
-      if (isDisabled) return false;
-      const buttonConfig = renderResult.button;
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-      if (Array.isArray(buttonConfig)) {
-        const options = renderResult.buttonOptions ?? {};
-        const padding = 8;
-        const gap = options.gap ?? 4;
-        const maxVisible = options.maxVisible ?? 3;
-        const buttonHeight2 = 24;
-        const buttonY2 = (cellPos.height - buttonHeight2) / 2;
-        const visibleButtons = buttonConfig.filter((btn) => btn.visible !== false);
-        const displayButtons = visibleButtons.slice(0, maxVisible);
-        const moreButtons = visibleButtons.slice(maxVisible);
-        let currentX = padding;
-        for (let i = 0; i < displayButtons.length; i++) {
-          const btn = displayButtons[i];
-          const text2 = btn.text ?? this.locale.cell.buttonText;
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth2 = this.ctx.measureText(text2).width;
-          const buttonWidth2 = Math.max(textWidth2 + 16, 40);
-          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth2) {
-            this.eventEmitter.emit(
-              TableEvents.BUTTON_CLICK,
-              this.getCellInfo(cell),
-              btn.actionKey
-            );
-            return true;
-          }
-          currentX += buttonWidth2 + gap;
-        }
-        if (moreButtons.length > 0) {
-          const moreText = options.moreButtonText ?? "···";
-          this.ctx.font = `13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-          const textWidth2 = this.ctx.measureText(moreText).width;
-          const buttonWidth2 = Math.max(textWidth2 + 16, 32);
-          if (relativeY >= buttonY2 && relativeY <= buttonY2 + buttonHeight2 && relativeX >= currentX && relativeX <= currentX + buttonWidth2) {
-            const dropdownX = cellViewportX + currentX;
-            const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-            const dropdownHeight = moreButtons.length * itemHeight;
-            const canvasRect = this.canvas.getBoundingClientRect();
-            let dropdownY = cellViewportY + buttonY2 + buttonHeight2 + 4;
-            let showAbove = false;
-            if (dropdownY + dropdownHeight > canvasRect.height) {
-              dropdownY = cellViewportY + buttonY2 - dropdownHeight - 4;
-              showAbove = true;
-            }
-            this.state.buttonsDropdown = {
-              cell,
-              x: dropdownX,
-              y: dropdownY,
-              buttons: moreButtons,
-              hoveredIndex: -1,
-              buttonRelativeX: currentX,
-              buttonY: buttonY2,
-              buttonHeight: buttonHeight2,
-              showAbove
-            };
-            this.eventEmitter.emit(TableEvents.DROPDOWN_OPEN);
-            return true;
-          }
-        }
-        return false;
-      }
-      const buttonHeight = buttonConfig.size === "small" ? 24 : buttonConfig.size === "large" ? 40 : 32;
-      const buttonY = (cellPos.height - buttonHeight) / 2;
-      const text = buttonConfig.text ?? this.locale.cell.buttonText;
-      const fontSize = 13;
-      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      const textWidth = this.ctx.measureText(text).width;
-      const buttonPadding = 16;
-      const cellPadding = 8;
-      const buttonWidth = Math.min(
-        Math.max(textWidth + buttonPadding * 2, 60),
-        cellPos.width - cellPadding * 2
-      );
-      const buttonX = (cellPos.width - buttonWidth) / 2;
-      const isOnButton = relativeY >= buttonY && relativeY <= buttonY + buttonHeight && relativeX >= buttonX && relativeX <= buttonX + buttonWidth;
-      if (!isOnButton) return false;
-      this.eventEmitter.emit(
-        TableEvents.BUTTON_CLICK,
-        this.getCellInfo(cell),
-        buttonConfig.actionKey
-      );
-      return true;
-    }
-    if (renderResult.type === CellTypes.SWITCH && renderResult.switch) {
-      if (isDisabled) return false;
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-      const switchWidth = 44;
-      const switchHeight = 22;
-      const switchX = (cellPos.width - switchWidth) / 2;
-      const switchY = (cellPos.height - switchHeight) / 2;
-      const isOnSwitch = relativeX >= switchX && relativeX <= switchX + switchWidth && relativeY >= switchY && relativeY <= switchY + switchHeight;
-      if (!isOnSwitch) return false;
-      const cellKey = `${cell.rowIndex}-${cell.columnIndex}`;
-      const existingAnimation = this.state.switchAnimations.get(cellKey);
-      const currentChecked = renderResult.switch.checked ?? false;
-      const currentProgress = existingAnimation ? existingAnimation.progress : currentChecked ? 1 : 0;
-      const targetProgress = currentProgress < 0.5 ? 1 : 0;
-      const targetChecked = targetProgress === 1;
-      if (currentChecked !== targetChecked) {
-        this.eventEmitter.emit(TableEvents.SWITCH_CHANGE, this.getCellInfo(cell), targetChecked);
-      }
-      this.state.switchAnimations.set(cellKey, {
-        cell,
-        progress: currentProgress,
-        targetProgress,
-        startTime: Date.now(),
-        startProgress: currentProgress
-      });
-      this.startSwitchAnimationLoop();
-      return true;
-    }
-    if (renderResult.type === CellTypes.INPUT && renderResult.input) {
-      if (isDisabled || renderResult.input.readonly) return false;
-      return false;
-    }
-    if (renderResult.type === CellTypes.LINK && renderResult.link) {
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      const relativeX = viewportX - cellViewportX;
-      const relativeY = viewportY - cellViewportY;
-      const link = renderResult.link;
-      const linkUrl = link.link;
-      const linkText = link.text || link.link;
-      if (!linkUrl || !linkText) return false;
-      const padding = 8;
-      const fontSize = 13;
-      this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
-      const maxTextWidth = cellPos.width - padding * 2;
-      let textWidth = this.ctx.measureText(linkText).width;
-      let displayText = linkText;
-      if (textWidth > maxTextWidth) {
-        const ellipsis = "...";
-        while (displayText.length > 0 && this.ctx.measureText(displayText + ellipsis).width > maxTextWidth) {
-          displayText = displayText.slice(0, -1);
-        }
-        displayText += ellipsis;
-        textWidth = this.ctx.measureText(displayText).width;
-      }
-      const align = column.align ?? "left";
-      let textX;
-      switch (align) {
-        case "center":
-          textX = (cellPos.width - textWidth) / 2;
-          break;
-        case "right":
-          textX = cellPos.width - padding - textWidth;
-          break;
-        default:
-          textX = padding;
-      }
-      const textY = (cellPos.height - fontSize) / 2;
-      const isOnLink = relativeX >= textX && relativeX <= textX + textWidth && relativeY >= textY && relativeY <= textY + fontSize;
-      if (!isOnLink) return false;
-      const now = Date.now();
-      const isDoubleClick = this._lastClickCell?.rowIndex === cell.rowIndex && this._lastClickCell?.columnIndex === cell.columnIndex && now - this._lastClickTime < 350;
-      this._lastClickTime = now;
-      this._lastClickCell = { rowIndex: cell.rowIndex, columnIndex: cell.columnIndex };
-      if (isDoubleClick) {
-        return false;
-      }
-      window.open(linkUrl, "_blank", "noopener,noreferrer");
-      return true;
-    }
-    if (renderResult.type === CellTypes.PROGRESS && renderResult.progress) {
-      const result = this.handleProgressClick(cell, e, renderResult.progress, column, row);
-      if (result) {
-        const precision = renderResult.progress.precision ?? 0;
-        const displayValue = precision === 0 ? Math.round(renderResult.progress.value) : Number(renderResult.progress.value.toFixed(precision));
-        this.state.isDragging = true;
-        this.state.dragType = "progress-drag";
-        this.state.progressDragState = {
-          cell,
-          config: renderResult.progress,
-          column,
-          row,
-          startX: e.clientX,
-          startValue: renderResult.progress.value,
-          displayValue
-        };
-        this.canvas.style.cursor = "grabbing";
-        this.bindDocumentEvents();
-      }
-      return result;
-    }
-    if (renderResult.type === CellTypes.RATING && renderResult.rating) {
-      return this.handleRatingClick(cell, e, renderResult.rating, column, row);
-    }
-    if (renderResult.type === CellTypes.COLOR && renderResult.color) {
-      if (isDisabled) return false;
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      const rect = this.canvas.getBoundingClientRect();
-      const clickViewportX = e.clientX - rect.left;
-      const clickViewportY = e.clientY - rect.top;
-      const padding = 8;
-      const colorBoxSize = Math.min(cellPos.height - padding * 2, 24);
-      const colorBoxX = cellViewportX + (cellPos.width - colorBoxSize) / 2;
-      const colorBoxY = cellViewportY + (cellPos.height - colorBoxSize) / 2;
-      if (clickViewportX >= colorBoxX && clickViewportX <= colorBoxX + colorBoxSize && clickViewportY >= colorBoxY && clickViewportY <= colorBoxY + colorBoxSize) {
-        this.startColorEditing(cell, renderResult.color);
-        return true;
-      }
-      return false;
-    }
-    if (renderResult.type === CellTypes.IMAGE && renderResult.image) {
-      if (renderResult.image.clickable === false) return false;
-      const config = renderResult.image;
-      const images = config.images;
-      const rect = this.canvas.getBoundingClientRect();
-      const clickViewportX = e.clientX - rect.left;
-      const clickViewportY = e.clientY - rect.top;
-      const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-      const cellViewportX = this.getCellViewportX(cellPos, column);
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      const relativeX = clickViewportX - cellViewportX;
-      const relativeY = clickViewportY - cellViewportY;
-      const padding = 4;
-      const maxImgSize = Math.min(cellPos.width, cellPos.height) - padding * 2;
-      const configWidth = config.width ?? 32;
-      const configHeight = config.height ?? 32;
-      const imgWidth = Math.min(configWidth, maxImgSize);
-      const imgHeight = Math.min(configHeight, maxImgSize);
-      const gap = config.gap ?? 4;
-      if (images && images.length > 1) {
-        const maxVisible = config.maxVisible ?? 3;
-        const showMoreCount = config.showMoreCount !== false;
-        const availableWidth = cellPos.width - padding * 2;
-        const maxByWidth = Math.floor((availableWidth + gap) / (imgWidth + gap));
-        const reservedForMore = showMoreCount ? 1 : 0;
-        const calculatedMaxVisible = Math.max(1, maxByWidth - reservedForMore);
-        const actualMaxVisible = Math.min(maxVisible, calculatedMaxVisible);
-        const displayCount = images.length > actualMaxVisible ? actualMaxVisible : images.length;
-        const hasMore = images.length > actualMaxVisible;
-        let contentWidth;
-        if (hasMore && showMoreCount) {
-          contentWidth = displayCount * imgWidth + displayCount * gap + imgWidth;
-        } else {
-          contentWidth = displayCount * imgWidth + Math.max(0, displayCount - 1) * gap;
-        }
-        let startX = (cellPos.width - contentWidth) / 2;
-        startX = Math.max(padding, startX);
-        const imgY2 = (cellPos.height - imgHeight) / 2;
-        const relX = relativeX - startX;
-        const relY = relativeY - imgY2;
-        if (relX < 0 || relX > contentWidth || relY < 0 || relY > imgHeight) {
-          return false;
-        }
-        const clickedIndex = Math.floor(relX / (imgWidth + gap));
-        if (hasMore && showMoreCount && clickedIndex === displayCount) {
-          return false;
-        }
-        if (clickedIndex >= 0 && clickedIndex < images.length) {
-          const clickedSrc = images[clickedIndex];
-          if (clickedSrc) {
-            this.eventEmitter.emit(TableEvents.IMAGE_CLICK, this.getCellInfo(cell), clickedSrc, e);
-            return true;
-          }
-        }
-        return false;
-      }
-      const imgX = (cellPos.width - imgWidth) / 2;
-      const imgY = (cellPos.height - imgHeight) / 2;
-      const isInImage = relativeX >= imgX && relativeX <= imgX + imgWidth && relativeY >= imgY && relativeY <= imgY + imgHeight;
-      if (!isInImage) return false;
-      const src = config.src || images && images[0];
-      if (!src) return false;
-      this.eventEmitter.emit(TableEvents.IMAGE_CLICK, this.getCellInfo(cell), src, e);
-      return true;
-    }
-    return false;
-  };
-  handleProgressClick = (cell, e, config, column, row) => {
-    return this.controlClickHandler.handleProgressClick(cell, e, config, column, row);
+    return this.controlClickHandler.handleControlClick(cell, e);
   };
   handleProgressDragMove = (e) => {
-    const dragState = this.state.progressDragState;
-    if (!dragState) return;
-    const { cell, config, column } = dragState;
-    const rect = this.canvas.getBoundingClientRect();
-    const clickViewportX = e.clientX - rect.left;
-    const cellPos = this.layoutManager.getCellPosition(cell.rowIndex, cell.columnIndex);
-    const cellViewportX = this.getCellViewportX(cellPos, column);
-    const shape = config.shape ?? "line";
-    if (shape === "line") {
-      const padding = 8;
-      const textPosition = config.textPosition ?? "right";
-      const showText = config.showText ?? true;
-      const textReservedWidth = showText && textPosition === "right" ? 40 : 0;
-      const barWidth = config.width ?? cellPos.width - padding * 2 - textReservedWidth;
-      const barX = cellViewportX + padding;
-      const relativeX = clickViewportX - barX;
-      const precision = config.precision ?? 0;
-      const rawValue = Math.max(0, Math.min(100, relativeX / barWidth * 100));
-      const newValue = precision === 0 ? Math.round(rawValue) : Number(rawValue.toFixed(precision));
-      dragState.displayValue = newValue;
-      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
-    } else if (shape === "circle" || shape === "dashboard") {
-      const clickViewportY = e.clientY - rect.top;
-      const cellViewportY = this.getCellViewportY(cell.rowIndex);
-      let centerYOffset = 0;
-      if (shape === "dashboard") {
-        centerYOffset = cellPos.height * 0.05;
-      }
-      const cellCenterX = cellViewportX + cellPos.width / 2;
-      const cellCenterY = cellViewportY + cellPos.height / 2 + centerYOffset;
-      const dx = clickViewportX - cellCenterX;
-      const dy = clickViewportY - cellCenterY;
-      let angle = Math.atan2(dy, dx);
-      let newValue;
-      if (shape === "circle") {
-        angle = angle + Math.PI / 2;
-        if (angle < 0) angle += Math.PI * 2;
-        newValue = angle / (Math.PI * 2) * 100;
-      } else {
-        const startAngle = Math.PI * 0.75;
-        const totalAngle = Math.PI * 1.5;
-        if (angle < 0) angle += Math.PI * 2;
-        let offset = angle - startAngle;
-        if (offset < 0) offset += Math.PI * 2;
-        newValue = offset / totalAngle * 100;
-      }
-      newValue = Math.max(0, Math.min(100, newValue));
-      const precision = config.precision ?? 0;
-      newValue = precision === 0 ? Math.round(newValue) : Number(newValue.toFixed(precision));
-      dragState.displayValue = newValue;
-      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
-    }
-  };
-  handleRatingClick = (cell, e, config, column, row) => {
-    return this.controlClickHandler.handleRatingClick(cell, e, config, column, row);
-  };
-  handleExpandIconClick = (cell, e, row) => {
-    return this.controlClickHandler.handleExpandIconClick(cell, e, row);
-  };
-  getClickedRadioOption = (cell, e, options) => {
-    return this.controlClickHandler.getClickedRadioOption(cell, e, options);
+    this.controlClickHandler.handleProgressDragMove(e);
   };
   handleWheel = (e) => {
-    const target = e.target;
-    if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
-      const element = target;
-      const hasVerticalScrollbar = element.scrollHeight > element.clientHeight;
-      const hasHorizontalScrollbar = element.scrollWidth > element.clientWidth;
-      if (hasVerticalScrollbar || hasHorizontalScrollbar) {
-        return;
-      }
-    }
-    if (this.state.imageTooltip) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const { x, y, images, maxRows, scrollTop } = this.state.imageTooltip;
-      const imgSize = InteractionManager.IMAGE_SIZE;
-      const padding = 8;
-      const gap = 8;
-      const imagesPerRow = 4;
-      const scrollbarWidth = 4;
-      const scrollbarGap = 4;
-      const dropdownWidth = imagesPerRow * imgSize + (imagesPerRow - 1) * gap + padding * 2 + scrollbarGap + scrollbarWidth;
-      const rowHeight = imgSize + gap;
-      const visibleHeight = maxRows * rowHeight + padding * 2 - gap;
-      const isInDropdown = viewportX >= x && viewportX <= x + dropdownWidth && viewportY >= y && viewportY <= y + visibleHeight;
-      if (isInDropdown) {
-        const totalRows = Math.ceil(images.length / imagesPerRow);
-        const maxScrollTop = Math.max(0, (totalRows - maxRows) * rowHeight);
-        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-        if (maxScrollTop > 0 && isMainlyVertical) {
-          const epsilon = 0.5;
-          const atTop = scrollTop <= epsilon && e.deltaY < 0;
-          const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-          if (!atTop && !atBottom) {
-            this.state.imageTooltip.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
-            e.preventDefault();
-            e.stopPropagation();
-            this.eventEmitter.emit(TableEvents.IMAGE_TOOLTIP_SCROLL);
-            return;
-          }
-        }
-      }
-      this.imageHandler.updateImageTooltipPosition();
-    }
-    if (this.state.imageEditor) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const { x, y, images, maxRows, scrollTop, pendingImages } = this.state.imageEditor;
-      const imgSize = InteractionManager.IMAGE_SIZE;
-      const padding = 8;
-      const gap = 8;
-      const imagesPerRow = 4;
-      const uploadAreaHeight = 60;
-      const rowHeight = imgSize + gap;
-      const editorWidth = imagesPerRow * imgSize + (imagesPerRow - 1) * gap + padding * 2 + 4 + 4;
-      const imagesHeight = maxRows * rowHeight + padding * 2 - gap;
-      const editorHeight = uploadAreaHeight + imagesHeight;
-      const isInEditor = viewportX >= x && viewportX <= x + editorWidth && viewportY >= y && viewportY <= y + editorHeight;
-      if (isInEditor) {
-        const totalImages = images.length + pendingImages.length;
-        const totalRows = Math.ceil(totalImages / imagesPerRow);
-        const maxScrollTop = Math.max(0, (totalRows - maxRows) * rowHeight);
-        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-        if (maxScrollTop > 0 && isMainlyVertical) {
-          const epsilon = 0.5;
-          const atTop = scrollTop <= epsilon && e.deltaY < 0;
-          const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-          if (!atTop && !atBottom) {
-            this.state.imageEditor.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
-            e.preventDefault();
-            e.stopPropagation();
-            this.eventEmitter.emit(TableEvents.IMAGE_EDITOR_SCROLL);
-            return;
-          }
-        }
-      }
-      this.imageHandler.updateImageEditorPosition();
-    }
-    if (this.state.filterDropdown) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const { x, y, width, mode, options, scrollTop } = this.state.filterDropdown;
-      if (mode === "select" && options) {
-        const padding = 8;
-        const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-        const maxVisibleItems = InteractionManager.DROPDOWN_MAX_VISIBLE;
-        const visibleCount = Math.min(options.length, maxVisibleItems);
-        const searchHeight = 32;
-        const gap = 4;
-        const listHeight = visibleCount * itemHeight;
-        const dropdownHeight = padding + searchHeight + gap + listHeight + gap + 36;
-        const isInDropdown = viewportX >= x && viewportX <= x + width && viewportY >= y && viewportY <= y + dropdownHeight;
-        if (isInDropdown) {
-          const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-          const maxScrollTop = Math.max(0, options.length * itemHeight - listHeight);
-          if (maxScrollTop > 0 && isMainlyVertical) {
-            const epsilon = 0.5;
-            const atTop = scrollTop <= epsilon && e.deltaY < 0;
-            const atBottom = scrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-            if (!atTop && !atBottom) {
-              this.state.filterDropdown.scrollTop = clamp(scrollTop + e.deltaY, 0, maxScrollTop);
-              e.preventDefault();
-              e.stopPropagation();
-              this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
-              return;
-            }
-          }
-        }
-      }
-      this.dropdownHandler.updateFilterDropdownPosition();
-    }
-    if (this.state.dropdown) {
-      const rect = this.canvas.getBoundingClientRect();
-      const viewportX = e.clientX - rect.left;
-      const viewportY = e.clientY - rect.top;
-      const { x, y, width, type, tagsConfig, config, scrollTop } = this.state.dropdown;
-      const itemHeight = InteractionManager.DROPDOWN_ITEM_HEIGHT;
-      const maxVisibleItems = InteractionManager.DROPDOWN_MAX_VISIBLE;
-      let optionsLength;
-      if (type === "tags" && tagsConfig) {
-        optionsLength = tagsConfig.options?.length ?? 0;
-      } else {
-        optionsLength = config.options.length;
-      }
-      const visibleCount = Math.min(optionsLength, maxVisibleItems);
-      const dropdownHeight = visibleCount * itemHeight;
-      const isInDropdown = viewportX >= x && viewportX <= x + width && viewportY >= y && viewportY <= y + dropdownHeight;
-      if (isInDropdown) {
-        const isMainlyVertical = Math.abs(e.deltaY) >= Math.abs(e.deltaX);
-        const maxScrollTop = Math.max(0, optionsLength * itemHeight - dropdownHeight);
-        if (maxScrollTop > 0 && isMainlyVertical) {
-          const epsilon = 0.5;
-          const currentScrollTop = scrollTop ?? 0;
-          const atTop = currentScrollTop <= epsilon && e.deltaY < 0;
-          const atBottom = currentScrollTop >= maxScrollTop - epsilon && e.deltaY > 0;
-          if (!atTop && !atBottom) {
-            this.state.dropdown.scrollTop = clamp(currentScrollTop + e.deltaY, 0, maxScrollTop);
-            e.preventDefault();
-            e.stopPropagation();
-            this.eventEmitter.emit(TableEvents.DROPDOWN_HOVER);
-            return;
-          }
-        }
-      }
-      this.dropdownHandler.updateDropdownPosition();
-    }
-    this.updateAllDropdownPositions();
-    e.preventDefault();
-    const deltaX = e.deltaX;
-    const deltaY = e.deltaY;
-    const newScrollLeft = clamp(
-      this.scrollState.scrollLeft + deltaX,
-      0,
-      this.scrollState.maxScrollLeft
-    );
-    const newScrollTop = clamp(
-      this.scrollState.scrollTop + deltaY,
-      0,
-      this.scrollState.maxScrollTop
-    );
-    if (newScrollLeft !== this.scrollState.scrollLeft || newScrollTop !== this.scrollState.scrollTop) {
-      this.scrollState.scrollLeft = newScrollLeft;
-      this.scrollState.scrollTop = newScrollTop;
-      this.scrollState.isScrolling = true;
-      this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
-      this.checkLazyLoad(newScrollTop, deltaY);
-      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
-      this.scrollTimeout = setTimeout(() => {
-        this.scrollState.isScrolling = false;
-      }, 150);
-    }
+    this.wheelHandler.handleWheel(e);
   };
-  /**
-   * 检查是否需要触发懒加载
-   */
-  checkLazyLoad(newScrollTop, deltaY) {
-    if (!this.lazyLoadEnabled) return;
-    if (this.isLoadingMore) return;
-    if (!this.hasMoreData) return;
-    if (deltaY <= 0) return;
-    const rows = this.rows;
-    if (rows.length === 0) return;
-    const layoutInfo = this.layoutManager.getLayoutInfo();
-    const viewportHeight = layoutInfo.viewportHeight;
-    const headerHeight = layoutInfo.headerHeight;
-    const totalContentHeight = layoutInfo.totalHeight - headerHeight;
-    const scrollBottom = newScrollTop + viewportHeight - headerHeight;
-    const distanceToBottom = totalContentHeight - scrollBottom;
-    const lastRowHeight = this.layoutManager.getRowHeightByIndex(rows.length - 1);
-    const rowsToBottom = Math.ceil(distanceToBottom / lastRowHeight);
-    if (rowsToBottom <= this.lazyLoadThreshold) {
-      this.isLoadingMore = true;
-      this.eventEmitter.emit(TableEvents.LOAD_MORE, {
-        startIndex: rows.length,
-        scrollTop: newScrollTop,
-        direction: "down"
-      });
-    }
-  }
   handleExternalWheel(deltaX, deltaY) {
-    if (this.state.dropdown) {
-      this.dropdownHandler.updateDropdownPosition();
-    }
-    if (this.state.tooltip) {
-      this.updateTooltipPosition();
-    }
-    const newScrollLeft = clamp(
-      this.scrollState.scrollLeft + deltaX,
-      0,
-      this.scrollState.maxScrollLeft
-    );
-    const newScrollTop = clamp(
-      this.scrollState.scrollTop + deltaY,
-      0,
-      this.scrollState.maxScrollTop
-    );
-    if (newScrollLeft !== this.scrollState.scrollLeft || newScrollTop !== this.scrollState.scrollTop) {
-      this.scrollState.scrollLeft = newScrollLeft;
-      this.scrollState.scrollTop = newScrollTop;
-      this.scrollState.isScrolling = true;
-      this.eventEmitter.emit(TableEvents.SCROLL, newScrollLeft, newScrollTop);
-      if (this.scrollTimeout) clearTimeout(this.scrollTimeout);
-      this.scrollTimeout = setTimeout(() => {
-        this.scrollState.isScrolling = false;
-      }, 150);
-    }
+    this.wheelHandler.handleExternalWheel(deltaX, deltaY);
   }
-  updateTooltipPosition = () => {
-    this.tooltipHandler.updateTooltipPosition();
-  };
-  scrollTimeout = null;
   handleKeyDown = async (e) => {
     if (this.state.editingCell) {
       this.handleEditingKeyDown(e);
@@ -20007,6 +20409,25 @@ class InteractionManager {
     this.state.editingCell = null;
     this.state.editingValue = null;
   }
+  /**
+   * 清除进度条拖拽的临时显示值（提交完成后调用）
+   *
+   * 仅在「提交完成的值为拖拽结束时记录的最终值」时才清除，
+   * 以避免拖拽过程中 mousedown 触发的提前提交（值不同）或在拖拽进行中误清除。
+   *
+   * @param cell 提交的单元格；仅当与当前拖拽单元格一致时才清除
+   * @param value 提交完成的值；仅当与 pendingValue 一致时才清除
+   */
+  clearProgressDragState(cell, value) {
+    const dragState = this.state.progressDragState;
+    if (!dragState) return;
+    if (this.state.isDragging && this.state.dragType === "progress-drag") return;
+    if (cell && (dragState.cell.rowIndex !== cell.rowIndex || dragState.cell.columnIndex !== cell.columnIndex)) {
+      return;
+    }
+    if (dragState.pendingValue === void 0 || dragState.pendingValue !== value) return;
+    this.state.progressDragState = void 0;
+  }
   isEditing() {
     return this.state.editingCell !== null;
   }
@@ -20046,6 +20467,7 @@ class InteractionManager {
     this.state.dragType = null;
     this.state.rowResizeState = void 0;
     this.state.dragTarget = null;
+    this.state.progressDragState = void 0;
     this.state.tooltip = null;
     this.closeAllDropdowns();
     this.sortConfig = [];
@@ -20101,45 +20523,9 @@ class InteractionManager {
     this.closeColorDropdown();
     this.closeButtonsDropdown();
   }
-  /** 更新所有 dropdown 位置（滚动时调用） */
-  updateAllDropdownPositions() {
-    if (this.state.dateDropdown) this.dropdownHandler.updateDateDropdownPosition();
-    if (this.state.colorDropdown) this.dropdownHandler.updateColorDropdownPosition();
-    if (this.state.buttonsDropdown) this.dropdownHandler.updateButtonsDropdownPosition();
-    if (this.state.tooltip) this.updateTooltipPosition();
-  }
   // ==================== End Dropdown 公共方法 ====================
   copySelection() {
-    if (this.state.selectedCells.length === 0) return;
-    const text = this.getSelectedText();
-    navigator.clipboard.writeText(text).catch(() => {
-    });
-  }
-  getSelectedText() {
-    const lines = [];
-    const leafColumns = this.layoutManager.getLeafColumns();
-    for (const range of this.state.selectedCells) {
-      const { minRow, maxRow, minCol, maxCol } = this.getNormalizedRange(range);
-      for (let row = minRow; row <= maxRow; row++) {
-        const rowData = [];
-        for (let col = minCol; col <= maxCol; col++) {
-          const column = leafColumns[col];
-          if (!column) {
-            rowData.push("");
-            continue;
-          }
-          const row_ = this.rows[row];
-          if (!row_) {
-            rowData.push("");
-            continue;
-          }
-          const cellText = getCellDisplayText(column, row_, row);
-          rowData.push(cellText);
-        }
-        lines.push(rowData.join("	"));
-      }
-    }
-    return lines.join("\n");
+    void this.clipboardHandler.copySelection();
   }
   setScrollPosition(scrollLeft, scrollTop) {
     this.scrollState.scrollLeft = clamp(scrollLeft, 0, this.scrollState.maxScrollLeft);
@@ -20159,29 +20545,28 @@ class InteractionManager {
     this.headerHandler.updateSortConfig(config);
   }
   setFilterConfig(config) {
-    this.filterConfig = config;
-    this.headerHandler.updateFilterConfig(config);
+    this.filterConfig.length = 0;
+    this.filterConfig.push(...config);
+    this.headerHandler.updateFilterConfig(this.filterConfig);
   }
   setExpandColumnKey(key) {
     this.expandColumnKey = key;
+    if (this.handlerContext) {
+      this.handlerContext.expandColumnKey = key;
+    }
   }
   setLazyLoadConfig(enabled, threshold = 5) {
-    this.lazyLoadEnabled = enabled;
-    this.lazyLoadThreshold = threshold;
-    this.hasMoreData = true;
+    this.wheelHandler.setLazyLoadConfig(enabled, threshold);
   }
   setLoadingMore(loading) {
-    this.isLoadingMore = loading;
+    this.wheelHandler.setLoadingMore(loading);
   }
   /**
    * 设置是否还有更多数据
    * @param hasMore 是否还有更多数据，false 表示加载完成
    */
   setHasMore(hasMore) {
-    this.hasMoreData = hasMore;
-    if (!hasMore) {
-      this.isLoadingMore = true;
-    }
+    this.wheelHandler.setHasMore(hasMore);
   }
   getFilterDropdown() {
     return this.state.filterDropdown;
@@ -20202,193 +20587,42 @@ class InteractionManager {
     return this.state.imageEditor;
   }
   applyFilter() {
-    if (!this.state.filterDropdown) return;
-    const { columnKey, mode } = this.state.filterDropdown;
-    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
-    if (existingIndex >= 0) {
-      this.filterConfig.splice(existingIndex, 1);
-    }
-    let filterValue = null;
-    let hasFilter = false;
-    switch (mode) {
-      case "search": {
-        const searchValue = this.state.filterDropdown.searchValue?.trim();
-        if (searchValue) {
-          filterValue = searchValue;
-          hasFilter = true;
-        }
-        break;
-      }
-      case "select": {
-        const options = this.state.filterDropdown.options;
-        if (options) {
-          const checkedOptions = options.filter((o) => o.checked);
-          if (checkedOptions.length > 0 && checkedOptions.length < options.length) {
-            filterValue = checkedOptions.map((o) => o.value);
-            hasFilter = true;
-          }
-        }
-        break;
-      }
-      case "range": {
-        const minVal = this.state.filterDropdown.minValue;
-        const maxVal = this.state.filterDropdown.maxValue;
-        if (minVal !== "" || maxVal !== "") {
-          filterValue = {
-            min: minVal !== "" ? Number(minVal) : void 0,
-            max: maxVal !== "" ? Number(maxVal) : void 0
-          };
-          hasFilter = true;
-        }
-        break;
-      }
-      case "dateRange": {
-        const startDate = this.state.filterDropdown.startDate;
-        const endDate = this.state.filterDropdown.endDate;
-        if (startDate || endDate) {
-          filterValue = {
-            start: startDate,
-            end: endDate
-          };
-          hasFilter = true;
-        }
-        break;
-      }
-      case "boolean": {
-        const boolValue = this.state.filterDropdown.boolValue;
-        if (boolValue !== "all") {
-          filterValue = boolValue;
-          hasFilter = true;
-        }
-        break;
-      }
-    }
-    if (hasFilter) {
-      this.filterConfig.push({
-        column: columnKey,
-        operator: this.getOperatorByMode(mode),
-        value: filterValue
-      });
-    }
-    this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
-    this.state.filterDropdown = null;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
-  }
-  /**
-   * 根据筛选模式获取操作符
-   */
-  getOperatorByMode(mode) {
-    switch (mode) {
-      case "search":
-        return "contains";
-      case "select":
-        return "in";
-      case "range":
-        return "between";
-      case "dateRange":
-        return "dateRange";
-      case "boolean":
-        return "equals";
-      default:
-        return "contains";
-    }
+    this.filterHandler.applyFilter();
   }
   clearFilter() {
-    if (!this.state.filterDropdown) return;
-    const { columnKey } = this.state.filterDropdown;
-    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
-    if (existingIndex >= 0) {
-      this.filterConfig.splice(existingIndex, 1);
-    }
-    this.headerHandler.updateFilterConfig(this.filterConfig);
-    this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
-    this.state.filterDropdown = null;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_CLOSE);
+    this.filterHandler.clearFilter();
   }
   /**
    * 重置当前筛选 dropdown 的筛选值，但保持 dropdown 打开
    * 用于重置按钮
    */
   resetFilterValue() {
-    if (!this.state.filterDropdown) return;
-    const { columnKey } = this.state.filterDropdown;
-    const existingIndex = this.filterConfig.findIndex((f) => f.column === columnKey);
-    if (existingIndex >= 0) {
-      this.filterConfig.splice(existingIndex, 1);
-      this.headerHandler.updateFilterConfig(this.filterConfig);
-      this.dataManager.filter(this.filterConfig);
-      this.eventEmitter.emit(TableEvents.FILTER_CHANGE, [...this.filterConfig]);
-    }
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.resetFilterValue();
   }
   /**
    * 处理筛选下拉框的搜索输入
    * 用于延迟加载模式下的选项搜索
    */
   handleFilterDropdownSearch(searchText) {
-    if (!this.state.filterDropdown) return;
-    const { mode, columnKey } = this.state.filterDropdown;
-    if (mode === "select") {
-      this.state.filterDropdown.searchText = searchText;
-      const leafColumns = this.layoutManager.getLeafColumns();
-      const column = leafColumns.find((col) => col.key === columnKey);
-      if (!column) return;
-      const rowsToUse = this.allRows.length > 0 ? this.allRows : this.rows;
-      if (searchText.trim()) {
-        const matchedOptions = searchFilterOptions(column, rowsToUse, searchText);
-        this.state.filterDropdown.options = matchedOptions.map((opt) => ({
-          label: opt.label,
-          value: opt.value,
-          checked: false
-        }));
-        this.state.filterDropdown.isLoading = false;
-      } else {
-        const sampledOptions = getColumnFilterOptions(column, rowsToUse, 0);
-        if (sampledOptions.length === 0 && rowsToUse.length > 0) {
-          this.state.filterDropdown.isLoading = true;
-          this.state.filterDropdown.options = void 0;
-        } else {
-          this.state.filterDropdown.options = sampledOptions.map((opt) => ({
-            label: opt.label,
-            value: opt.value,
-            checked: false
-          }));
-          this.state.filterDropdown.isLoading = false;
-        }
-      }
-      this.state.filterDropdown.scrollTop = 0;
-      this.state.filterDropdown.hoveredIndex = -1;
-      this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
-    } else if (mode === "search") {
-      this.state.filterDropdown.searchValue = searchText;
-      this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
-    }
+    this.filterHandler.handleFilterDropdownSearch(searchText);
   }
   /**
    * 处理筛选下拉框的范围值更新
    */
   handleFilterDropdownRangeUpdate(minValue, maxValue) {
-    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "range") return;
-    this.state.filterDropdown.minValue = minValue;
-    this.state.filterDropdown.maxValue = maxValue;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.handleFilterDropdownRangeUpdate(minValue, maxValue);
   }
   /**
    * 处理筛选下拉框的布尔值更新
    */
   handleFilterDropdownBooleanUpdate(value) {
-    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "boolean") return;
-    this.state.filterDropdown.boolValue = value;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.handleFilterDropdownBooleanUpdate(value);
   }
   /**
    * 处理筛选下拉框的日期范围更新
    */
   handleFilterDropdownDateRangeUpdate(startDate, endDate) {
-    if (!this.state.filterDropdown || this.state.filterDropdown.mode !== "dateRange") return;
-    this.state.filterDropdown.startDate = startDate;
-    this.state.filterDropdown.endDate = endDate;
-    this.eventEmitter.emit(TableEvents.FILTER_DROPDOWN_OPEN);
+    this.filterHandler.handleFilterDropdownDateRangeUpdate(startDate, endDate);
   }
   getScrollState() {
     return { ...this.scrollState };
@@ -20494,18 +20728,12 @@ class InteractionManager {
     const row = this.rows[rowIndex];
     return row ? this.rowResizable(row, rowIndex) : false;
   }
-  startSwitchAnimationLoop = () => {
-    this.buttonAnimationHandler.startSwitchAnimationLoop();
-  };
   getSwitchAnimations = () => {
     return this.buttonAnimationHandler.getSwitchAnimations();
   };
   destroy() {
     this.isDestroyed = true;
-    if (this.scrollTimeout) {
-      clearTimeout(this.scrollTimeout);
-      this.scrollTimeout = null;
-    }
+    this.wheelHandler.destroy();
     this.unbindEvents();
     this.unbindDocumentEvents();
     this.buttonAnimationHandler.setDestroyed(true);
@@ -22513,6 +22741,8 @@ class CanvasTable {
         _value,
         this.props.onProgressChange
       );
+      this.interactionManager.clearProgressDragState(_cell, _value);
+      this.render();
     });
     this.eventEmitter.on(TableEvents.PROGRESS_DRAG, () => {
       this.render();

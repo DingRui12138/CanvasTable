@@ -37,8 +37,10 @@ export declare class Renderer {
     private jsxRenderer;
     private jsxInteractiveRegions;
     private jsxUpdateHandlers;
-    private static readonly SHARED_PLACEHOLDER_COLUMN;
-    private static readonly SHARED_PLACEHOLDER_ROW;
+    /** 渲染 context 预分配及行列缺失时的占位列，冻结避免跨单元格污染 */
+    private static readonly RENDER_CONTEXT_PLACEHOLDER_COLUMN;
+    /** 渲染 context 预分配及行列缺失时的占位行，冻结避免跨单元格污染 */
+    private static readonly RENDER_CONTEXT_PLACEHOLDER_ROW;
     /** 当前帧收集的可见图片 URL */
     private frameVisibleUrls;
     private textWidthCache;
@@ -46,19 +48,21 @@ export declare class Renderer {
     private cellTextCache;
     private wrappedTextCache;
     /**
+     * 单行文本截断（带缓存）
+     * 短文本直接测量，避免缓存 key 拼接和 Map 查找的开销；
+     * 长文本复用截断结果，避免每帧重复 measureText
+     */
+    private measureSingleLineText;
+    private truncateSingleLineText;
+    /**
+     * 多行文本换行（带缓存）
+     * 短文本且无换行符时直接测量/换行，不走缓存
+     */
+    private measureWrappedText;
+    /**
      * 根据单元格高度计算可显示行数
      */
     private calculateMaxRows;
-    /**
-     * 单行文本截断（带缓存）
-     * 相同 (字体, 可用宽度, 文本) 直接复用截断结果与测量宽度，避免每帧重复 measureText
-     */
-    private measureSingleLineText;
-    /**
-     * 多行文本换行（带缓存）
-     * 同时缓存每行宽度，供居中对齐/右对齐复用
-     */
-    private measureWrappedText;
     private performanceEnabled;
     private performanceStats;
     private frameStartTime;
@@ -148,12 +152,7 @@ export declare class Renderer {
         pendingValidations?: Set<string>;
     }): void;
     private shouldRenderRowBands;
-    /**
-     * 一次行循环绘制一个 band 的 center + 左右固定列。
-     * 行级信息（行索引/行高/纵坐标/背景色）每行只计算一次，
-     * 背景按区域每行只填充一次，避免 center 与固定列各跑一遍行循环。
-     */
-    private renderBandRows;
+    private renderRowBandCells;
     private renderRowBands;
     private renderSummaryBandCells;
     private getSummaryColumnX;
@@ -378,7 +377,7 @@ export declare class Renderer {
         maxCellCacheSize: number;
     } | null;
     destroy(): void;
-    invalidateJsxOffscreen(scope: 'all' | {
+    invalidateJsxOffscreen(scope: "all" | {
         oldSize: string | string[];
     }): void;
 }

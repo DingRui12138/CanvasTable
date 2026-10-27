@@ -13,6 +13,18 @@ export declare class ButtonAnimationHandler extends BaseHandler {
     private isDestroyed;
     constructor(context: HandlerContext, eventEmitter: EventEmitter<InteractionEvents>);
     /**
+     * Update button hover state for the given cell / mouse position.
+     * Starts the hover animation loop when a transition is needed.
+     */
+    updateButtonHoverState(cell: {
+        rowIndex: number;
+        columnIndex: number;
+    } | null, mouseX: number, mouseY: number): void;
+    /**
+     * Fade out all hovered buttons
+     */
+    clearAllButtonHoverStates(): void;
+    /**
      * Set destroyed state
      */
     setDestroyed(destroyed: boolean): void;

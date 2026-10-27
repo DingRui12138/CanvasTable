@@ -95,6 +95,13 @@ type JSXUpdateHandlers = {
   updateRow: (rowIndex: number, data: Record<string, unknown>) => Promise<void>;
 };
 
+/** 单行文本截断结果缓存上限 */
+const CELL_TEXT_CACHE_LIMIT = 5000;
+/** 多行换行结果缓存上限 */
+const WRAPPED_TEXT_CACHE_LIMIT = 2000;
+/** 短文本直接测量，跳过缓存 key 拼接与 Map 查找 */
+const CELL_TEXT_CACHE_MIN_LENGTH = 40;
+
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -155,19 +162,108 @@ export class Renderer {
   private textWidthCache: Map<string, number> = new Map();
   private textWidthCacheKey: string = ""; // 当前字体配置的 key
 
+  // 单元格文本截断/换行缓存，key 含字体与最大宽度，滚动重复绘制时直接复用
+  private cellTextCache: Map<string, { text: string; width: number }> = new Map();
+  private wrappedTextCache: Map<string, { lines: string[]; widths: number[] }> = new Map();
+
+  /**
+   * 单行文本截断（带缓存）
+   * 短文本直接测量，避免缓存 key 拼接和 Map 查找的开销；
+   * 长文本复用截断结果，避免每帧重复 measureText
+   */
+  private measureSingleLineText(
+    text: string,
+    fontKey: string,
+    maxWidth: number,
+  ): { text: string; width: number } {
+    if (text.length < CELL_TEXT_CACHE_MIN_LENGTH) {
+      const width = this.ctx.measureText(text).width;
+      return width <= maxWidth ? { text, width } : this.truncateSingleLineText(text, maxWidth);
+    }
+
+    const cacheKey = `${fontKey}\u0000${maxWidth}\u0000${text}`;
+    const cached = this.cellTextCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const fullWidth = this.ctx.measureText(text).width;
+    const result =
+      fullWidth <= maxWidth
+        ? { text, width: fullWidth }
+        : this.truncateSingleLineText(text, maxWidth);
+
+    if (this.cellTextCache.size >= CELL_TEXT_CACHE_LIMIT) {
+      const oldestKey = this.cellTextCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cellTextCache.delete(oldestKey);
+      }
+    }
+    this.cellTextCache.set(cacheKey, result);
+    return result;
+  }
+
+  private truncateSingleLineText(text: string, maxWidth: number): { text: string; width: number } {
+    const ellipsis = "...";
+    let low = 0;
+    let high = text.length;
+    while (low < high) {
+      const mid = (low + high + 1) >> 1;
+      if (this.ctx.measureText(text.slice(0, mid) + ellipsis).width <= maxWidth) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+    const finalText = text.slice(0, low) + ellipsis;
+    return { text: finalText, width: this.ctx.measureText(finalText).width };
+  }
+
+  /**
+   * 多行文本换行（带缓存）
+   * 短文本且无换行符时直接测量/换行，不走缓存
+   */
+  private measureWrappedText(
+    text: string,
+    fontKey: string,
+    maxWidth: number,
+    maxRows: number,
+  ): { lines: string[]; widths: number[] } {
+    if (text.length < CELL_TEXT_CACHE_MIN_LENGTH && !text.includes("\n")) {
+      const width = this.ctx.measureText(text).width;
+      if (width <= maxWidth) {
+        return { lines: [text], widths: [width] };
+      }
+      const lines = layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+      return { lines, widths: lines.map((line) => this.ctx.measureText(line).width) };
+    }
+
+    const cacheKey = `${fontKey}\u0000${maxWidth}\u0000${maxRows}\u0000${text}`;
+    const cached = this.wrappedTextCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const lines = layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
+    const widths = lines.map((line) => this.ctx.measureText(line).width);
+    const result = { lines, widths };
+
+    if (this.wrappedTextCache.size >= WRAPPED_TEXT_CACHE_LIMIT) {
+      const oldestKey = this.wrappedTextCache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.wrappedTextCache.delete(oldestKey);
+      }
+    }
+    this.wrappedTextCache.set(cacheKey, result);
+    return result;
+  }
+
   // 动态行高支持
   /**
    * 根据单元格高度计算可显示行数
    */
   private calculateMaxRows(cellHeight: number, lineHeight: number, padding: number = 8): number {
     return calculateMaxTextRows(cellHeight, lineHeight, padding);
-  }
-
-  /**
-   * 多行文本换行
-   */
-  private wrapTextToLines(text: string, maxWidth: number, maxRows: number): string[] {
-    return layoutWrappedText(this.ctx, text, maxWidth, maxRows).lines;
   }
 
   // 性能监控
@@ -2653,11 +2749,12 @@ export class Renderer {
       const fontFamily = style?.fontFamily ?? this.theme.font.family;
       const fontWeight = style?.fontWeight ?? "normal";
       const fontStyle = style?.fontStyle ?? "normal";
+      const fontKey = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
       const cellLocation = this.performanceEnabled
         ? { rowIndex, colIndex, x, y, width, height }
         : undefined;
 
-      this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
+      this.ctx.font = fontKey;
 
       if (type === CellTypes.CHECKBOX && checkbox) {
         this.measureRender("checkbox", ck, cellLocation, () => {
@@ -2984,8 +3081,9 @@ export class Renderer {
         const maxRows = this.calculateMaxRows(height, lineHeight, padding);
 
         if (maxRows > 1) {
-          // 多行显示模式
-          const lines = this.wrapTextToLines(displayText, maxTextWidth, maxRows);
+          // 多行显示模式（换行结果与每行宽度均缓存）
+          const wrapped = this.measureWrappedText(displayText, fontKey, maxTextWidth, maxRows);
+          const lines = wrapped.lines;
           const totalHeight = lines.length * lineHeight;
 
           // 计算起始 Y（根据 verticalAlign）
@@ -3002,13 +3100,14 @@ export class Renderer {
           this.ctx.textBaseline = "top";
           for (let i = 0; i < lines.length; i++) {
             const line = lines[i]!;
+            const lineWidth = wrapped.widths[i] ?? 0;
             let textX: number;
             switch (align) {
               case "center":
-                textX = x + (width - this.ctx.measureText(line).width) / 2;
+                textX = x + (width - lineWidth) / 2;
                 break;
               case "right":
-                textX = x + width - padding - this.ctx.measureText(line).width;
+                textX = x + width - padding - lineWidth;
                 break;
               default:
                 textX = x + padding;
@@ -3016,28 +3115,18 @@ export class Renderer {
             this.ctx.fillText(line, textX, startY + i * lineHeight);
           }
         } else {
-          // 单行显示模式（原有逻辑）
-          const ellipsis = "...";
-          let textWidth = this.ctx.measureText(displayText).width;
-
-          if (textWidth > maxTextWidth) {
-            let truncated = displayText;
-            while (
-              truncated.length > 0 &&
-              this.ctx.measureText(truncated + ellipsis).width > maxTextWidth
-            ) {
-              truncated = truncated.slice(0, -1);
-            }
-            displayText = truncated + ellipsis;
-          }
+          // 单行显示模式：截断结果与宽度按 (字体 + 可用宽度) 缓存，滚动时免重复 measureText
+          const metrics = this.measureSingleLineText(displayText, fontKey, maxTextWidth);
+          displayText = metrics.text;
+          const displayWidth = metrics.width;
 
           let textX: number;
           switch (align) {
             case "center":
-              textX = x + (width - this.ctx.measureText(displayText).width) / 2;
+              textX = x + (width - displayWidth) / 2;
               break;
             case "right":
-              textX = x + width - padding - this.ctx.measureText(displayText).width;
+              textX = x + width - padding - displayWidth;
               break;
             default:
               textX = x + padding;
@@ -3064,12 +3153,11 @@ export class Renderer {
             this.ctx.fillText(displayText, textX, textY);
 
             if (type === CellTypes.LINK) {
-              const textWidth = this.ctx.measureText(displayText).width;
               this.ctx.strokeStyle = color;
               this.ctx.lineWidth = 1;
               this.ctx.beginPath();
               this.ctx.moveTo(textX, textY + fontSize / 2 + 2);
-              this.ctx.lineTo(textX + textWidth, textY + fontSize / 2 + 2);
+              this.ctx.lineTo(textX + displayWidth, textY + fontSize / 2 + 2);
               this.ctx.stroke();
             }
           }

@@ -33,6 +33,7 @@ function initDemo() {
 
   // Seeded random generator
   var DATA_SEED = 12345;
+  var LONG_TEXT_FOR_PERF = '这是一段用于性能测试的超长文本，包含中文、English、数字 1234567890 以及标点符号，用于验证单元格文本截断、测量缓存与滚动渲染性能。';
   function createSeededRandom(seed) {
     var s = seed;
     return function() {
@@ -111,7 +112,8 @@ function initDemo() {
           volume: Math.floor(random() * 100),
           rating: Math.floor(random() * 10) / 2,
           color: ['#ff4d4f','#ff7a45','#ffa940','#ffc53d','#bae637','#73d13d','#36cfc9','#40a9ff','#597ef7','#9254de','#f759ab','#ff85c0','#a0d911','#13c2c2','#1890ff','#722ed1','#eb2f96','#faad14','#52c41a','#2f54eb'][Math.floor(random() * 20)],
-          remark: '备注-' + (i + 1) + '：这是一段较长的备注信息，用于测试多行输入功能。'
+          remark: '备注-' + (i + 1) + '：这是一段较长的备注信息，用于测试多行输入功能。',
+          longText: LONG_TEXT_FOR_PERF + LONG_TEXT_FOR_PERF + '——第 ' + (i + 1) + ' 行'
         }
       });
     }
@@ -209,6 +211,7 @@ function initDemo() {
     { key: 'joinDate', title: '入职日期', width: 120, type: 'date', sortable: true, filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'date', date: { value: value, format: 'YYYY-MM-DD' } }; } },
     { key: 'email', title: '邮箱', width: 180, type: 'link', filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'link', link: { text: value, link: 'mailto:' + value } }; } },
     { key: 'website', title: '个人主页', width: 150, type: 'link', filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'link', link: { text: value, link: value } }; } },
+    { key: 'longText', title: '超长文本', width: 220, type: 'text', sortable: false, filterable: false },
     { key: 'income', title: '收入信息', children: [
       { key: 'salary', title: '基本薪资', width: 100, type: 'number', sortable: true, filterable: true, editable: true, disabled: isRowDisabled, formatter: function(value) { return '¥' + value.toLocaleString(); }, validate: function(value) {
         var salary = Number(value);
