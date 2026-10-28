@@ -6,14 +6,13 @@
 [![npm downloads](https://img.shields.io/npm/dm/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
 [![license](https://img.shields.io/npm/l/@canvas-table/core.svg)](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)
 [![gzip size](https://img.shields.io/bundlephobia/minzip/@canvas-table/core)](https://bundlephobia.com/package/@canvas-table/core)
-[![CodeSandbox](https://img.shields.io/badge/CodeSandbox-Online%20Demo-151515?logo=codesandbox&logoColor=white)](https://codesandbox.io/p/sandbox/r7rvnp)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-00d4aa?logo=github)](https://dingrui12138.github.io/CanvasTable/)
 
 一个基于 Canvas 的高性能数据表格组件，支持百万级数据流畅渲染。
 
 - npm 包：[`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
 - 源码与 Issue：[DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
-- **Demo**：本地打开 `docs/index.html`，或将 `docs/` 发布到 GitHub Pages。
-- **在线 Demo（CodeSandbox）**：[预览](https://r7rvnp.csb.app) · [编辑源码](https://codesandbox.io/p/sandbox/r7rvnp)
+- **在线 Demo**：[https://dingrui12138.github.io/CanvasTable/](https://dingrui12138.github.io/CanvasTable/)
 
 ## 特性
 
@@ -1674,6 +1673,7 @@ pnpm test           # 单元测试
 pnpm test:e2e       # Playwright 端到端测试
 pnpm lint           # oxlint 检查
 pnpm build          # 构建 dist/（ESM、UMD、压缩版与类型声明）
+pnpm build:docs     # 根据 examples/basic.html 重新生成 docs/index.html（GitHub Pages）
 ```
 
 ## 发布

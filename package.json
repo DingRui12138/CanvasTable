@@ -1,6 +1,6 @@
 {
   "name": "@canvas-table/core",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "High-performance Canvas-based table component for large data rendering",
   "type": "module",
   "packageManager": "pnpm@10.15.1",
@@ -35,8 +35,9 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "vite build && tsc -p tsconfig.build.json && cp dist/canvas-table.umd.cjs docs/",
+    "build": "vite build && tsc -p tsconfig.build.json && node scripts/build-docs.mjs",
     "build:lib": "vite build",
+    "build:docs": "node scripts/build-docs.mjs",
     "build:types": "tsc -p tsconfig.build.json",
     "preview": "vite preview",
     "lint": "oxlint src",

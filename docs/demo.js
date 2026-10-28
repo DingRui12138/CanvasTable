@@ -3,12 +3,23 @@
   if (window.CanvasTable) {
     initDemo();
   } else {
-    console.error('CanvasTable library not loaded. Make sure canvas-table.umd.cjs is available.');
+    console.error('CanvasTable library not loaded. Make sure canvas-table.umd.min.js is available.');
   }
 })();
 
 function initDemo() {
-  var CanvasTable = window.CanvasTable.default || window.CanvasTable;
+  var library = window.CanvasTable;
+  var CanvasTable = library.default || library;
+  var createCTElement = library.createCTElement;
+  var CTBox = library.CTBox;
+  var CTRow = library.CTRow;
+  var CTColumn = library.CTColumn;
+  var CTText = library.CTText;
+  var CTCircle = library.CTCircle;
+  var CTImage = library.CTImage;
+  var CTProgress = library.CTProgress;
+  var CTTooltip = library.CTTooltip;
+  var CTDropdown = library.CTDropdown;
 
   // Render toast utility
   var renderToast = {
@@ -168,6 +179,208 @@ function initDemo() {
     ctx.fillText(displayName, textX, y + height / 2);
   }
 
+  // JSX status card (mirrors the jsxStatus column in examples/main.ts)
+  function renderStatusCard(row, ctx) {
+    var statusColors = { active: '#52c41a', inactive: '#ff4d4f', pending: '#faad14' };
+    var statusLabels = { active: '在职', inactive: '离职', pending: '待定' };
+    var status = String(row.data.status);
+    var color = statusColors[status] || '#8c8c8c';
+    var label = statusLabels[status] || status;
+    var progress = Number(row.data.progress) || 0;
+    var dropdownConfig = {
+      value: status,
+      options: [
+        { label: '在职', value: 'active' },
+        { label: '离职', value: 'inactive' },
+        { label: '待定', value: 'pending' }
+      ]
+    };
+
+    return createCTElement(
+      CTBox,
+      {
+        width: '100%',
+        height: '100%',
+        justify: 'center',
+        align: 'center',
+        overflow: 'hidden',
+        backgroundGradient: {
+          type: 'linear',
+          angle: 90,
+          colors: ['#f0f7ff', '#ffffff']
+        }
+      },
+      createCTElement(
+        CTBox,
+        {
+          width: 160,
+          height: 26,
+          bgColor: '#ffffff',
+          radius: 8,
+          padding: 2,
+          overflow: 'hidden',
+          borderColor: '#e6f4ff',
+          borderWidth: 1,
+          shadow: { offsetX: 0, offsetY: 2, blur: 4, color: 'rgba(24,144,255,0.12)' }
+        },
+        createCTElement(
+          CTRow,
+          { gap: 4, align: 'center' },
+          createCTElement(
+            CTColumn,
+            { gap: 1, align: 'center' },
+            createCTElement(
+              CTTooltip,
+              {
+                content: '姓名：' + row.data.name + '\n状态：' + label + '\n进度：' + progress + '%',
+                width: 120
+              },
+              createCTElement(CTImage, {
+                src: 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + row.data.id,
+                width: 16,
+                height: 16,
+                circle: true,
+                lazy: false
+              })
+            ),
+            createCTElement(
+              CTRow,
+              { gap: 1, align: 'center' },
+              createCTElement(CTCircle, { radius: 1, bgColor: color }),
+              createCTElement(CTCircle, { radius: 1, bgColor: '#d9d9d9' }),
+              createCTElement(CTCircle, { radius: 1, bgColor: color })
+            )
+          ),
+          createCTElement(
+            CTColumn,
+            { gap: 1 },
+            createCTElement(
+              CTRow,
+              { gap: 4, align: 'center' },
+              createCTElement(
+                CTBox,
+                {
+                  width: 44,
+                  height: 11,
+                  bgColor: color + '22',
+                  radius: 6,
+                  justify: 'center',
+                  align: 'center'
+                },
+                createCTElement(
+                  CTRow,
+                  { gap: 2, align: 'center' },
+                  createCTElement(CTCircle, { radius: 1.6, bgColor: color }),
+                  createCTElement(CTText, {
+                    text: label,
+                    fontWeight: 'bold',
+                    fontSize: 9,
+                    color: color
+                  })
+                )
+              ),
+              createCTElement(CTText, {
+                text: '#' + row.data.id,
+                fontSize: 8,
+                color: '#8c8c8c'
+              })
+            ),
+            createCTElement(
+              CTBox,
+              {
+                position: 'relative',
+                width: 108,
+                height: 13
+              },
+              createCTElement(CTProgress, {
+                x: 0,
+                y: 3,
+                width: 78,
+                height: 7,
+                value: progress,
+                trackColor: color + '22',
+                barColor: color,
+                radius: 4,
+                interactive: true,
+                onChange: function(next) { ctx.updateField('progress', next); }
+              }),
+              createCTElement(CTBox, {
+                x: 18,
+                y: 1,
+                width: 1,
+                height: 11,
+                bgColor: 'rgba(255,255,255,0.8)'
+              }),
+              createCTElement(CTBox, {
+                x: 38,
+                y: 1,
+                width: 1,
+                height: 11,
+                bgColor: 'rgba(255,255,255,0.8)'
+              }),
+              createCTElement(CTBox, {
+                x: 58,
+                y: 1,
+                width: 1,
+                height: 11,
+                bgColor: 'rgba(255,255,255,0.8)'
+              }),
+              createCTElement(
+                CTBox,
+                {
+                  x: 81,
+                  y: 0,
+                  width: 27,
+                  height: 13,
+                  radius: 7,
+                  bgColor: '#ffffff',
+                  justify: 'center',
+                  align: 'center',
+                  borderColor: color + '66',
+                  borderWidth: 1
+                },
+                createCTElement(CTText, {
+                  text: progress + '%',
+                  fontSize: 8,
+                  fontWeight: 'bold',
+                  color: color
+                })
+              )
+            )
+          ),
+          createCTElement(
+            CTDropdown,
+            {
+              config: dropdownConfig,
+              width: 96,
+              onChange: function(value) { ctx.updateField('status', value); }
+            },
+            createCTElement(
+              CTBox,
+              {
+                width: 18,
+                height: 18,
+                radius: 9,
+                bgColor: color,
+                justify: 'center',
+                align: 'center',
+                borderColor: 'rgba(255,255,255,0.85)',
+                borderWidth: 1
+              },
+              createCTElement(
+                CTColumn,
+                { gap: 1, align: 'center' },
+                createCTElement(CTCircle, { radius: 1.2, bgColor: '#ffffff' }),
+                createCTElement(CTCircle, { radius: 1.2, bgColor: '#ffffff' }),
+                createCTElement(CTCircle, { radius: 1.2, bgColor: '#ffffff' })
+              )
+            )
+          )
+        )
+      )
+    );
+  }
+
   // Row disabled check
   function isRowDisabled(row) {
     return row.data.id === 1 || row.data.id === 2;
@@ -254,6 +467,7 @@ function initDemo() {
     { key: 'level', title: '级别(单选)', width: 120, type: 'select', align: 'left', filterable: true, disabled: isRowDisabled, render: function(value) { return { type: 'select', select: { value: value, options: [{ label: '初级', value: 'junior' }, { label: '中级', value: 'middle' }, { label: '高级', value: 'senior' }, { label: '专家', value: 'expert' }], placeholder: '请选择级别' } }; } },
     { key: 'roles', title: '角色(多选)', width: 160, type: 'select', align: 'left', filterable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'select', select: { value: row.data.roles, multiple: true, options: [{ label: '管理员', value: 'admin' }, { label: '编辑者', value: 'editor' }, { label: '查看者', value: 'viewer' }, { label: '开发者', value: 'developer' }], placeholder: '请选择角色' } }; } },
     { key: 'enabled', title: '启用', width: 80, type: 'switch', align: 'center', filterable: true, disabled: isRowDisabled, render: function(value, row) { return { type: 'switch', switch: { checked: row.data.enabled } }; } },
+    { key: 'jsxStatus', field: 'status', title: '状态卡片(JsxRender)', fixed: 'right', width: 180, editable: false, render: function(_value, row) { return { type: 'custom', jsxLayoutKey: 'jsx-status-card-layout', jsxRender: function(ctx) { return renderStatusCard(row, ctx); } }; } },
     { key: 'actions', title: '操作', width: 200, type: 'button', align: 'center', fixed: 'right', disabled: isRowDisabled, render: function(value, row) {
       var rowIndex = parseInt(row.id.replace('row-', ''));
       var isEven = rowIndex % 2 === 0;
@@ -698,30 +912,6 @@ function initDemo() {
 
   document.getElementById('showHiddenColumn').addEventListener('click', function() { table.showColumn('secretCode'); });
   document.getElementById('hideAgeColumn').addEventListener('click', function() { table.hideColumn('age'); });
-
-  var perfMonitoringEnabled = false;
-  var perfButton = document.getElementById('perfMonitor');
-  perfButton.addEventListener('click', function() {
-    if (!perfMonitoringEnabled) {
-      perfMonitoringEnabled = true;
-      table.setPerformanceMonitoring(true);
-      table.resetPerformanceStats();
-      perfButton.textContent = '结束性能检测';
-      perfButton.style.background = '#fff1f0';
-      perfButton.style.borderColor = '#ff4d4f';
-      perfButton.style.color = '#ff4d4f';
-    } else {
-      perfMonitoringEnabled = false;
-      console.log('\n========== 性能检测报告 ==========\n');
-      table.printPerformanceReport();
-      console.log('\n==================================\n');
-      table.setPerformanceMonitoring(false);
-      perfButton.textContent = '开始性能检测';
-      perfButton.style.background = '';
-      perfButton.style.borderColor = '';
-      perfButton.style.color = '';
-    }
-  });
 
   var cacheEnabled = false;
   var cacheButton = document.getElementById('cacheToggle');

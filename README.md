@@ -6,14 +6,13 @@
 [![npm downloads](https://img.shields.io/npm/dm/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
 [![license](https://img.shields.io/npm/l/@canvas-table/core.svg)](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)
 [![gzip size](https://img.shields.io/bundlephobia/minzip/@canvas-table/core)](https://bundlephobia.com/package/@canvas-table/core)
-[![CodeSandbox](https://img.shields.io/badge/CodeSandbox-Online%20Demo-151515?logo=codesandbox&logoColor=white)](https://codesandbox.io/p/sandbox/r7rvnp)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-GitHub%20Pages-00d4aa?logo=github)](https://dingrui12138.github.io/CanvasTable/)
 
 A high-performance data table component built on Canvas that renders millions of rows smoothly.
 
 - npm package: [`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
 - Source and issues: [DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
-- **Demo**: open `docs/index.html` locally, or publish `docs/` to GitHub Pages.
-- **Online demo (CodeSandbox)**: [preview](https://r7rvnp.csb.app) · [edit source](https://codesandbox.io/p/sandbox/r7rvnp)
+- **Live demo**: [https://dingrui12138.github.io/CanvasTable/](https://dingrui12138.github.io/CanvasTable/)
 
 ## Features
 
@@ -1673,6 +1672,7 @@ pnpm test           # unit tests
 pnpm test:e2e       # Playwright end-to-end tests
 pnpm lint           # oxlint checks
 pnpm build          # build dist/ (ESM, UMD, minified builds, and type declarations)
+pnpm build:docs     # regenerate docs/index.html from examples/basic.html for GitHub Pages
 ```
 
 ## Publishing
