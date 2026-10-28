@@ -8,11 +8,11 @@ import type {
   CTBorderSide,
   CTBackgroundGradient,
   CTRenderContext,
-} from './types';
-import type { TableTheme } from '../../types/index';
-import { LayoutEngine } from './LayoutEngine';
-import { JSXElementSignature } from './JSXElementSignature';
-import { JSXRenderCache, type JSXRenderCacheStats } from './JSXRenderCache';
+} from "./types";
+import type { TableTheme } from "../../types/index";
+import { LayoutEngine } from "./LayoutEngine";
+import { JSXElementSignature } from "./JSXElementSignature";
+import { JSXRenderCache, type JSXRenderCacheStats } from "./JSXRenderCache";
 
 /**
  * CTElement Canvas Renderer
@@ -82,7 +82,7 @@ export class CTElementRenderer {
     return this.renderCache.getStats();
   }
 
-  invalidateOffscreen(_scope: 'all' | { oldSize: string | string[] }): void {
+  invalidateOffscreen(_scope: "all" | { oldSize: string | string[] }): void {
     // Layer 3 offscreen cache removed; clear plan cache for lifecycle events
     this.renderCache.clear();
     this.gradientCache.clear();
@@ -116,7 +116,7 @@ export class CTElementRenderer {
     parentSize?: { width: number; height: number },
     layoutCacheKey?: string | null,
   ): string {
-    const sizeKey = parentSize ? `${parentSize.width}x${parentSize.height}` : 'auto';
+    const sizeKey = parentSize ? `${parentSize.width}x${parentSize.height}` : "auto";
     // When an explicit layoutCacheKey is provided, the layout tree is shared
     // across all rows with the same key (LayoutEngine caches by explicit key
     // alone). Including the full signature here would defeat that sharing —
@@ -147,7 +147,7 @@ export class CTElementRenderer {
 
   private getLayoutOrderedChildren(element: CTElement): CTElement[] {
     const children = element.children || [];
-    if (element.type === 'CTBox' && element.props.position === 'relative') {
+    if (element.type === "CTBox" && element.props.position === "relative") {
       return [...children].sort((a, b) => {
         const aZ = (a.props.zIndex as number | undefined) ?? 0;
         const bZ = (b.props.zIndex as number | undefined) ?? 0;
@@ -166,23 +166,26 @@ export class CTElementRenderer {
     const x = node.x + offsetX;
     const y = node.y + offsetY;
     switch (currentElement.type) {
-      case 'CTBox':
+      case "CTBox":
         this.renderBoxNode(node, currentElement, x, y, offsetX, offsetY);
         break;
-      case 'CTCircle':
+      case "CTCircle":
         this.renderCircle(currentElement, x, y);
         break;
-      case 'CTText':
+      case "CTText":
         this.renderText(currentElement, x, y, node.width);
         break;
-      case 'CTImage':
+      case "CTImage":
         this.renderImage(currentElement, x, y);
         break;
-      case 'CTLine':
+      case "CTLine":
         this.renderLine(currentElement, x, y);
         break;
-      case 'CTTooltip':
-      case 'CTDropdown':
+      case "CTProgress":
+        this.renderProgress(currentElement, x, y, node.width, node.height);
+        break;
+      case "CTTooltip":
+      case "CTDropdown":
         this.renderInteractiveWrapperNode(node, currentElement, x, y, offsetX, offsetY);
         break;
     }
@@ -196,7 +199,7 @@ export class CTElementRenderer {
     offsetX: number,
     offsetY: number,
   ): void {
-    const regionType = element.type === 'CTTooltip' ? 'tooltip' : 'dropdown';
+    const regionType = element.type === "CTTooltip" ? "tooltip" : "dropdown";
     this.renderContext?.collectInteractiveRegion?.({
       type: regionType,
       rect: {
@@ -245,7 +248,7 @@ export class CTElementRenderer {
   ): void {
     this.ctx.beginPath();
     // Use simple rect when borderRadius is 0 (no per-corner variation)
-    if (typeof radii === 'number' && radii === 0) {
+    if (typeof radii === "number" && radii === 0) {
       this.ctx.rect(x, y, w, h);
     } else {
       (this.ctx as any).roundRect(x, y, w, h, radii);
@@ -271,7 +274,7 @@ export class CTElementRenderer {
   }
 
   private getGradientCacheKey(w: number, h: number, gradient: CTBackgroundGradient): string {
-    return `${w}x${h}|${gradient.type}|${gradient.type === 'linear' ? gradient.angle : '_'}|${gradient.colors.join(',')}`;
+    return `${w}x${h}|${gradient.type}|${gradient.type === "linear" ? gradient.angle : "_"}|${gradient.colors.join(",")}`;
   }
 
   private createRelativeGradientFill(
@@ -279,7 +282,7 @@ export class CTElementRenderer {
     h: number,
     gradient: CTBackgroundGradient,
   ): CanvasGradient {
-    if (gradient.type === 'linear') {
+    if (gradient.type === "linear") {
       const angle = gradient.angle;
       const rad = ((angle - 90) * Math.PI) / 180;
       const cx = w / 2;
@@ -311,8 +314,8 @@ export class CTElementRenderer {
     side: CTBorderSide | string | undefined,
   ): { width: number; color: string } | undefined {
     if (!side) return undefined;
-    if (typeof side === 'string') return { width: 1, color: side };
-    if (side.width || side.color) return { width: side.width ?? 1, color: side.color ?? '#000' };
+    if (typeof side === "string") return { width: 1, color: side };
+    if (side.width || side.color) return { width: side.width ?? 1, color: side.color ?? "#000" };
     return undefined;
   }
 
@@ -443,7 +446,7 @@ export class CTElementRenderer {
       }
 
       // ─── Overflow Clipping ───
-      const hasOverflow = props.overflow === 'hidden' || props.overflow === 'clip';
+      const hasOverflow = props.overflow === "hidden" || props.overflow === "clip";
       if (hasOverflow) {
         this.ctx.save();
         this.drawRoundedRect(x, y, boxWidth, boxHeight, borderRadiusArray);
@@ -476,7 +479,7 @@ export class CTElementRenderer {
   }
 
   private normalizeShadow(shadow: CTBoxShadow | string): CTBoxShadow & { spread?: number } {
-    if (typeof shadow === 'string') {
+    if (typeof shadow === "string") {
       // Parse "offsetX offsetY blur color" or "offsetX offsetY blur spread color"
       const parts = shadow.trim().split(/\s+/);
       const offsetX = Number(parts[0]) || 0;
@@ -484,7 +487,7 @@ export class CTElementRenderer {
       const blur = Number(parts[2]) || 0;
       const numericParts = parts.filter((p) => !isNaN(Number(p)));
       const spread = numericParts.length > 3 ? Number(parts[3]) : 0;
-      const color = parts.slice(numericParts.length > 3 ? 4 : 3).join(' ') || 'rgba(0,0,0,0.15)';
+      const color = parts.slice(numericParts.length > 3 ? 4 : 3).join(" ") || "rgba(0,0,0,0.15)";
       return { offsetX, offsetY, blur, spread, color };
     }
     return shadow;
@@ -525,13 +528,13 @@ export class CTElementRenderer {
       text: string;
       fontSize?: number;
       fontFamily?: string;
-      fontWeight?: 'normal' | 'bold';
-      fontStyle?: 'normal' | 'italic';
+      fontWeight?: "normal" | "bold";
+      fontStyle?: "normal" | "italic";
       color?: string;
       lineHeight?: number;
       maxWidth?: number;
-      textAlign?: 'left' | 'center' | 'right';
-      textDecoration?: 'underline' | 'line-through' | 'none';
+      textAlign?: "left" | "center" | "right";
+      textDecoration?: "underline" | "line-through" | "none";
       letterSpacing?: number;
       x?: number;
       y?: number;
@@ -540,12 +543,12 @@ export class CTElementRenderer {
 
     const fontSize = props.fontSize ?? this.theme.font.size;
     const fontFamily = props.fontFamily ?? this.theme.font.family;
-    const fontWeight = props.fontWeight ?? 'normal';
-    const fontStyle = props.fontStyle ?? 'normal';
+    const fontWeight = props.fontWeight ?? "normal";
+    const fontStyle = props.fontStyle ?? "normal";
     const color = props.color ?? this.theme.colors.cellText;
     const lineHeight = props.lineHeight ?? fontSize;
-    const textAlign = props.textAlign ?? 'left';
-    const textDecoration = props.textDecoration ?? 'none';
+    const textAlign = props.textAlign ?? "left";
+    const textDecoration = props.textDecoration ?? "none";
     const letterSpacing = props.letterSpacing ?? 0;
 
     this.ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px ${fontFamily}`;
@@ -553,24 +556,24 @@ export class CTElementRenderer {
 
     // ─── Text Alignment ───
     let textX = x;
-    if (textAlign === 'center') {
+    if (textAlign === "center") {
       textX = x + layoutWidth / 2;
-      this.ctx.textAlign = 'center';
-    } else if (textAlign === 'right') {
+      this.ctx.textAlign = "center";
+    } else if (textAlign === "right") {
       textX = x + layoutWidth;
-      this.ctx.textAlign = 'right';
+      this.ctx.textAlign = "right";
     } else {
-      this.ctx.textAlign = 'left';
+      this.ctx.textAlign = "left";
     }
-    this.ctx.textBaseline = 'middle';
+    this.ctx.textBaseline = "middle";
     const textY = y + lineHeight / 2;
 
     // ─── Letter Spacing ───
     if (letterSpacing > 0) {
       // Draw each character individually with spacing
-      this.ctx.textAlign = 'left'; // Reset to left for individual positioning
+      this.ctx.textAlign = "left"; // Reset to left for individual positioning
       let charX =
-        textAlign === 'center'
+        textAlign === "center"
           ? x +
             (layoutWidth -
               this.getTextWidthWithSpacing(
@@ -582,7 +585,7 @@ export class CTElementRenderer {
                 letterSpacing,
               )) /
               2
-          : textAlign === 'right'
+          : textAlign === "right"
             ? x +
               layoutWidth -
               this.getTextWidthWithSpacing(
@@ -614,7 +617,7 @@ export class CTElementRenderer {
     }
 
     // ─── Text Decoration ───
-    if (textDecoration === 'underline') {
+    if (textDecoration === "underline") {
       const textWidth =
         letterSpacing > 0
           ? this.getTextWidthWithSpacing(
@@ -628,9 +631,9 @@ export class CTElementRenderer {
           : this.ctx.measureText(props.text).width;
       const lineY = textY + fontSize / 2 + 1;
       const lineX =
-        textAlign === 'center'
+        textAlign === "center"
           ? textX - textWidth / 2
-          : textAlign === 'right'
+          : textAlign === "right"
             ? textX - textWidth
             : textX;
       this.ctx.strokeStyle = color;
@@ -639,7 +642,7 @@ export class CTElementRenderer {
       this.ctx.moveTo(lineX, lineY);
       this.ctx.lineTo(lineX + textWidth, lineY);
       this.ctx.stroke();
-    } else if (textDecoration === 'line-through') {
+    } else if (textDecoration === "line-through") {
       const textWidth =
         letterSpacing > 0
           ? this.getTextWidthWithSpacing(
@@ -653,9 +656,9 @@ export class CTElementRenderer {
           : this.ctx.measureText(props.text).width;
       const lineY = textY;
       const lineX =
-        textAlign === 'center'
+        textAlign === "center"
           ? textX - textWidth / 2
-          : textAlign === 'right'
+          : textAlign === "right"
             ? textX - textWidth
             : textX;
       this.ctx.strokeStyle = color;
@@ -667,8 +670,8 @@ export class CTElementRenderer {
     }
 
     // Reset
-    this.ctx.textAlign = 'left';
-    this.ctx.textBaseline = 'alphabetic';
+    this.ctx.textAlign = "left";
+    this.ctx.textBaseline = "alphabetic";
   }
 
   private measureCharWidth(
@@ -706,8 +709,8 @@ export class CTElementRenderer {
       height: number;
       borderRadius?: number;
       radius?: number;
-      objectFit?: 'fill' | 'contain' | 'cover' | 'none';
-      fit?: 'fill' | 'contain' | 'cover' | 'none';
+      objectFit?: "fill" | "contain" | "cover" | "none";
+      fit?: "fill" | "contain" | "cover" | "none";
       circle?: boolean;
       placeholder?: string;
       errorImage?: string;
@@ -734,7 +737,7 @@ export class CTElementRenderer {
           width,
           height,
           radius,
-          props.fit ?? props.objectFit ?? 'cover',
+          props.fit ?? props.objectFit ?? "cover",
         );
         return;
       }
@@ -791,10 +794,10 @@ export class CTElementRenderer {
     height: number,
     radius: number,
   ): void {
-    this.ctx.fillStyle = '#f5f5f5';
+    this.ctx.fillStyle = "#f5f5f5";
     this.drawRoundedRect(x, y, width, height, radius);
     this.ctx.fill();
-    this.ctx.strokeStyle = '#d9d9d9';
+    this.ctx.strokeStyle = "#d9d9d9";
     this.ctx.lineWidth = 1;
     this.drawRoundedRect(x, y, width, height, radius);
     this.ctx.stroke();
@@ -807,12 +810,12 @@ export class CTElementRenderer {
     width: number,
     height: number,
     radius: number,
-    fit: 'fill' | 'contain' | 'cover' | 'none' | undefined,
+    fit: "fill" | "contain" | "cover" | "none" | undefined,
   ): void {
     if (!src || !this.renderContext?.imageRuntime) return;
     const image = this.renderContext.imageRuntime.get(src, Math.max(width, height));
     if (image) {
-      this.drawImageWithFit(image, x, y, width, height, radius, fit ?? 'cover');
+      this.drawImageWithFit(image, x, y, width, height, radius, fit ?? "cover");
     } else if (!this.renderContext.imageRuntime.isLoading(src)) {
       this.renderContext.imageRuntime.load(src, Math.max(width, height));
     }
@@ -825,7 +828,7 @@ export class CTElementRenderer {
     width: number,
     height: number,
     radius: number,
-    fit: 'fill' | 'contain' | 'cover' | 'none',
+    fit: "fill" | "contain" | "cover" | "none",
   ): void {
     this.ctx.save();
     this.drawRoundedRect(x, y, width, height, radius);
@@ -838,16 +841,16 @@ export class CTElementRenderer {
     let drawWidth = width;
     let drawHeight = height;
 
-    if (fit === 'contain' || fit === 'cover') {
+    if (fit === "contain" || fit === "cover") {
       const scale =
-        fit === 'contain'
+        fit === "contain"
           ? Math.min(width / imageWidth, height / imageHeight)
           : Math.max(width / imageWidth, height / imageHeight);
       drawWidth = imageWidth * scale;
       drawHeight = imageHeight * scale;
       drawX = x + (width - drawWidth) / 2;
       drawY = y + (height - drawHeight) / 2;
-    } else if (fit === 'none') {
+    } else if (fit === "none") {
       drawWidth = imageWidth;
       drawHeight = imageHeight;
       drawX = x + (width - drawWidth) / 2;
@@ -863,15 +866,15 @@ export class CTElementRenderer {
       points: Array<{ x: number; y: number }>;
       strokeWidth?: number;
       strokeColor?: string;
-      strokeLinecap?: 'butt' | 'round' | 'square';
+      strokeLinecap?: "butt" | "round" | "square";
     };
 
     if (props.points.length < 2) return;
 
     this.ctx.beginPath();
-    this.ctx.strokeStyle = props.strokeColor ?? '#333333';
+    this.ctx.strokeStyle = props.strokeColor ?? "#333333";
     this.ctx.lineWidth = props.strokeWidth ?? 1;
-    this.ctx.lineCap = props.strokeLinecap ?? 'butt';
+    this.ctx.lineCap = props.strokeLinecap ?? "butt";
 
     this.ctx.moveTo(x + props.points[0]!.x, y + props.points[0]!.y);
     for (let i = 1; i < props.points.length; i++) {
@@ -879,4 +882,324 @@ export class CTElementRenderer {
     }
     this.ctx.stroke();
   }
+
+  /**
+   * 进度条是“绘制型”图元：几何来自布局节点（width/height 恒定），
+   * value / 颜色 / label 在每次绘制时从当前元素读取，
+   * 所以不同进度的单元格可以共享同一棵布局计划。
+   */
+  private renderProgress(
+    element: CTElement,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): void {
+    const props = element.props as ProgressRenderProps;
+    const shape = props.shape ?? "line";
+    const max = Number(props.max);
+    const safeMax = Number.isFinite(max) && max > 0 ? max : 100;
+
+    // 拖拽中的预览值优先，其余情况读取当前元素的 props
+    const override = this.renderContext?.getProgressValueOverride?.(
+      this.renderContext.rowIndex ?? -1,
+      this.renderContext.colIndex ?? -1,
+      typeof props.id === "string" ? props.id : undefined,
+    );
+    const numericValue = Number(override ?? props.value ?? 0);
+    const rawValue = Number.isFinite(numericValue) ? numericValue : 0;
+    const ratio = Math.min(1, Math.max(0, rawValue / safeMax));
+    const precision = props.precision ?? 0;
+    const showLabel = props.showLabel ?? false;
+
+    const lineGeometry =
+      shape === "line"
+        ? this.renderLineProgress(props, x, y, width, height, ratio, rawValue, safeMax, showLabel)
+        : null;
+    const radialGeometry = lineGeometry
+      ? null
+      : this.renderRadialProgress(
+          props,
+          x,
+          y,
+          width,
+          height,
+          ratio,
+          rawValue,
+          safeMax,
+          showLabel,
+          shape === "dashboard" ? "dashboard" : "circle",
+        );
+
+    if (!props.interactive || !this.renderContext?.collectInteractiveRegion) return;
+
+    // 捕获当前单元格的 updateValue，避免拖拽回调落到最后渲染的单元格上
+    const updateValue = this.renderContext.updateValue;
+    const base = {
+      type: "progress" as const,
+      element,
+      props: element.props,
+      row: this.renderContext.row,
+      column: this.renderContext.column,
+      rowIndex: this.renderContext.rowIndex,
+      colIndex: this.renderContext.colIndex,
+      onValueChange: (next: number) => {
+        const handler = props.onChange;
+        if (typeof handler === "function") return handler(next);
+        return updateValue?.(next);
+      },
+    };
+
+    if (lineGeometry && lineGeometry.trackWidth > 0 && lineGeometry.trackHeight > 0) {
+      const trackX = this.cellX + lineGeometry.trackX;
+      const trackY = this.cellY + lineGeometry.trackY;
+      this.renderContext.collectInteractiveRegion({
+        ...base,
+        rect: {
+          x: trackX,
+          y: trackY,
+          width: lineGeometry.trackWidth,
+          height: lineGeometry.trackHeight,
+        },
+        progress: {
+          shape: "line",
+          trackX,
+          trackY,
+          trackWidth: lineGeometry.trackWidth,
+          trackHeight: lineGeometry.trackHeight,
+          centerX: 0,
+          centerY: 0,
+          radius: 0,
+          startAngle: 0,
+          totalAngle: 0,
+          max: safeMax,
+          precision,
+        },
+      });
+      return;
+    }
+
+    if (radialGeometry && radialGeometry.diameter > 0) {
+      const centerX = this.cellX + radialGeometry.centerX;
+      const centerY = this.cellY + radialGeometry.centerY;
+      const boxRadius = radialGeometry.diameter / 2;
+      const startAngle = shape === "dashboard" ? Math.PI * 0.75 : -Math.PI / 2;
+      const totalAngle = shape === "dashboard" ? Math.PI * 1.5 : Math.PI * 2;
+      this.renderContext.collectInteractiveRegion({
+        ...base,
+        rect: {
+          x: centerX - boxRadius,
+          y: centerY - boxRadius,
+          width: radialGeometry.diameter,
+          height: radialGeometry.diameter,
+        },
+        progress: {
+          shape,
+          trackX: 0,
+          trackY: 0,
+          trackWidth: 0,
+          trackHeight: 0,
+          centerX,
+          centerY,
+          radius: radialGeometry.radius,
+          startAngle,
+          totalAngle,
+          max: safeMax,
+          precision,
+        },
+      });
+    }
+  }
+
+  private renderLineProgress(
+    props: ProgressRenderProps,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    ratio: number,
+    rawValue: number,
+    max: number,
+    showLabel: boolean,
+  ): { trackX: number; trackY: number; trackWidth: number; trackHeight: number } {
+    const labelPosition = props.labelPosition ?? "inside";
+    const reservedLabelWidth =
+      showLabel && labelPosition === "right" ? Math.max(0, props.labelWidth ?? 34) : 0;
+    const trackX = x;
+    const trackY = y;
+    const trackWidth = Math.max(0, width - reservedLabelWidth);
+    const trackHeight = Math.max(0, height);
+    const geometry = { trackX, trackY, trackWidth, trackHeight };
+
+    if (trackWidth <= 0 || trackHeight <= 0) return geometry;
+
+    const radius = Math.max(
+      0,
+      Math.min(
+        props.radius ?? props.borderRadius ?? trackHeight / 2,
+        trackHeight / 2,
+        trackWidth / 2,
+      ),
+    );
+    const minBarWidth = Math.max(0, props.minBarWidth ?? radius * 2);
+    const fillWidth =
+      ratio > 0 ? Math.min(trackWidth, Math.max(ratio * trackWidth, minBarWidth)) : 0;
+
+    this.ctx.save();
+
+    // 轨道
+    this.ctx.fillStyle = props.trackColor ?? this.theme.colors.progress.track;
+    this.drawRoundedRect(trackX, trackY, trackWidth, trackHeight, radius);
+    this.ctx.fill();
+
+    // 填充（裁剪到轨道，保证右端圆角与轨道一致）
+    if (fillWidth > 0) {
+      this.ctx.save();
+      this.drawRoundedRect(trackX, trackY, trackWidth, trackHeight, radius);
+      this.ctx.clip();
+      this.ctx.fillStyle = this.resolveProgressColor(props, ratio);
+      this.drawRoundedRect(trackX, trackY, fillWidth, trackHeight, radius);
+      this.ctx.fill();
+      this.ctx.restore();
+    }
+
+    if (showLabel) {
+      const label = this.getProgressLabel(props, ratio, rawValue, max);
+      const fontSize = props.fontSize ?? Math.min(10, Math.max(8, trackHeight - 2));
+      const fontFamily = props.fontFamily ?? this.theme.font.family;
+      const fontWeight = props.fontWeight ?? "normal";
+
+      this.ctx.save();
+      this.ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+      this.ctx.textBaseline = "middle";
+
+      if (labelPosition === "right") {
+        this.ctx.textAlign = "left";
+        this.ctx.fillStyle = props.color ?? this.theme.colors.cellText;
+        this.ctx.fillText(
+          label,
+          trackX + trackWidth + 4,
+          trackY + trackHeight / 2,
+          Math.max(0, reservedLabelWidth - 4),
+        );
+      } else {
+        this.ctx.textAlign = "center";
+        this.ctx.fillStyle = props.color ?? "#ffffff";
+        this.ctx.fillText(label, trackX + trackWidth / 2, trackY + trackHeight / 2, trackWidth);
+      }
+
+      this.ctx.restore();
+    }
+
+    this.ctx.restore();
+    return geometry;
+  }
+
+  private renderRadialProgress(
+    props: ProgressRenderProps,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    ratio: number,
+    rawValue: number,
+    max: number,
+    showLabel: boolean,
+    shape: "circle" | "dashboard",
+  ): { centerX: number; centerY: number; radius: number; diameter: number } {
+    const diameter = Math.min(width, height);
+    const centerX = x + width / 2;
+    const centerY = y + height / 2 + (shape === "dashboard" ? height * 0.05 : 0);
+    const geometry = { centerX, centerY, radius: 0, diameter };
+    if (diameter <= 0) return geometry;
+
+    const strokeWidth = Math.max(
+      1,
+      props.strokeWidth ?? Math.max(2, Math.round(diameter * (shape === "dashboard" ? 0.1 : 0.12))),
+    );
+    const radius = Math.max(0, (diameter - strokeWidth) / 2);
+    const startAngle = shape === "dashboard" ? Math.PI * 0.75 : -Math.PI / 2;
+    const totalAngle = shape === "dashboard" ? Math.PI * 1.5 : Math.PI * 2;
+
+    this.ctx.save();
+    this.ctx.lineWidth = strokeWidth;
+    this.ctx.lineCap = props.strokeLinecap ?? "round";
+
+    // 轨道
+    this.ctx.strokeStyle = props.trackColor ?? this.theme.colors.progress.track;
+    this.ctx.beginPath();
+    this.ctx.arc(centerX, centerY, radius, startAngle, startAngle + totalAngle, false);
+    this.ctx.stroke();
+
+    // 进度弧
+    if (ratio > 0) {
+      this.ctx.strokeStyle = this.resolveProgressColor(props, ratio);
+      this.ctx.beginPath();
+      this.ctx.arc(centerX, centerY, radius, startAngle, startAngle + ratio * totalAngle, false);
+      this.ctx.stroke();
+    }
+
+    if (showLabel) {
+      const label = this.getProgressLabel(props, ratio, rawValue, max);
+      const fontSize =
+        props.fontSize ?? Math.max(8, Math.round(diameter * (shape === "dashboard" ? 0.28 : 0.32)));
+      this.ctx.font = `${props.fontWeight ?? "bold"} ${fontSize}px ${props.fontFamily ?? this.theme.font.family}`;
+      this.ctx.fillStyle = props.color ?? this.theme.colors.cellText;
+      this.ctx.textAlign = "center";
+      this.ctx.textBaseline = "middle";
+      this.ctx.fillText(label, centerX, centerY, Math.max(1, radius * 2));
+    }
+
+    this.ctx.restore();
+    return { centerX, centerY, radius, diameter };
+  }
+
+  private resolveProgressColor(props: ProgressRenderProps, ratio: number): string {
+    if (typeof props.barColor === "function") return props.barColor(ratio);
+    if (props.barColor) return props.barColor;
+    if (props.status === "success") return this.theme.colors.progress.success;
+    if (props.status === "warning") return this.theme.colors.progress.warning;
+    if (props.status === "error") return this.theme.colors.progress.error;
+    return this.theme.colors.progress.default;
+  }
+
+  private getProgressLabel(
+    props: ProgressRenderProps,
+    ratio: number,
+    value: number,
+    max: number,
+  ): string {
+    if (props.label !== undefined) {
+      return typeof props.label === "function" ? props.label(ratio, value, max) : props.label;
+    }
+    const precision = props.precision ?? 0;
+    const percent = ratio * 100;
+    return precision === 0 ? `${Math.round(percent)}%` : `${percent.toFixed(precision)}%`;
+  }
+}
+
+interface ProgressRenderProps {
+  id?: string;
+  value?: number;
+  max?: number;
+  shape?: "line" | "circle" | "dashboard";
+  borderRadius?: number;
+  radius?: number;
+  trackColor?: string;
+  barColor?: string | ((ratio: number) => string);
+  minBarWidth?: number;
+  strokeWidth?: number;
+  strokeLinecap?: "butt" | "round" | "square";
+  status?: "normal" | "success" | "warning" | "error";
+  showLabel?: boolean;
+  label?: string | ((ratio: number, value: number, max: number) => string);
+  labelPosition?: "inside" | "right";
+  labelWidth?: number;
+  fontSize?: number;
+  color?: string;
+  fontWeight?: "normal" | "bold";
+  fontFamily?: string;
+  precision?: number;
+  interactive?: boolean;
+  onChange?: (value: number) => void | Promise<void>;
 }

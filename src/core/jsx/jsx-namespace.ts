@@ -4,6 +4,7 @@ import type {
   CTBoxProps,
   CTImageProps,
   CTLineProps,
+  CTProgressProps,
   CTTextProps,
   CTTooltipProps,
   CTDropdownProps,
@@ -23,6 +24,7 @@ declare global {
       CTText: CTTextProps;
       CTImage: CTImageProps;
       CTLine: CTLineProps;
+      CTProgress: CTProgressProps;
       CTTooltip: CTTooltipProps;
       CTDropdown: CTDropdownProps;
     }

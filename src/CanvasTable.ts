@@ -1559,6 +1559,7 @@ export class CanvasTable implements CanvasTableAPI {
           hoveredImageIndex: this.interactionManager.getHoveredImageIndex(),
           hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
           progressDragState: interactionState.progressDragState,
+          jsxProgressDrag: this.interactionManager.getJSXProgressDragPreview() ?? undefined,
           rowResizeState: interactionState.rowResizeState,
           validationErrors: this.buildVisibleValidationErrorIndex(),
           pendingValidations: this.pendingValidationCells,

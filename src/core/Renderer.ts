@@ -311,6 +311,9 @@ export class Renderer {
   private currentHoveredButtonIndex: number = -1;
   private currentProgressDragState: import("../types").InteractionState["progressDragState"] =
     undefined;
+  private currentJSXProgressDrag:
+    | { rowIndex: number; columnIndex: number; elementId?: string; value: number }
+    | undefined;
   private currentRowResizeState: import("../types").InteractionState["rowResizeState"] = undefined;
   private currentValidationErrors: Map<string, ValidationError> = new Map();
   private currentPendingValidations: Set<string> = new Set();
@@ -593,6 +596,12 @@ export class Renderer {
       hoveredImageIndex?: number;
       hoveredButtonIndex?: number;
       progressDragState?: import("../types").InteractionState["progressDragState"];
+      jsxProgressDrag?: {
+        rowIndex: number;
+        columnIndex: number;
+        elementId?: string;
+        value: number;
+      };
       rowResizeState?: import("../types").InteractionState["rowResizeState"];
       validationErrors?: Map<string, ValidationError>;
       pendingValidations?: Set<string>;
@@ -604,6 +613,7 @@ export class Renderer {
     this.currentHoveredImageIndex = options.hoveredImageIndex ?? -1;
     this.currentHoveredButtonIndex = options.hoveredButtonIndex ?? -1;
     this.currentProgressDragState = options.progressDragState;
+    this.currentJSXProgressDrag = options.jsxProgressDrag;
     this.currentRowResizeState = options.rowResizeState;
     this.currentValidationErrors = options.validationErrors ?? new Map();
     this.currentPendingValidations = options.pendingValidations ?? new Set();
@@ -3017,6 +3027,15 @@ export class Renderer {
               updateRow: jsxContext.updateRow,
               collectInteractiveRegion: (region) => {
                 this.jsxInteractiveRegions.push(region);
+              },
+              getProgressValueOverride: (overrideRowIndex, overrideColIndex, elementId) => {
+                const drag = this.currentJSXProgressDrag;
+                if (!drag) return undefined;
+                if (drag.rowIndex !== overrideRowIndex || drag.columnIndex !== overrideColIndex) {
+                  return undefined;
+                }
+                if (drag.elementId && elementId && drag.elementId !== elementId) return undefined;
+                return drag.value;
               },
             });
             this.jsxRenderer.render(elementTree, x, y, { width, height }, layoutCacheKey);

@@ -6,12 +6,14 @@
 [![npm downloads](https://img.shields.io/npm/dm/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
 [![license](https://img.shields.io/npm/l/@canvas-table/core.svg)](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)
 [![gzip size](https://img.shields.io/bundlephobia/minzip/@canvas-table/core)](https://bundlephobia.com/package/@canvas-table/core)
+[![CodeSandbox](https://img.shields.io/badge/CodeSandbox-Online%20Demo-151515?logo=codesandbox&logoColor=white)](https://codesandbox.io/p/sandbox/r7rvnp)
 
 A high-performance data table component built on Canvas that renders millions of rows smoothly.
 
 - npm package: [`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
 - Source and issues: [DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
 - **Demo**: open `docs/index.html` locally, or publish `docs/` to GitHub Pages.
+- **Online demo (CodeSandbox)**: [preview](https://r7rvnp.csb.app) · [edit source](https://codesandbox.io/p/sandbox/r7rvnp)
 
 ## Features
 
@@ -526,7 +528,7 @@ When using `type: 'custom'` custom rendering, you can specify the control used f
 
 CanvasTable provides shared JSX components for declarative layout inside `jsxRender`. `jsxRender` draws from the top-left corner of the cell, without applying the built-in padding or centering; styling is entirely up to you. The root element fills the cell by default (`width: "100%"`, `height: "100%"`).
 
-**Available components:** `CTBox`, `CTRow` (= `CTBox { direction: "row" }`), `CTColumn` (= `CTBox { direction: "column" }`), `CTStack` (= `CTBox`), `CTText`, `CTCircle`, `CTImage`, `CTLine`, `CTDate`, `CTTooltip`, `CTDropdown`, plus `createCTElement`
+**Available components:** `CTBox`, `CTRow` (= `CTBox { direction: "row" }`), `CTColumn` (= `CTBox { direction: "column" }`), `CTStack` (= `CTBox`), `CTText`, `CTCircle`, `CTImage`, `CTLine`, `CTProgress`, `CTDate`, `CTTooltip`, `CTDropdown`, plus `createCTElement`
 
 > All JSX components are exported from both `@canvas-table/core` and `@canvas-table/core/jsx`. Their prop types (`BoxProps`, `TextProps`, `CTElement`, ...) are exported **only** from `@canvas-table/core/jsx`. The `CT` prefix keeps them from shadowing table types (`Row` / `Column`) or DOM globals (`Date` / `Image` / `Text`).
 
@@ -666,6 +668,58 @@ CTRow is `CTBox { direction: "row" }`, CTColumn is `CTBox { direction: "column" 
 | `strokeWidth` | `number` | Line width |
 | `strokeColor` | `string` | Line color |
 | `strokeLinecap` | `"butt" \| "round" \| "square"` | Line cap style |
+
+##### CTProgress props
+
+`CTProgress` is a paint-time primitive: its layout size comes only from `width` / `height`, while `value` is read while drawing. Cells with different progress values can therefore share the same `jsxLayoutKey` — do **not** model progress by changing a `CTBox` width, or the layout plan will freeze at the first rendered row.
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `value` | `number` | — | Current value (0..max) |
+| `max` | `number` | `100` | Maximum value |
+| `width` | `number` | — | Total width (layout input). For `circle` / `dashboard` this is the ring diameter |
+| `height` | `number` | `8` (line) / `width` (ring) | Total height. Ring shapes default to a square box |
+| `shape` | `"line" \| "circle" \| "dashboard"` | `"line"` | Shape. `dashboard` is a 270° arc with a bottom gap |
+| `borderRadius` | `number` | `height / 2` | Line corner radius (`radius` is an alias) |
+| `strokeWidth` | `number` | auto (`~12%` of diameter) | Ring stroke width |
+| `strokeLinecap` | `"butt" \| "round" \| "square"` | `"round"` | Ring line cap |
+| `trackColor` | `string` | theme `progress.track` | Track color |
+| `barColor` | `string \| ((ratio: number) => string)` | theme `progress.default` | Fill color |
+| `status` | `"normal" \| "success" \| "warning" \| "error"` | — | Theme color, used when `barColor` is not set |
+| `minBarWidth` | `number` | `2 * radius` | Minimum fill width so small values stay visible |
+| `showLabel` | `boolean` | `false` | Show the percentage text |
+| `label` | `string \| ((ratio, value, max) => string)` | `"NN%"` | Custom label text |
+| `labelPosition` | `"inside" \| "right"` | `"inside"` | Label inside the track or in a reserved area on the right (line only) |
+| `labelWidth` | `number` | `34` | Reserved label width when `labelPosition` is `"right"` |
+| `fontSize` | `number` | `min(10, height - 2)` / `~30%` of diameter | Label font size |
+| `color` | `string` | white (line inside) / theme `cellText` | Label color |
+| `precision` | `number` | `0` | Percent decimals; also the drag value precision |
+| `interactive` | `boolean` | `false` | Enable drag / click to change the value |
+| `onChange` | `(value: number) => void \| Promise<void>` | — | Value change callback. Falls back to `renderContext.updateValue` when omitted |
+
+```typescript
+// Line + drag
+createCTElement(CTProgress, {
+  x: 0, y: 3,
+  width: 78, height: 7,
+  value: row.data.progress,
+  radius: 4,
+  interactive: true,
+  onChange: (next) => ctx.updateField('progress', next),
+})
+
+// Ring / dashboard (height defaults to width)
+createCTElement(CTProgress, {
+  width: 44,
+  value: row.data.progress,
+  shape: 'circle', // or 'dashboard'
+  showLabel: true,
+  interactive: true,
+  onChange: (next) => ctx.updateField('progress', next),
+})
+```
+
+Drag is paint-only: the preview value is injected while drawing (via the render context) and committed on `mouseup`, so the layout plan is never invalidated. During an async `onChange` the preview value is kept until the promise settles to avoid flicker. If a cell contains more than one interactive `CTProgress`, give each an `id` so the drag preview only targets the one being dragged.
 
 #### Edit validation
 

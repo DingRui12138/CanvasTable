@@ -1,7 +1,7 @@
-import type { CTElement, CTLayoutInfo, CTRenderContext } from './types';
-import type { TableTheme } from '../../types/index';
-import { LayoutEngine } from './LayoutEngine';
-import { type JSXRenderCacheStats } from './JSXRenderCache';
+import type { CTElement, CTLayoutInfo, CTRenderContext } from "./types";
+import type { TableTheme } from "../../types/index";
+import { LayoutEngine } from "./LayoutEngine";
+import { type JSXRenderCacheStats } from "./JSXRenderCache";
 /**
  * CTElement Canvas Renderer
  *
@@ -31,7 +31,7 @@ export declare class CTElementRenderer {
         height: number;
     }, layoutCacheKey?: string | null): void;
     getRenderCacheStats(): JSXRenderCacheStats;
-    invalidateOffscreen(_scope: 'all' | {
+    invalidateOffscreen(_scope: "all" | {
         oldSize: string | string[];
     }): void;
     getLayouts(): CTLayoutInfo[];
@@ -60,5 +60,15 @@ export declare class CTElementRenderer {
     private renderImageFallback;
     private drawImageWithFit;
     private renderLine;
+    /**
+     * 进度条是“绘制型”图元：几何来自布局节点（width/height 恒定），
+     * value / 颜色 / label 在每次绘制时从当前元素读取，
+     * 所以不同进度的单元格可以共享同一棵布局计划。
+     */
+    private renderProgress;
+    private renderLineProgress;
+    private renderRadialProgress;
+    private resolveProgressColor;
+    private getProgressLabel;
 }
 //# sourceMappingURL=CTElementRenderer.d.ts.map

@@ -1213,6 +1213,7 @@ export interface InteractionState {
     | "row-reorder"
     | "row-resize"
     | "progress-drag"
+    | "jsx-progress-drag"
     | null;
   dragTarget: unknown;
   rowResizeState?: {

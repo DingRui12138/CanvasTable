@@ -6,12 +6,14 @@
 [![npm downloads](https://img.shields.io/npm/dm/@canvas-table/core.svg)](https://www.npmjs.com/package/@canvas-table/core)
 [![license](https://img.shields.io/npm/l/@canvas-table/core.svg)](https://github.com/DingRui12138/CanvasTable/blob/main/LICENSE)
 [![gzip size](https://img.shields.io/bundlephobia/minzip/@canvas-table/core)](https://bundlephobia.com/package/@canvas-table/core)
+[![CodeSandbox](https://img.shields.io/badge/CodeSandbox-Online%20Demo-151515?logo=codesandbox&logoColor=white)](https://codesandbox.io/p/sandbox/r7rvnp)
 
 一个基于 Canvas 的高性能数据表格组件，支持百万级数据流畅渲染。
 
 - npm 包：[`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
 - 源码与 Issue：[DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
 - **Demo**：本地打开 `docs/index.html`，或将 `docs/` 发布到 GitHub Pages。
+- **在线 Demo（CodeSandbox）**：[预览](https://r7rvnp.csb.app) · [编辑源码](https://codesandbox.io/p/sandbox/r7rvnp)
 
 ## 特性
 
@@ -526,7 +528,7 @@ interface Column {
 
 CanvasTable 提供 JSX 公共组件，可在 `jsxRender` 中使用声明式布局。`jsxRender` 从单元格左上角开始绘制，不应用内置 padding 或居中，样式完全由用户决定。根元素默认撑满单元格（`width: "100%"`、`height: "100%"`）。
 
-**可用组件：** `CTBox`、`CTRow`（= `CTBox { direction: "row" }`）、`CTColumn`（= `CTBox { direction: "column" }`）、`CTStack`（= `CTBox`）、`CTText`、`CTCircle`、`CTImage`、`CTLine`、`CTDate`、`CTTooltip`、`CTDropdown` + `createCTElement`
+**可用组件：** `CTBox`、`CTRow`（= `CTBox { direction: "row" }`）、`CTColumn`（= `CTBox { direction: "column" }`）、`CTStack`（= `CTBox`）、`CTText`、`CTCircle`、`CTImage`、`CTLine`、`CTProgress`、`CTDate`、`CTTooltip`、`CTDropdown` + `createCTElement`
 
 > JSX 组件同时从 `@canvas-table/core` 和 `@canvas-table/core/jsx` 导出；其属性类型（`BoxProps`、`TextProps`、`CTElement` 等）**只**从 `@canvas-table/core/jsx` 导出。`CT` 前缀可避免与表格类型（`Row` / `Column`）或 DOM 全局对象（`Date` / `Image` / `Text`）同名。
 
@@ -666,6 +668,58 @@ CTRow 是 `CTBox { direction: "row" }`，CTColumn 是 `CTBox { direction: "colum
 | `strokeWidth` | `number` | 线宽 |
 | `strokeColor` | `string` | 线条颜色 |
 | `strokeLinecap` | `"butt" \| "round" \| "square"` | 端点形状 |
+
+##### CTProgress 属性
+
+`CTProgress` 是绘制型图元：布局尺寸只由 `width` / `height` 决定，`value` 只在绘制期读取。因此不同进度的单元格可以共享同一个 `jsxLayoutKey`——**不要**用改变 `CTBox` 宽度的方式表达进度，否则布局计划会冻结在第一次渲染的那一行。
+
+| 属性 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `value` | `number` | — | 当前值（0..max） |
+| `max` | `number` | `100` | 最大值 |
+| `width` | `number` | — | 总宽度（布局输入）；`circle` / `dashboard` 时作为圆环直径 |
+| `height` | `number` | `8`（线型）/ `width`（环型） | 总高度；环型默认正方形 |
+| `shape` | `"line" \| "circle" \| "dashboard"` | `"line"` | 形状；`dashboard` 为底部缺口的 270° 弧 |
+| `borderRadius` | `number` | `height / 2` | 线型圆角（`radius` 为别名） |
+| `strokeWidth` | `number` | 自动（约直径 12%） | 环型线条粗细 |
+| `strokeLinecap` | `"butt" \| "round" \| "square"` | `"round"` | 环型线帽 |
+| `trackColor` | `string` | 主题 `progress.track` | 轨道颜色 |
+| `barColor` | `string \| ((ratio: number) => string)` | 主题 `progress.default` | 填充颜色 |
+| `status` | `"normal" \| "success" \| "warning" \| "error"` | — | 主题色状态，仅在未设置 `barColor` 时生效 |
+| `minBarWidth` | `number` | `2 * radius` | 填充最小宽度，避免小值不可见 |
+| `showLabel` | `boolean` | `false` | 是否显示百分比文本 |
+| `label` | `string \| ((ratio, value, max) => string)` | `"NN%"` | 自定义文本 |
+| `labelPosition` | `"inside" \| "right"` | `"inside"` | 文本在轨道内居中，或在右侧保留区（仅线型） |
+| `labelWidth` | `number` | `34` | `labelPosition` 为 `"right"` 时保留的文本宽度 |
+| `fontSize` | `number` | `min(10, height - 2)` / 约直径 30% | 文本字号 |
+| `color` | `string` | 线型内部白色 / 主题 `cellText` | 文本颜色 |
+| `precision` | `number` | `0` | 百分比小数位数；同时作为拖拽取值精度 |
+| `interactive` | `boolean` | `false` | 是否允许拖拽 / 点击调整值 |
+| `onChange` | `(value: number) => void \| Promise<void>` | — | 值变更回调；缺省时回退到 `renderContext.updateValue` |
+
+```typescript
+// 线型 + 拖拽
+createCTElement(CTProgress, {
+  x: 0, y: 3,
+  width: 78, height: 7,
+  value: row.data.progress,
+  radius: 4,
+  interactive: true,
+  onChange: (next) => ctx.updateField('progress', next),
+})
+
+// 圆环 / 仪表盘（高度默认等于宽度）
+createCTElement(CTProgress, {
+  width: 44,
+  value: row.data.progress,
+  shape: 'circle', // 或 'dashboard'
+  showLabel: true,
+  interactive: true,
+  onChange: (next) => ctx.updateField('progress', next),
+})
+```
+
+拖拽是纯绘制行为：预览值在渲染期注入、`mouseup` 时才提交，不会使布局计划失效。异步 `onChange` 未完成时会保留预览值，避免闪回旧数据。同一个单元格内有多个可交互 `CTProgress` 时，请给每个设置 `id`，以便拖拽预览只作用于当前拖拽的那个。
 
 #### 编辑校验
 

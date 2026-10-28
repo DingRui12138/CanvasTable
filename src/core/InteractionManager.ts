@@ -39,7 +39,7 @@ import { EventEmitter } from "./EventEmitter";
 import { EditorRegistry } from "./editors";
 import { clamp, getRenderResult, getColumnField, resolveDisabled } from "../utils";
 import { TableEvents } from "../constants/events";
-import type { CTDropdownOnChange, CTInteractiveRegion } from "./jsx";
+import type { CTDropdownOnChange, CTInteractiveRegion, CTProgressInteractionInfo } from "./jsx";
 import {
   EditingHandler,
   DropdownHandler,
@@ -178,6 +178,13 @@ export class InteractionManager {
   private handlerContext: HandlerContext | null = null;
   private editorRegistry: EditorRegistry;
   private jsxInteractiveRegions: CTInteractiveRegion[] = [];
+  /** JSX 进度条拖拽状态（预览值 + 拖拽几何） */
+  private jsxProgressDrag: {
+    region: CTInteractiveRegion;
+    info: CTProgressInteractionInfo;
+    displayValue: number;
+    finishing?: boolean;
+  } | null = null;
   /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
   private shouldBlockDropdownClose: ((cell: CellPosition) => Promise<boolean>) | null = null;
   /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
@@ -514,6 +521,10 @@ export class InteractionManager {
     }
 
     const jsxRegion = this.getJSXInteractiveRegionAt(viewportX, viewportY);
+    if (jsxRegion?.type === "progress" && jsxRegion.progress) {
+      this.startJSXProgressDrag(jsxRegion, viewportX, viewportY);
+      return;
+    }
     if (jsxRegion?.type === "dropdown") {
       const config = jsxRegion.props.config as SelectConfig | undefined;
       if (config) {
@@ -826,6 +837,12 @@ export class InteractionManager {
   }
 
   private handleDocumentMouseMove = (e: MouseEvent): void => {
+    if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+      const rect = this.canvas.getBoundingClientRect();
+      this.updateJSXProgressDrag(e.clientX - rect.left, e.clientY - rect.top);
+      return;
+    }
+
     if (
       this.state.isDragging &&
       this.state.dragType === "row-resize" &&
@@ -909,6 +926,11 @@ export class InteractionManager {
   };
 
   private handleDocumentMouseUp = (): void => {
+    if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+      this.finishJSXProgressDrag();
+      return;
+    }
+
     if (
       this.state.isDragging &&
       this.state.dragType === "row-resize" &&
@@ -1017,6 +1039,11 @@ export class InteractionManager {
     if (this.state.colorDropdown) {
       this.dropdownHandler.handleColorDropdownHover(e);
       this.canvas.style.cursor = "pointer";
+      return;
+    }
+
+    if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+      this.updateJSXProgressDrag(viewportX, viewportY);
       return;
     }
 
@@ -1184,6 +1211,11 @@ export class InteractionManager {
     }
 
     const jsxRegion = this.getJSXInteractiveRegionAt(viewportX, viewportY);
+    if (jsxRegion?.type === "progress") {
+      this.canvas.style.cursor = "pointer";
+      this.state.tooltip = null;
+      return;
+    }
     if (jsxRegion?.type === "dropdown") {
       this.canvas.style.cursor = "pointer";
       this.state.tooltip = null;
@@ -1336,6 +1368,11 @@ export class InteractionManager {
   };
 
   private handleMouseUp = (_e: MouseEvent): void => {
+    if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+      this.finishJSXProgressDrag();
+      return;
+    }
+
     if (
       this.state.isDragging &&
       this.state.dragType === "row-resize" &&
@@ -2018,6 +2055,119 @@ export class InteractionManager {
     this.jsxInteractiveRegions = regions;
   }
 
+  /** 当前 JSX 进度条拖拽预览值（供 Renderer 覆盖绘制） */
+  getJSXProgressDragPreview(): {
+    rowIndex: number;
+    columnIndex: number;
+    elementId?: string;
+    value: number;
+  } | null {
+    const drag = this.jsxProgressDrag;
+    if (!drag) return null;
+    return {
+      rowIndex: drag.region.rowIndex ?? -1,
+      columnIndex: drag.region.colIndex ?? -1,
+      elementId: typeof drag.region.props.id === "string" ? drag.region.props.id : undefined,
+      value: drag.displayValue,
+    };
+  }
+
+  private startJSXProgressDrag(
+    region: CTInteractiveRegion,
+    viewportX: number,
+    viewportY: number,
+  ): void {
+    if (!region.progress) return;
+    this.jsxProgressDrag = {
+      region,
+      info: region.progress,
+      displayValue: this.computeJSXProgressValue(region.progress, viewportX, viewportY),
+    };
+    this.state.isDragging = true;
+    this.state.dragType = "jsx-progress-drag";
+    this.canvas.style.cursor = "grabbing";
+    this.bindDocumentEvents();
+    this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+  }
+
+  private updateJSXProgressDrag(viewportX: number, viewportY: number): void {
+    const drag = this.jsxProgressDrag;
+    if (!drag || drag.finishing) return;
+    const value = this.computeJSXProgressValue(drag.info, viewportX, viewportY);
+    if (value === drag.displayValue) return;
+    drag.displayValue = value;
+    this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+  }
+
+  private finishJSXProgressDrag(): void {
+    const drag = this.jsxProgressDrag;
+    this.state.isDragging = false;
+    this.state.dragType = null;
+    this.canvas.style.cursor = "default";
+    this.unbindDocumentEvents();
+    if (!drag || drag.finishing) return;
+    drag.finishing = true;
+
+    const value = drag.displayValue;
+    const clearPreview = (): void => {
+      if (this.jsxProgressDrag !== drag) return;
+      this.jsxProgressDrag = null;
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    };
+
+    let result: void | Promise<void>;
+    try {
+      result = drag.region.onValueChange?.(value);
+    } catch (error) {
+      console.error("[InteractionManager] JSX progress onChange error:", error);
+      clearPreview();
+      return;
+    }
+
+    // 异步提交期间保留预览值，避免回退到旧数据造成闪回
+    if (result && typeof (result as Promise<void>).then === "function") {
+      (result as Promise<void>).then(clearPreview, (error) => {
+        console.error("[InteractionManager] JSX progress onChange error:", error);
+        clearPreview();
+      });
+    } else {
+      clearPreview();
+    }
+  }
+
+  private computeJSXProgressValue(
+    info: CTProgressInteractionInfo,
+    viewportX: number,
+    viewportY: number,
+  ): number {
+    const TAU = Math.PI * 2;
+    const total = info.totalAngle > 0 ? info.totalAngle : TAU;
+    let ratio: number;
+
+    if (info.shape === "line") {
+      ratio = info.trackWidth > 0 ? (viewportX - info.trackX) / info.trackWidth : 0;
+    } else {
+      let angle = Math.atan2(viewportY - info.centerY, viewportX - info.centerX);
+      if (angle < 0) angle += TAU;
+      const start = ((info.startAngle % TAU) + TAU) % TAU;
+      let offset = angle - start;
+      if (offset < 0) offset += TAU;
+
+      if (offset > total) {
+        // 仪表盘底部缺口：按离两端更近的一侧取值
+        const gapHalf = (TAU - total) / 2;
+        ratio = offset > total + gapHalf ? 0 : 1;
+      } else {
+        ratio = offset / total;
+      }
+    }
+
+    ratio = clamp(ratio, 0, 1);
+    const raw = ratio * (info.max > 0 ? info.max : 100);
+    const precision = info.precision;
+    return precision === 0 ? Math.round(raw) : Number(raw.toFixed(precision));
+  }
+
   private getJSXInteractiveRegionAt(x: number, y: number): CTInteractiveRegion | undefined {
     for (let i = this.jsxInteractiveRegions.length - 1; i >= 0; i--) {
       const region = this.jsxInteractiveRegions[i]!;
@@ -2053,6 +2203,7 @@ export class InteractionManager {
     this.state.rowResizeState = undefined;
     this.state.dragTarget = null;
     this.state.progressDragState = undefined;
+    this.jsxProgressDrag = null;
     this.state.tooltip = null;
     this.closeAllDropdowns();
     this.sortConfig = [];
@@ -2386,6 +2537,7 @@ export class InteractionManager {
 
   destroy(): void {
     this.isDestroyed = true;
+    this.jsxProgressDrag = null;
     this.wheelHandler.destroy();
     this.unbindEvents();
     this.unbindDocumentEvents();

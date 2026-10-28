@@ -6,6 +6,7 @@ import { EditorRegistry } from '@/core/editors';
 import { RowPinManager } from '@/core/RowPinManager';
 import { createMockTheme, createTestColumns, createTestRows } from '../helpers/mockFactories';
 import type { SelectionConfig, EditingConfig, SortConfig, FilterConfig, CellPosition, Column } from '@/types';
+import type { CTProgressInteractionInfo, CTInteractiveRegion } from '@/core/jsx/types';
 import { TableEvents } from '@/constants/events';
 
 // Helper to create mock mouse events
@@ -1656,6 +1657,149 @@ describe('InteractionManager', () => {
 
       interactionManager.resetState();
       expect(interactionManager.getInteractionState().progressDragState).toBeUndefined();
+    });
+  });
+
+  describe('JSX 进度条拖拽', () => {
+    function setRegion(
+      progress: CTProgressInteractionInfo,
+      onValueChange?: (value: number) => void | Promise<void>,
+    ): void {
+      interactionManager.setJSXInteractiveRegions([
+        {
+          type: 'progress',
+          rect: { x: 0, y: 0, width: 100, height: 100 },
+          element: { type: 'CTProgress', props: {}, children: [] },
+          props: {},
+          rowIndex: 0,
+          colIndex: 0,
+          progress,
+          onValueChange,
+        } satisfies CTInteractiveRegion,
+      ]);
+    }
+
+    const lineInfo: CTProgressInteractionInfo = {
+      shape: 'line',
+      trackX: 0,
+      trackY: 0,
+      trackWidth: 100,
+      trackHeight: 10,
+      centerX: 0,
+      centerY: 0,
+      radius: 0,
+      startAngle: 0,
+      totalAngle: 0,
+      max: 100,
+      precision: 0,
+    };
+
+    const circleInfo: CTProgressInteractionInfo = {
+      shape: 'circle',
+      trackX: 0,
+      trackY: 0,
+      trackWidth: 0,
+      trackHeight: 0,
+      centerX: 50,
+      centerY: 50,
+      radius: 40,
+      startAngle: -Math.PI / 2,
+      totalAngle: Math.PI * 2,
+      max: 100,
+      precision: 0,
+    };
+
+    const dashboardInfo: CTProgressInteractionInfo = {
+      ...circleInfo,
+      shape: 'dashboard',
+      startAngle: Math.PI * 0.75,
+      totalAngle: Math.PI * 1.5,
+    };
+
+    it('线型：拖拽时更新预览值，mouseup 提交', () => {
+      const onValueChange = jest.fn();
+      setRegion(lineInfo, onValueChange);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', { clientX: 25, clientY: 5 }));
+      expect(interactionManager.getJSXProgressDragPreview()).toMatchObject({
+        rowIndex: 0,
+        columnIndex: 0,
+        value: 25,
+      });
+
+      canvas.dispatchEvent(createMouseEvent('mousemove', { clientX: 70, clientY: 5 }));
+      expect(interactionManager.getJSXProgressDragPreview()?.value).toBe(70);
+
+      canvas.dispatchEvent(createMouseEvent('mouseup', { clientX: 70, clientY: 5 }));
+      expect(onValueChange).toHaveBeenCalledWith(70);
+      expect(interactionManager.getJSXProgressDragPreview()).toBeNull();
+    });
+
+    it('环型：按角度换算，上方为 0、右方为 25%', () => {
+      const onValueChange = jest.fn();
+      setRegion(circleInfo, onValueChange);
+
+      const dragValue = (clientX: number, clientY: number): number | undefined => {
+        canvas.dispatchEvent(createMouseEvent('mousedown', { clientX, clientY }));
+        const value = interactionManager.getJSXProgressDragPreview()?.value;
+        canvas.dispatchEvent(createMouseEvent('mouseup', { clientX, clientY }));
+        return value;
+      };
+
+      expect(dragValue(50, 10)).toBe(0);
+      expect(dragValue(90, 50)).toBe(25);
+      expect(dragValue(50, 90)).toBe(50);
+      expect(dragValue(10, 50)).toBe(75);
+    });
+
+    it('环型：precision 控制取值精度', () => {
+      setRegion({ ...circleInfo, precision: 1 });
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', { clientX: 70, clientY: 85 }));
+      const expected = Number(
+        (((Math.atan2(35, 20) + Math.PI / 2) / (Math.PI * 2)) * 100).toFixed(1),
+      );
+      expect(interactionManager.getJSXProgressDragPreview()?.value).toBe(expected);
+      canvas.dispatchEvent(createMouseEvent('mouseup', { clientX: 70, clientY: 85 }));
+    });
+
+    it('仪表盘：从 135° 顺时针增长，底部缺口按最近一侧收敛', () => {
+      setRegion(dashboardInfo);
+
+      const dragValue = (clientX: number, clientY: number): number | undefined => {
+        canvas.dispatchEvent(createMouseEvent('mousedown', { clientX, clientY }));
+        const value = interactionManager.getJSXProgressDragPreview()?.value;
+        canvas.dispatchEvent(createMouseEvent('mouseup', { clientX, clientY }));
+        return value;
+      };
+
+      expect(dragValue(90, 50)).toBe(83);
+      expect(dragValue(50, 10)).toBe(50);
+      // 底部缺口：偏右侧（靠近 45°）→ 100；偏左侧（靠近 135°）→ 0
+      expect(dragValue(55, 90)).toBe(100);
+      expect(dragValue(45, 90)).toBe(0);
+    });
+
+    it('异步 onChange 提交期间保留预览值，提交完成后清除', async () => {
+      let resolveCommit: (() => void) | undefined;
+      const onValueChange = jest.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveCommit = resolve;
+          }),
+      );
+      setRegion(circleInfo, onValueChange);
+
+      canvas.dispatchEvent(createMouseEvent('mousedown', { clientX: 50, clientY: 90 }));
+      canvas.dispatchEvent(createMouseEvent('mouseup', { clientX: 50, clientY: 90 }));
+
+      expect(onValueChange).toHaveBeenCalledWith(50);
+      // 提交未完成，预览值保留
+      expect(interactionManager.getJSXProgressDragPreview()?.value).toBe(50);
+
+      resolveCommit?.();
+      await Promise.resolve();
+      expect(interactionManager.getJSXProgressDragPreview()).toBeNull();
     });
   });
 });

@@ -108,6 +108,8 @@ export declare class InteractionManager {
     private handlerContext;
     private editorRegistry;
     private jsxInteractiveRegions;
+    /** JSX 进度条拖拽状态（预览值 + 拖拽几何） */
+    private jsxProgressDrag;
     /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
     private shouldBlockDropdownClose;
     /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
@@ -202,6 +204,17 @@ export declare class InteractionManager {
     isEditing(): boolean;
     getDropdown(): DropdownState | null;
     setJSXInteractiveRegions(regions: CTInteractiveRegion[]): void;
+    /** 当前 JSX 进度条拖拽预览值（供 Renderer 覆盖绘制） */
+    getJSXProgressDragPreview(): {
+        rowIndex: number;
+        columnIndex: number;
+        elementId?: string;
+        value: number;
+    } | null;
+    private startJSXProgressDrag;
+    private updateJSXProgressDrag;
+    private finishJSXProgressDrag;
+    private computeJSXProgressValue;
     private getJSXInteractiveRegionAt;
     private toggleRowExpand;
     clearSelection(): void;

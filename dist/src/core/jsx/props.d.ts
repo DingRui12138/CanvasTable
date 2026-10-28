@@ -1,4 +1,4 @@
-import type { CTCircleProps, CTComponentProps, CTBoxProps, CTBoxShadow, CTBackgroundGradient, CTBorderSide, CTImageProps, CTLineProps, CTTextProps, CTTooltipProps, CTDropdownProps } from "./types";
+import type { CTCircleProps, CTComponentProps, CTBoxProps, CTBoxShadow, CTBackgroundGradient, CTBorderSide, CTImageProps, CTLineProps, CTProgressProps, CTTextProps, CTTooltipProps, CTDropdownProps } from "./types";
 export type BorderShortcut = string | {
     width?: number;
     color?: string;
@@ -76,6 +76,7 @@ export type CircleProps = CTComponentProps & CTCircleProps & {
 };
 export type ImageProps = CTComponentProps & CTImageProps;
 export type LineProps = CTComponentProps & CTLineProps;
+export type ProgressProps = CTComponentProps & CTProgressProps;
 export type TooltipProps = CTComponentProps & CTTooltipProps;
 export type DropdownProps = CTComponentProps & CTDropdownProps;
 export declare function normalizeBoxProps(props: BoxProps): CTBoxProps;

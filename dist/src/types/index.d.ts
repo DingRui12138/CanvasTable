@@ -1068,7 +1068,7 @@ export interface InteractionState {
     isSelecting: boolean;
     selectionStart: CellPosition | null;
     isDragging: boolean;
-    dragType: "column-resize" | "column-reorder" | "row-reorder" | "row-resize" | "progress-drag" | null;
+    dragType: "column-resize" | "column-reorder" | "row-reorder" | "row-resize" | "progress-drag" | "jsx-progress-drag" | null;
     dragTarget: unknown;
     rowResizeState?: {
         rowIndex: number;

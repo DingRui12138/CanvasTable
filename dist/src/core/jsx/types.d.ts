@@ -6,7 +6,25 @@ export interface CTRect {
     width: number;
     height: number;
 }
-export type CTInteractiveRegionType = "tooltip" | "dropdown" | "image";
+export type CTInteractiveRegionType = "tooltip" | "dropdown" | "image" | "progress";
+/** CTProgress 交互几何（画布绝对坐标），用于拖拽时把指针位置换算成 value */
+export interface CTProgressInteractionInfo {
+    shape: "line" | "circle" | "dashboard";
+    /** 线型进度：轨道区域 */
+    trackX: number;
+    trackY: number;
+    trackWidth: number;
+    trackHeight: number;
+    /** 环型 / 仪表盘：圆心与半径 */
+    centerX: number;
+    centerY: number;
+    radius: number;
+    /** 起始角（弧度）与总角度；线型忽略 */
+    startAngle: number;
+    totalAngle: number;
+    max: number;
+    precision: number;
+}
 export interface CTInteractiveRegion {
     type: CTInteractiveRegionType;
     rect: CTRect;
@@ -16,6 +34,10 @@ export interface CTInteractiveRegion {
     column?: Column;
     rowIndex?: number;
     colIndex?: number;
+    /** type = "progress" 时的拖拽几何 */
+    progress?: CTProgressInteractionInfo;
+    /** type = "progress" 时的值变更回调（onChange 优先，否则回退 updateValue） */
+    onValueChange?: (value: number) => void | Promise<void>;
 }
 export interface JSXRenderContext {
     value: unknown;
@@ -40,6 +62,8 @@ export interface CTRenderContext {
     updateField?: (field: string, value: unknown) => Promise<void>;
     updateRow?: (data: Record<string, unknown>) => Promise<void>;
     collectInteractiveRegion?: (region: CTInteractiveRegion) => void;
+    /** 拖拽中的 CTProgress 预览值覆盖（按单元格 / 元素 id 匹配） */
+    getProgressValueOverride?: (rowIndex: number, colIndex: number, elementId?: string) => number | undefined;
 }
 /** CTElement 样式状态 */
 export interface CTStyles {
@@ -205,6 +229,62 @@ export interface CTLineProps extends CTBaseProps, CTPositionProps {
     strokeColor?: string;
     strokeLinecap?: "butt" | "round" | "square";
 }
+/**
+ * CTProgress 进度条属性。
+ *
+ * 布局尺寸只由 `width` / `height` 决定，`value` 只在绘制期生效，
+ * 因此同一 `jsxLayoutKey` 下不同进度的单元格可以共享布局计划。
+ */
+export interface CTProgressProps extends CTBaseProps, CTPositionProps {
+    /** 当前值（0..max） */
+    value: number;
+    /** 最大值，默认 100 */
+    max?: number;
+    /** 总宽度（布局输入，不随 value 变化） */
+    width: number;
+    /** 总高度，默认 8 */
+    height?: number;
+    /** 圆角半径，默认 height / 2 */
+    borderRadius?: number;
+    /** borderRadius 别名 */
+    radius?: number;
+    /** 轨道颜色，默认 theme.colors.progress.track */
+    trackColor?: string;
+    /** 填充颜色，支持按 ratio(0..1) 动态计算 */
+    barColor?: string | ((ratio: number) => string);
+    /** 填充最小宽度，默认 2 * radius，避免小值不可见 */
+    minBarWidth?: number;
+    /** 形状，默认 line */
+    shape?: "line" | "circle" | "dashboard";
+    /** 环型 / 仪表盘的线条粗细，默认按直径计算 */
+    strokeWidth?: number;
+    /** 环型 / 仪表盘的线帽，默认 round */
+    strokeLinecap?: "butt" | "round" | "square";
+    /** 强制颜色状态，仅在未设置 barColor 时生效 */
+    status?: "normal" | "success" | "warning" | "error";
+    /** 百分比小数位数，默认 0；同时用于拖拽取值精度 */
+    precision?: number;
+    /** 是否允许拖拽调整值，默认 false */
+    interactive?: boolean;
+    /** 拖拽 / 点击后的值变更回调；未提供时回退到 renderContext.updateValue */
+    onChange?: (value: number) => void | Promise<void>;
+    /** 是否显示百分比文本，默认 false */
+    showLabel?: boolean;
+    /** 自定义文本，或通过格式化函数生成 */
+    label?: string | ((ratio: number, value: number, max: number) => string);
+    /** 文本位置：inside = 轨道内部居中；right = 轨道右侧保留区域 */
+    labelPosition?: "inside" | "right";
+    /** labelPosition = "right" 时保留的文本区域宽度，默认 34 */
+    labelWidth?: number;
+    /** 文本字号，默认 min(10, height - 2) */
+    fontSize?: number;
+    /** 文本颜色，默认 inside 为白色、right 为 theme.colors.cellText */
+    color?: string;
+    /** 文本字重，默认 normal */
+    fontWeight?: "normal" | "bold";
+    /** 文本字体，默认 theme.font.family */
+    fontFamily?: string;
+}
 export interface CTTooltipProps extends CTBaseProps {
     content: string;
     placement?: "top" | "right" | "bottom" | "left";
@@ -226,8 +306,8 @@ export interface CTDropdownProps extends CTBaseProps {
     onChange?: CTDropdownOnChange;
 }
 /** 元素属性联合类型 */
-export type CTElementProps = CTBoxProps | CTCircleProps | CTTextProps | CTImageProps | CTLineProps | CTTooltipProps | CTDropdownProps;
-export type CTElementType = "CTBox" | "CTCircle" | "CTText" | "CTImage" | "CTLine" | "CTTooltip" | "CTDropdown";
+export type CTElementProps = CTBoxProps | CTCircleProps | CTTextProps | CTImageProps | CTLineProps | CTProgressProps | CTTooltipProps | CTDropdownProps;
+export type CTElementType = "CTBox" | "CTCircle" | "CTText" | "CTImage" | "CTLine" | "CTProgress" | "CTTooltip" | "CTDropdown";
 /** CTElement 树节点 */
 export interface CTElement {
     type: CTElementType;

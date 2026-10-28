@@ -7,6 +7,7 @@ import type {
   CTBorderSide,
   CTImageProps,
   CTLineProps,
+  CTProgressProps,
   CTTextProps,
   CTTooltipProps,
   CTDropdownProps,
@@ -93,6 +94,7 @@ export interface DateProps extends CTComponentProps, Omit<CTTextProps, "text"> {
 export type CircleProps = CTComponentProps & CTCircleProps & { bgColor?: string };
 export type ImageProps = CTComponentProps & CTImageProps;
 export type LineProps = CTComponentProps & CTLineProps;
+export type ProgressProps = CTComponentProps & CTProgressProps;
 export type TooltipProps = CTComponentProps & CTTooltipProps;
 export type DropdownProps = CTComponentProps & CTDropdownProps;
 

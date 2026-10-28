@@ -1,4 +1,4 @@
-import { CTBox, CTText, CTRow, CTColumn, CTCircle, CTImage, CTLine } from '@/core/jsx/components';
+import { CTBox, CTText, CTRow, CTColumn, CTCircle, CTImage, CTLine, CTProgress } from '@/core/jsx/components';
 
 describe('JSX public components', () => {
   it('maps CTBox aliases to CTBox props', () => {
@@ -84,5 +84,23 @@ describe('JSX public components', () => {
     expect(element.type).toBe('CTLine');
     expect(element.props.points).toEqual(points);
     expect(element.props.strokeColor).toBe('#333');
+  });
+
+  it('CTProgress builds a leaf element and maps radius to borderRadius', () => {
+    const element = CTProgress({
+      value: 42,
+      width: 78,
+      height: 7,
+      radius: 4,
+      trackColor: '#eee',
+      barColor: '#1890ff',
+      children: [],
+    });
+
+    expect(element.type).toBe('CTProgress');
+    expect(element.children).toEqual([]);
+    expect(element.props.value).toBe(42);
+    expect(element.props.width).toBe(78);
+    expect(element.props.borderRadius).toBe(4);
   });
 });

@@ -691,4 +691,258 @@ describe('CTElementRenderer', () => {
     // not the translated coords used internally for drawing.
     expect(regions.at(-1)?.rect).toMatchObject({ x: 70, y: 40, width: 20, height: 20 });
   });
+
+  it('renders CTProgress fill from the current value while reusing the layout plan', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const layoutSpy = jest.spyOn(layoutEngine, 'layoutTree');
+    const progressRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+    const rectSpy = jest.spyOn(mockCtx, 'rect');
+
+    const tree = (value: number) =>
+      createCTElement('CTProgress', {
+        value,
+        width: 100,
+        height: 10,
+        borderRadius: 0,
+        trackColor: '#eee',
+        barColor: '#1890ff',
+      });
+
+    progressRenderer.render(tree(20), 0, 0, { width: 100, height: 10 }, 'progress-layout');
+    const lowFill = rectSpy.mock.calls.at(-1);
+
+    progressRenderer.render(tree(80), 0, 0, { width: 100, height: 10 }, 'progress-layout');
+    const highFill = rectSpy.mock.calls.at(-1);
+
+    // 绘制期使用当前 value，而不是缓存计划里的宽度
+    expect(lowFill).toEqual([0, 0, 20, 10]);
+    expect(highFill).toEqual([0, 0, 80, 10]);
+    // 两行共享同一棵布局计划
+    expect(layoutSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps CTProgress value and reserves label width for right labels', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const progressRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+    const rectSpy = jest.spyOn(mockCtx, 'rect');
+
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 150,
+        width: 100,
+        height: 10,
+        borderRadius: 0,
+        showLabel: true,
+        labelPosition: 'right',
+        labelWidth: 34,
+      }),
+      0,
+      0,
+      { width: 100, height: 10 },
+    );
+    expect(rectSpy.mock.calls.at(-1)).toEqual([0, 0, 66, 10]);
+
+    rectSpy.mockClear();
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 50,
+        width: 100,
+        height: 10,
+        borderRadius: 0,
+        showLabel: true,
+        labelPosition: 'right',
+        labelWidth: 34,
+      }),
+      0,
+      0,
+      { width: 100, height: 10 },
+    );
+    // trackWidth = 100 - 34, ratio = 0.5
+    expect(rectSpy.mock.calls.at(-1)).toEqual([0, 0, 33, 10]);
+  });
+
+  it('renders CTProgress circle and dashboard arcs', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const progressRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+    const arcSpy = jest.spyOn(mockCtx, 'arc');
+
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 50,
+        width: 40,
+        shape: 'circle',
+        showLabel: false,
+      }),
+      0,
+      0,
+      { width: 40, height: 40 },
+    );
+
+    // 轨道 + 进度弧
+    expect(arcSpy).toHaveBeenCalledTimes(2);
+    const [track, progress] = arcSpy.mock.calls;
+    expect(track![0]).toBe(20);
+    expect(track![1]).toBe(20);
+    expect(track![3]).toBeCloseTo(-Math.PI / 2);
+    expect(track![4]).toBeCloseTo(Math.PI * 1.5);
+    expect(progress![3]).toBeCloseTo(-Math.PI / 2);
+    expect(progress![4]).toBeCloseTo(Math.PI / 2);
+
+    arcSpy.mockClear();
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 50,
+        width: 40,
+        shape: 'dashboard',
+        showLabel: false,
+      }),
+      0,
+      0,
+      { width: 40, height: 40 },
+    );
+
+    const [gaugeTrack, gaugeProgress] = arcSpy.mock.calls;
+    expect(gaugeTrack![1]).toBeCloseTo(22); // 20 + height * 0.05
+    expect(gaugeTrack![3]).toBeCloseTo(Math.PI * 0.75);
+    expect(gaugeTrack![4]).toBeCloseTo(Math.PI * 2.25);
+    expect(gaugeProgress![3]).toBeCloseTo(Math.PI * 0.75);
+    expect(gaugeProgress![4]).toBeCloseTo(Math.PI * 1.5);
+  });
+
+  it('applies progress value overrides without re-layout', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const layoutSpy = jest.spyOn(layoutEngine, 'layoutTree');
+    const progressRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+    const rectSpy = jest.spyOn(mockCtx, 'rect');
+
+    progressRenderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      rowIndex: 3,
+      colIndex: 4,
+      getProgressValueOverride: (rowIndex, colIndex) =>
+        rowIndex === 3 && colIndex === 4 ? 80 : undefined,
+    });
+
+    const tree = createCTElement('CTProgress', {
+      value: 10,
+      width: 100,
+      height: 10,
+      borderRadius: 0,
+    });
+    progressRenderer.render(tree, 0, 0, { width: 100, height: 10 }, 'progress-override');
+
+    // 绘制使用 override(80)，而不是 props.value(10)
+    expect(rectSpy.mock.calls.at(-1)).toEqual([0, 0, 80, 10]);
+    expect(layoutSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('collects interactive CTProgress regions and forwards value changes', async () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const progressRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+    const regions: CTInteractiveRegion[] = [];
+    const updateValue = jest.fn().mockResolvedValue(undefined);
+
+    progressRenderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      rowIndex: 2,
+      colIndex: 3,
+      updateValue,
+      collectInteractiveRegion: (region) => regions.push(region),
+    });
+
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 30,
+        width: 100,
+        height: 10,
+        borderRadius: 0,
+        interactive: true,
+      }),
+      5,
+      7,
+      { width: 100, height: 10 },
+    );
+
+    const region = regions.at(-1)!;
+    expect(region.type).toBe('progress');
+    expect(region.rect).toEqual({ x: 5, y: 7, width: 100, height: 10 });
+    expect(region.progress).toMatchObject({
+      shape: 'line',
+      trackX: 5,
+      trackY: 7,
+      trackWidth: 100,
+      trackHeight: 10,
+      max: 100,
+    });
+
+    await region.onValueChange?.(55);
+    expect(updateValue).toHaveBeenCalledWith(55);
+
+    const onChange = jest.fn();
+    progressRenderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      rowIndex: 2,
+      colIndex: 3,
+      collectInteractiveRegion: (r) => regions.push(r),
+    });
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 30,
+        width: 100,
+        height: 10,
+        interactive: true,
+        onChange,
+      }),
+      0,
+      0,
+      { width: 100, height: 10 },
+    );
+    await regions.at(-1)?.onValueChange?.(70);
+    expect(onChange).toHaveBeenCalledWith(70);
+  });
+
+  it('collects radial CTProgress regions with ring geometry', () => {
+    const measurementEngine = new MeasurementEngine(mockCtx);
+    const layoutEngine = new LayoutEngine(measurementEngine);
+    const progressRenderer = new CTElementRenderer(mockCtx, layoutEngine, theme);
+    const regions: CTInteractiveRegion[] = [];
+
+    progressRenderer.setRenderContext({
+      ctx: mockCtx,
+      theme,
+      rowIndex: 0,
+      colIndex: 0,
+      updateValue: jest.fn(),
+      collectInteractiveRegion: (region) => regions.push(region),
+    });
+
+    progressRenderer.render(
+      createCTElement('CTProgress', {
+        value: 40,
+        width: 40,
+        shape: 'dashboard',
+        interactive: true,
+      }),
+      0,
+      0,
+      { width: 40, height: 40 },
+    );
+
+    expect(regions.at(-1)?.progress).toMatchObject({
+      shape: 'dashboard',
+      centerX: 20,
+      centerY: 22,
+      startAngle: Math.PI * 0.75,
+      totalAngle: Math.PI * 1.5,
+      max: 100,
+    });
+  });
 });

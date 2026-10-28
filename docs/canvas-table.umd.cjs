@@ -9260,6 +9260,8 @@ ${numFmtsXml}
           return this.measureImage(element);
         case "CTLine":
           return this.measureLine(element);
+        case "CTProgress":
+          return this.measureProgress(element);
         case "CTTooltip":
         case "CTDropdown":
           return element.children[0] ? this.measureElement(element.children[0]) : { x: 0, y: 0, width: 0, height: 0 };
@@ -9292,6 +9294,12 @@ ${numFmtsXml}
       const props = element.props;
       const diameter = props.radius * 2;
       return { x: 0, y: 0, width: diameter, height: diameter };
+    }
+    measureProgress(element) {
+      const props = element.props;
+      const width = props.width ?? 0;
+      const height = props.height ?? (props.shape === "circle" || props.shape === "dashboard" ? width : 8);
+      return { x: 0, y: 0, width, height };
     }
     measureImage(element) {
       const props = element.props;
@@ -9566,6 +9574,9 @@ ${numFmtsXml}
           break;
         case "CTLine":
           this.renderLine(currentElement, x, y);
+          break;
+        case "CTProgress":
+          this.renderProgress(currentElement, x, y, node.width, node.height);
           break;
         case "CTTooltip":
         case "CTDropdown":
@@ -10048,6 +10059,227 @@ ${numFmtsXml}
       }
       this.ctx.stroke();
     }
+    /**
+     * 进度条是“绘制型”图元：几何来自布局节点（width/height 恒定），
+     * value / 颜色 / label 在每次绘制时从当前元素读取，
+     * 所以不同进度的单元格可以共享同一棵布局计划。
+     */
+    renderProgress(element, x, y, width, height) {
+      const props = element.props;
+      const shape = props.shape ?? "line";
+      const max = Number(props.max);
+      const safeMax = Number.isFinite(max) && max > 0 ? max : 100;
+      const override = this.renderContext?.getProgressValueOverride?.(
+        this.renderContext.rowIndex ?? -1,
+        this.renderContext.colIndex ?? -1,
+        typeof props.id === "string" ? props.id : void 0
+      );
+      const numericValue = Number(override ?? props.value ?? 0);
+      const rawValue = Number.isFinite(numericValue) ? numericValue : 0;
+      const ratio = Math.min(1, Math.max(0, rawValue / safeMax));
+      const precision = props.precision ?? 0;
+      const showLabel = props.showLabel ?? false;
+      const lineGeometry = shape === "line" ? this.renderLineProgress(props, x, y, width, height, ratio, rawValue, safeMax, showLabel) : null;
+      const radialGeometry = lineGeometry ? null : this.renderRadialProgress(
+        props,
+        x,
+        y,
+        width,
+        height,
+        ratio,
+        rawValue,
+        safeMax,
+        showLabel,
+        shape === "dashboard" ? "dashboard" : "circle"
+      );
+      if (!props.interactive || !this.renderContext?.collectInteractiveRegion) return;
+      const updateValue = this.renderContext.updateValue;
+      const base = {
+        type: "progress",
+        element,
+        props: element.props,
+        row: this.renderContext.row,
+        column: this.renderContext.column,
+        rowIndex: this.renderContext.rowIndex,
+        colIndex: this.renderContext.colIndex,
+        onValueChange: (next) => {
+          const handler = props.onChange;
+          if (typeof handler === "function") return handler(next);
+          return updateValue?.(next);
+        }
+      };
+      if (lineGeometry && lineGeometry.trackWidth > 0 && lineGeometry.trackHeight > 0) {
+        const trackX = this.cellX + lineGeometry.trackX;
+        const trackY = this.cellY + lineGeometry.trackY;
+        this.renderContext.collectInteractiveRegion({
+          ...base,
+          rect: {
+            x: trackX,
+            y: trackY,
+            width: lineGeometry.trackWidth,
+            height: lineGeometry.trackHeight
+          },
+          progress: {
+            shape: "line",
+            trackX,
+            trackY,
+            trackWidth: lineGeometry.trackWidth,
+            trackHeight: lineGeometry.trackHeight,
+            centerX: 0,
+            centerY: 0,
+            radius: 0,
+            startAngle: 0,
+            totalAngle: 0,
+            max: safeMax,
+            precision
+          }
+        });
+        return;
+      }
+      if (radialGeometry && radialGeometry.diameter > 0) {
+        const centerX = this.cellX + radialGeometry.centerX;
+        const centerY = this.cellY + radialGeometry.centerY;
+        const boxRadius = radialGeometry.diameter / 2;
+        const startAngle = shape === "dashboard" ? Math.PI * 0.75 : -Math.PI / 2;
+        const totalAngle = shape === "dashboard" ? Math.PI * 1.5 : Math.PI * 2;
+        this.renderContext.collectInteractiveRegion({
+          ...base,
+          rect: {
+            x: centerX - boxRadius,
+            y: centerY - boxRadius,
+            width: radialGeometry.diameter,
+            height: radialGeometry.diameter
+          },
+          progress: {
+            shape,
+            trackX: 0,
+            trackY: 0,
+            trackWidth: 0,
+            trackHeight: 0,
+            centerX,
+            centerY,
+            radius: radialGeometry.radius,
+            startAngle,
+            totalAngle,
+            max: safeMax,
+            precision
+          }
+        });
+      }
+    }
+    renderLineProgress(props, x, y, width, height, ratio, rawValue, max, showLabel) {
+      const labelPosition = props.labelPosition ?? "inside";
+      const reservedLabelWidth = showLabel && labelPosition === "right" ? Math.max(0, props.labelWidth ?? 34) : 0;
+      const trackX = x;
+      const trackY = y;
+      const trackWidth = Math.max(0, width - reservedLabelWidth);
+      const trackHeight = Math.max(0, height);
+      const geometry = { trackX, trackY, trackWidth, trackHeight };
+      if (trackWidth <= 0 || trackHeight <= 0) return geometry;
+      const radius = Math.max(
+        0,
+        Math.min(
+          props.radius ?? props.borderRadius ?? trackHeight / 2,
+          trackHeight / 2,
+          trackWidth / 2
+        )
+      );
+      const minBarWidth = Math.max(0, props.minBarWidth ?? radius * 2);
+      const fillWidth = ratio > 0 ? Math.min(trackWidth, Math.max(ratio * trackWidth, minBarWidth)) : 0;
+      this.ctx.save();
+      this.ctx.fillStyle = props.trackColor ?? this.theme.colors.progress.track;
+      this.drawRoundedRect(trackX, trackY, trackWidth, trackHeight, radius);
+      this.ctx.fill();
+      if (fillWidth > 0) {
+        this.ctx.save();
+        this.drawRoundedRect(trackX, trackY, trackWidth, trackHeight, radius);
+        this.ctx.clip();
+        this.ctx.fillStyle = this.resolveProgressColor(props, ratio);
+        this.drawRoundedRect(trackX, trackY, fillWidth, trackHeight, radius);
+        this.ctx.fill();
+        this.ctx.restore();
+      }
+      if (showLabel) {
+        const label = this.getProgressLabel(props, ratio, rawValue, max);
+        const fontSize = props.fontSize ?? Math.min(10, Math.max(8, trackHeight - 2));
+        const fontFamily = props.fontFamily ?? this.theme.font.family;
+        const fontWeight = props.fontWeight ?? "normal";
+        this.ctx.save();
+        this.ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+        this.ctx.textBaseline = "middle";
+        if (labelPosition === "right") {
+          this.ctx.textAlign = "left";
+          this.ctx.fillStyle = props.color ?? this.theme.colors.cellText;
+          this.ctx.fillText(
+            label,
+            trackX + trackWidth + 4,
+            trackY + trackHeight / 2,
+            Math.max(0, reservedLabelWidth - 4)
+          );
+        } else {
+          this.ctx.textAlign = "center";
+          this.ctx.fillStyle = props.color ?? "#ffffff";
+          this.ctx.fillText(label, trackX + trackWidth / 2, trackY + trackHeight / 2, trackWidth);
+        }
+        this.ctx.restore();
+      }
+      this.ctx.restore();
+      return geometry;
+    }
+    renderRadialProgress(props, x, y, width, height, ratio, rawValue, max, showLabel, shape) {
+      const diameter = Math.min(width, height);
+      const centerX = x + width / 2;
+      const centerY = y + height / 2 + (shape === "dashboard" ? height * 0.05 : 0);
+      const geometry = { centerX, centerY, radius: 0, diameter };
+      if (diameter <= 0) return geometry;
+      const strokeWidth = Math.max(
+        1,
+        props.strokeWidth ?? Math.max(2, Math.round(diameter * (shape === "dashboard" ? 0.1 : 0.12)))
+      );
+      const radius = Math.max(0, (diameter - strokeWidth) / 2);
+      const startAngle = shape === "dashboard" ? Math.PI * 0.75 : -Math.PI / 2;
+      const totalAngle = shape === "dashboard" ? Math.PI * 1.5 : Math.PI * 2;
+      this.ctx.save();
+      this.ctx.lineWidth = strokeWidth;
+      this.ctx.lineCap = props.strokeLinecap ?? "round";
+      this.ctx.strokeStyle = props.trackColor ?? this.theme.colors.progress.track;
+      this.ctx.beginPath();
+      this.ctx.arc(centerX, centerY, radius, startAngle, startAngle + totalAngle, false);
+      this.ctx.stroke();
+      if (ratio > 0) {
+        this.ctx.strokeStyle = this.resolveProgressColor(props, ratio);
+        this.ctx.beginPath();
+        this.ctx.arc(centerX, centerY, radius, startAngle, startAngle + ratio * totalAngle, false);
+        this.ctx.stroke();
+      }
+      if (showLabel) {
+        const label = this.getProgressLabel(props, ratio, rawValue, max);
+        const fontSize = props.fontSize ?? Math.max(8, Math.round(diameter * (shape === "dashboard" ? 0.28 : 0.32)));
+        this.ctx.font = `${props.fontWeight ?? "bold"} ${fontSize}px ${props.fontFamily ?? this.theme.font.family}`;
+        this.ctx.fillStyle = props.color ?? this.theme.colors.cellText;
+        this.ctx.textAlign = "center";
+        this.ctx.textBaseline = "middle";
+        this.ctx.fillText(label, centerX, centerY, Math.max(1, radius * 2));
+      }
+      this.ctx.restore();
+      return { centerX, centerY, radius, diameter };
+    }
+    resolveProgressColor(props, ratio) {
+      if (typeof props.barColor === "function") return props.barColor(ratio);
+      if (props.barColor) return props.barColor;
+      if (props.status === "success") return this.theme.colors.progress.success;
+      if (props.status === "warning") return this.theme.colors.progress.warning;
+      if (props.status === "error") return this.theme.colors.progress.error;
+      return this.theme.colors.progress.default;
+    }
+    getProgressLabel(props, ratio, value, max) {
+      if (props.label !== void 0) {
+        return typeof props.label === "function" ? props.label(ratio, value, max) : props.label;
+      }
+      const precision = props.precision ?? 0;
+      const percent = ratio * 100;
+      return precision === 0 ? `${Math.round(percent)}%` : `${percent.toFixed(precision)}%`;
+    }
   }
   function normalizeBorder(border) {
     if (!border) return {};
@@ -10211,6 +10443,17 @@ ${numFmtsXml}
     return {
       type: "CTLine",
       props: rest,
+      children: []
+    };
+  }
+  function CTProgress(props) {
+    const { children: _children, radius, ...rest } = props;
+    return {
+      type: "CTProgress",
+      props: {
+        ...rest,
+        borderRadius: rest.borderRadius ?? radius
+      },
       children: []
     };
   }
@@ -10392,6 +10635,7 @@ ${numFmtsXml}
     currentHoveredImageIndex = -1;
     currentHoveredButtonIndex = -1;
     currentProgressDragState = void 0;
+    currentJSXProgressDrag;
     currentRowResizeState = void 0;
     currentValidationErrors = /* @__PURE__ */ new Map();
     currentPendingValidations = /* @__PURE__ */ new Set();
@@ -10609,6 +10853,7 @@ ${numFmtsXml}
       this.currentHoveredImageIndex = options.hoveredImageIndex ?? -1;
       this.currentHoveredButtonIndex = options.hoveredButtonIndex ?? -1;
       this.currentProgressDragState = options.progressDragState;
+      this.currentJSXProgressDrag = options.jsxProgressDrag;
       this.currentRowResizeState = options.rowResizeState;
       this.currentValidationErrors = options.validationErrors ?? /* @__PURE__ */ new Map();
       this.currentPendingValidations = options.pendingValidations ?? /* @__PURE__ */ new Set();
@@ -12303,6 +12548,15 @@ ${numFmtsXml}
                 updateRow: jsxContext.updateRow,
                 collectInteractiveRegion: (region) => {
                   this.jsxInteractiveRegions.push(region);
+                },
+                getProgressValueOverride: (overrideRowIndex, overrideColIndex, elementId) => {
+                  const drag = this.currentJSXProgressDrag;
+                  if (!drag) return void 0;
+                  if (drag.rowIndex !== overrideRowIndex || drag.columnIndex !== overrideColIndex) {
+                    return void 0;
+                  }
+                  if (drag.elementId && elementId && drag.elementId !== elementId) return void 0;
+                  return drag.value;
                 }
               });
               this.jsxRenderer.render(elementTree, x, y, { width, height }, layoutCacheKey);
@@ -19083,6 +19337,8 @@ ${numFmtsXml}
     handlerContext = null;
     editorRegistry;
     jsxInteractiveRegions = [];
+    /** JSX 进度条拖拽状态（预览值 + 拖拽几何） */
+    jsxProgressDrag = null;
     /** 校验失败时阻止下拉关闭的回调（调用实际 validation hook） */
     shouldBlockDropdownClose = null;
     /** 校验失败时阻止关闭编辑态的回调（调用实际 commit/validation hook）
@@ -19358,6 +19614,10 @@ ${numFmtsXml}
         return;
       }
       const jsxRegion = this.getJSXInteractiveRegionAt(viewportX, viewportY);
+      if (jsxRegion?.type === "progress" && jsxRegion.progress) {
+        this.startJSXProgressDrag(jsxRegion, viewportX, viewportY);
+        return;
+      }
       if (jsxRegion?.type === "dropdown") {
         const config = jsxRegion.props.config;
         if (config) {
@@ -19596,6 +19856,11 @@ ${numFmtsXml}
       return this.contextMenuHandler.getHeaderContextMenu();
     }
     handleDocumentMouseMove = (e) => {
+      if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+        const rect = this.canvas.getBoundingClientRect();
+        this.updateJSXProgressDrag(e.clientX - rect.left, e.clientY - rect.top);
+        return;
+      }
       if (this.state.isDragging && this.state.dragType === "row-resize" && this.state.rowResizeState) {
         const { min, max } = this.layoutManager.getRowHeightBounds();
         const deltaY = e.clientY - this.state.rowResizeState.startY;
@@ -19661,6 +19926,10 @@ ${numFmtsXml}
       }
     };
     handleDocumentMouseUp = () => {
+      if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+        this.finishJSXProgressDrag();
+        return;
+      }
       if (this.state.isDragging && this.state.dragType === "row-resize" && this.state.rowResizeState) {
         const { rowIndex, displayHeight } = this.state.rowResizeState;
         const row = this.rows[rowIndex];
@@ -19747,6 +20016,10 @@ ${numFmtsXml}
       if (this.state.colorDropdown) {
         this.dropdownHandler.handleColorDropdownHover(e);
         this.canvas.style.cursor = "pointer";
+        return;
+      }
+      if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+        this.updateJSXProgressDrag(viewportX, viewportY);
         return;
       }
       if (this.state.isDragging && this.state.dragType === "column-resize") {
@@ -19864,6 +20137,11 @@ ${numFmtsXml}
         return;
       }
       const jsxRegion = this.getJSXInteractiveRegionAt(viewportX, viewportY);
+      if (jsxRegion?.type === "progress") {
+        this.canvas.style.cursor = "pointer";
+        this.state.tooltip = null;
+        return;
+      }
       if (jsxRegion?.type === "dropdown") {
         this.canvas.style.cursor = "pointer";
         this.state.tooltip = null;
@@ -19976,6 +20254,10 @@ ${numFmtsXml}
       this.tooltipHandler.checkTooltip(cell);
     };
     handleMouseUp = (_e) => {
+      if (this.state.isDragging && this.state.dragType === "jsx-progress-drag") {
+        this.finishJSXProgressDrag();
+        return;
+      }
       if (this.state.isDragging && this.state.dragType === "row-resize" && this.state.rowResizeState) {
         const { rowIndex, displayHeight } = this.state.rowResizeState;
         const row = this.rows[rowIndex];
@@ -20489,6 +20771,93 @@ ${numFmtsXml}
     setJSXInteractiveRegions(regions) {
       this.jsxInteractiveRegions = regions;
     }
+    /** 当前 JSX 进度条拖拽预览值（供 Renderer 覆盖绘制） */
+    getJSXProgressDragPreview() {
+      const drag = this.jsxProgressDrag;
+      if (!drag) return null;
+      return {
+        rowIndex: drag.region.rowIndex ?? -1,
+        columnIndex: drag.region.colIndex ?? -1,
+        elementId: typeof drag.region.props.id === "string" ? drag.region.props.id : void 0,
+        value: drag.displayValue
+      };
+    }
+    startJSXProgressDrag(region, viewportX, viewportY) {
+      if (!region.progress) return;
+      this.jsxProgressDrag = {
+        region,
+        info: region.progress,
+        displayValue: this.computeJSXProgressValue(region.progress, viewportX, viewportY)
+      };
+      this.state.isDragging = true;
+      this.state.dragType = "jsx-progress-drag";
+      this.canvas.style.cursor = "grabbing";
+      this.bindDocumentEvents();
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    }
+    updateJSXProgressDrag(viewportX, viewportY) {
+      const drag = this.jsxProgressDrag;
+      if (!drag || drag.finishing) return;
+      const value = this.computeJSXProgressValue(drag.info, viewportX, viewportY);
+      if (value === drag.displayValue) return;
+      drag.displayValue = value;
+      this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+    }
+    finishJSXProgressDrag() {
+      const drag = this.jsxProgressDrag;
+      this.state.isDragging = false;
+      this.state.dragType = null;
+      this.canvas.style.cursor = "default";
+      this.unbindDocumentEvents();
+      if (!drag || drag.finishing) return;
+      drag.finishing = true;
+      const value = drag.displayValue;
+      const clearPreview = () => {
+        if (this.jsxProgressDrag !== drag) return;
+        this.jsxProgressDrag = null;
+        this.eventEmitter.emit(TableEvents.PROGRESS_DRAG);
+      };
+      let result;
+      try {
+        result = drag.region.onValueChange?.(value);
+      } catch (error) {
+        console.error("[InteractionManager] JSX progress onChange error:", error);
+        clearPreview();
+        return;
+      }
+      if (result && typeof result.then === "function") {
+        result.then(clearPreview, (error) => {
+          console.error("[InteractionManager] JSX progress onChange error:", error);
+          clearPreview();
+        });
+      } else {
+        clearPreview();
+      }
+    }
+    computeJSXProgressValue(info, viewportX, viewportY) {
+      const TAU = Math.PI * 2;
+      const total = info.totalAngle > 0 ? info.totalAngle : TAU;
+      let ratio;
+      if (info.shape === "line") {
+        ratio = info.trackWidth > 0 ? (viewportX - info.trackX) / info.trackWidth : 0;
+      } else {
+        let angle = Math.atan2(viewportY - info.centerY, viewportX - info.centerX);
+        if (angle < 0) angle += TAU;
+        const start = (info.startAngle % TAU + TAU) % TAU;
+        let offset = angle - start;
+        if (offset < 0) offset += TAU;
+        if (offset > total) {
+          const gapHalf = (TAU - total) / 2;
+          ratio = offset > total + gapHalf ? 0 : 1;
+        } else {
+          ratio = offset / total;
+        }
+      }
+      ratio = clamp(ratio, 0, 1);
+      const raw = ratio * (info.max > 0 ? info.max : 100);
+      const precision = info.precision;
+      return precision === 0 ? Math.round(raw) : Number(raw.toFixed(precision));
+    }
     getJSXInteractiveRegionAt(x, y) {
       for (let i = this.jsxInteractiveRegions.length - 1; i >= 0; i--) {
         const region = this.jsxInteractiveRegions[i];
@@ -20520,6 +20889,7 @@ ${numFmtsXml}
       this.state.rowResizeState = void 0;
       this.state.dragTarget = null;
       this.state.progressDragState = void 0;
+      this.jsxProgressDrag = null;
       this.state.tooltip = null;
       this.closeAllDropdowns();
       this.sortConfig = [];
@@ -20785,6 +21155,7 @@ ${numFmtsXml}
     };
     destroy() {
       this.isDestroyed = true;
+      this.jsxProgressDrag = null;
       this.wheelHandler.destroy();
       this.unbindEvents();
       this.unbindDocumentEvents();
@@ -23504,6 +23875,7 @@ ${numFmtsXml}
             hoveredImageIndex: this.interactionManager.getHoveredImageIndex(),
             hoveredButtonIndex: this.interactionManager.getHoveredButtonIndex(),
             progressDragState: interactionState.progressDragState,
+            jsxProgressDrag: this.interactionManager.getJSXProgressDragPreview() ?? void 0,
             rowResizeState: interactionState.rowResizeState,
             validationErrors: this.buildVisibleValidationErrorIndex(),
             pendingValidations: this.pendingValidationCells
@@ -24822,6 +25194,7 @@ ${numFmtsXml}
   exports2.CTElementRenderer = CTElementRenderer;
   exports2.CTImage = CTImage;
   exports2.CTLine = CTLine;
+  exports2.CTProgress = CTProgress;
   exports2.CTRow = CTRow;
   exports2.CTStack = CTStack;
   exports2.CTText = CTText;

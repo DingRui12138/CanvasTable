@@ -81,6 +81,7 @@ export declare class Renderer {
     private currentHoveredImageIndex;
     private currentHoveredButtonIndex;
     private currentProgressDragState;
+    private currentJSXProgressDrag;
     private currentRowResizeState;
     private currentValidationErrors;
     private currentPendingValidations;
@@ -147,6 +148,12 @@ export declare class Renderer {
         hoveredImageIndex?: number;
         hoveredButtonIndex?: number;
         progressDragState?: import("../types").InteractionState["progressDragState"];
+        jsxProgressDrag?: {
+            rowIndex: number;
+            columnIndex: number;
+            elementId?: string;
+            value: number;
+        };
         rowResizeState?: import("../types").InteractionState["rowResizeState"];
         validationErrors?: Map<string, ValidationError>;
         pendingValidations?: Set<string>;

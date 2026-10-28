@@ -88,4 +88,45 @@ describe('MeasurementEngine', () => {
     const size = engine.measureElement(textElement);
     expect(size.width).toBeLessThanOrEqual(50);
   });
+
+  it('should measure CTProgress from width/height only, ignoring value', () => {
+    const createProgress = (value: number): CTElement => ({
+      type: 'CTProgress',
+      props: { value, width: 120, height: 12 },
+      children: [],
+    });
+
+    const low = engine.measureElement(createProgress(5));
+    const high = engine.measureElement(createProgress(95));
+
+    expect(low).toEqual(high);
+    expect(low.width).toBe(120);
+    expect(low.height).toBe(12);
+  });
+
+  it('should default CTProgress height to 8', () => {
+    const size = engine.measureElement({
+      type: 'CTProgress',
+      props: { value: 50, width: 60 },
+      children: [],
+    });
+
+    expect(size).toMatchObject({ width: 60, height: 8 });
+  });
+
+  it('should default radial CTProgress height to its width', () => {
+    const circle = engine.measureElement({
+      type: 'CTProgress',
+      props: { value: 50, width: 60, shape: 'circle' },
+      children: [],
+    });
+    const dashboard = engine.measureElement({
+      type: 'CTProgress',
+      props: { value: 50, width: 60, shape: 'dashboard' },
+      children: [],
+    });
+
+    expect(circle).toMatchObject({ width: 60, height: 60 });
+    expect(dashboard).toMatchObject({ width: 60, height: 60 });
+  });
 });

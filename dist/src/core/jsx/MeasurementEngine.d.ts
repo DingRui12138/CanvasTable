@@ -8,6 +8,7 @@ export declare class MeasurementEngine {
     private measureText;
     private measureBox;
     private measureCircle;
+    private measureProgress;
     private measureImage;
     private measureLine;
 }

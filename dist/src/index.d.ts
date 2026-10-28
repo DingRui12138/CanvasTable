@@ -13,6 +13,6 @@ export { createCTElement } from "./core/jsx/createCTElement";
 export { LayoutEngine } from "./core/jsx/LayoutEngine";
 export { MeasurementEngine } from "./core/jsx/MeasurementEngine";
 export { CTElementRenderer } from "./core/jsx/CTElementRenderer";
-export { CTBox, CTRow, CTColumn, CTStack, CTText, CTDate, CTCircle, CTImage, CTLine, CTTooltip, CTDropdown, } from "./core/jsx/components";
+export { CTBox, CTRow, CTColumn, CTStack, CTText, CTDate, CTCircle, CTImage, CTLine, CTProgress, CTTooltip, CTDropdown, } from "./core/jsx/components";
 export { normalizeBoxProps, getTextFromChildren, getDateText } from "./core/jsx/props";
 //# sourceMappingURL=index.d.ts.map

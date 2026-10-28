@@ -57,6 +57,8 @@ export class MeasurementEngine {
         return this.measureImage(element);
       case "CTLine":
         return this.measureLine(element);
+      case "CTProgress":
+        return this.measureProgress(element);
       case "CTTooltip":
       case "CTDropdown":
         return element.children[0]
@@ -110,6 +112,20 @@ export class MeasurementEngine {
     const props = element.props as { radius: number };
     const diameter = props.radius * 2;
     return { x: 0, y: 0, width: diameter, height: diameter };
+  }
+
+  private measureProgress(element: CTElement): CTLayoutInfo {
+    const props = element.props as {
+      width?: number;
+      height?: number;
+      shape?: "line" | "circle" | "dashboard";
+    };
+    const width = props.width ?? 0;
+    // 环型 / 仪表盘默认正方形（以宽度作为高度），线型默认 8
+    const height =
+      props.height ?? (props.shape === "circle" || props.shape === "dashboard" ? width : 8);
+    // 只读 width/height/shape，忽略 value/max：进度变化不应触发重新布局
+    return { x: 0, y: 0, width, height };
   }
 
   private measureImage(element: CTElement): CTLayoutInfo {

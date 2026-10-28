@@ -6,6 +6,7 @@ import {
   DropdownProps,
   ImageProps,
   LineProps,
+  ProgressProps,
   TextProps,
   TooltipProps,
   getDateText,
@@ -83,6 +84,25 @@ export function CTLine(props: LineProps): CTElement {
   return {
     type: "CTLine",
     props: rest as Record<string, unknown>,
+    children: [],
+  };
+}
+
+/**
+ * 进度条（line / circle / dashboard）。
+ *
+ * 几何尺寸只由 `width` / `height` 决定，`value` 仅影响绘制时的填充长度，
+ * 因此可以配合常量 `jsxLayoutKey` 跨行共享布局计划。
+ * 设置 `interactive: true` 后支持拖拽 / 点击调整值，拖拽预览同样不参与布局。
+ */
+export function CTProgress(props: ProgressProps): CTElement {
+  const { children: _children, radius, ...rest } = props;
+  return {
+    type: "CTProgress",
+    props: {
+      ...rest,
+      borderRadius: rest.borderRadius ?? radius,
+    } as Record<string, unknown>,
     children: [],
   };
 }

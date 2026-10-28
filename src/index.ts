@@ -25,6 +25,7 @@ export {
   CTCircle,
   CTImage,
   CTLine,
+  CTProgress,
   CTTooltip,
   CTDropdown,
 } from "./core/jsx/components";
