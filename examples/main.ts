@@ -10,14 +10,14 @@ import type {
 } from "../src/types";
 import { createCTElement } from "../src/core/jsx/createCTElement";
 import {
-  Box as CTBox,
-  Row as CTRow,
-  Column as CTColumn,
-  Text as CTText,
-  Circle as CTCircle,
-  Image as CTImage,
-  Tooltip as CTTooltip,
-  Dropdown as CTDropdown,
+  CTBox,
+  CTRow,
+  CTColumn,
+  CTText,
+  CTCircle,
+  CTImage,
+  CTTooltip,
+  CTDropdown,
 } from "../src/core/jsx/components";
 import { getFPSMonitor } from "./FPSMonitor";
 

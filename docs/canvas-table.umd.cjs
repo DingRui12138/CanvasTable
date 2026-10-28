@@ -10130,21 +10130,40 @@ ${numFmtsXml}
     if (props.text !== void 0) return props.text;
     return (props.children ?? []).map((child) => String(child.props.text ?? "")).join("");
   }
-  function Box(props) {
+  function formatDateValue(date, format) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return format.replace("YYYY", String(year)).replace("MM", month).replace("DD", day).replace("HH", hours).replace("mm", minutes).replace("ss", seconds);
+  }
+  function getDateText(props) {
+    if (props.value === void 0 || props.value === null || props.value === "") {
+      return props.placeholder ?? "";
+    }
+    const date = props.value instanceof globalThis.Date ? props.value : new globalThis.Date(props.value);
+    if (Number.isNaN(date.getTime())) {
+      return props.placeholder ?? "";
+    }
+    return formatDateValue(date, props.format ?? "YYYY-MM-DD");
+  }
+  function CTBox(props) {
     return {
       type: "CTBox",
       props: normalizeBoxProps(props),
       children: props.children ?? []
     };
   }
-  function Row(props) {
-    return Box({ ...props, direction: "row" });
+  function CTRow(props) {
+    return CTBox({ ...props, direction: "row" });
   }
-  function Column(props) {
-    return Box({ ...props, direction: "column" });
+  function CTColumn(props) {
+    return CTBox({ ...props, direction: "column" });
   }
-  const Stack = Box;
-  function Text(props) {
+  const CTStack = CTBox;
+  function CTText(props) {
     const { children: _children, text: _text, ...rest } = props;
     return {
       type: "CTText",
@@ -10155,7 +10174,20 @@ ${numFmtsXml}
       children: []
     };
   }
-  function Circle(props) {
+  function CTDate(props) {
+    const {
+      children: _children,
+      value: _value,
+      format: _format,
+      placeholder: _placeholder,
+      ...textProps
+    } = props;
+    return CTText({
+      ...textProps,
+      text: getDateText(props)
+    });
+  }
+  function CTCircle(props) {
     const { children: _children, bgColor, ...rest } = props;
     return {
       type: "CTCircle",
@@ -10166,7 +10198,7 @@ ${numFmtsXml}
       children: []
     };
   }
-  function Image$1(props) {
+  function CTImage(props) {
     const { children: _children, ...rest } = props;
     return {
       type: "CTImage",
@@ -10174,12 +10206,28 @@ ${numFmtsXml}
       children: []
     };
   }
-  function Line(props) {
+  function CTLine(props) {
     const { children: _children, ...rest } = props;
     return {
       type: "CTLine",
       props: rest,
       children: []
+    };
+  }
+  function CTTooltip(props) {
+    const { children, ...rest } = props;
+    return {
+      type: "CTTooltip",
+      props: rest,
+      children: children ?? []
+    };
+  }
+  function CTDropdown(props) {
+    const { children, ...rest } = props;
+    return {
+      type: "CTDropdown",
+      props: rest,
+      children: children ?? []
     };
   }
   const CELL_TEXT_CACHE_LIMIT = 5e3;
@@ -24766,12 +24814,20 @@ ${numFmtsXml}
       this.eventEmitter.off(event, callback);
     }
   }
-  exports2.Box = Box;
+  exports2.CTBox = CTBox;
+  exports2.CTCircle = CTCircle;
+  exports2.CTColumn = CTColumn;
+  exports2.CTDate = CTDate;
+  exports2.CTDropdown = CTDropdown;
   exports2.CTElementRenderer = CTElementRenderer;
+  exports2.CTImage = CTImage;
+  exports2.CTLine = CTLine;
+  exports2.CTRow = CTRow;
+  exports2.CTStack = CTStack;
+  exports2.CTText = CTText;
+  exports2.CTTooltip = CTTooltip;
   exports2.CanvasTable = CanvasTable;
   exports2.CellTypes = CellTypes;
-  exports2.Circle = Circle;
-  exports2.Column = Column;
   exports2.ColumnIdManager = ColumnIdManager;
   exports2.DARK_THEME = DARK_THEME;
   exports2.DEFAULT_THEME = DEFAULT_THEME;
@@ -24779,20 +24835,15 @@ ${numFmtsXml}
   exports2.EventEmitter = EventEmitter;
   exports2.FILTER_SAMPLE_ROWS = FILTER_SAMPLE_ROWS;
   exports2.FILTER_SEARCH_LIMIT = FILTER_SEARCH_LIMIT;
-  exports2.Image = Image$1;
   exports2.InteractionManager = InteractionManager;
   exports2.LRUCache = LRUCache;
   exports2.LayoutEngine = LayoutEngine;
   exports2.LayoutManager = LayoutManager;
-  exports2.Line = Line;
   exports2.MeasurementEngine = MeasurementEngine;
   exports2.RenderCache = RenderCache;
   exports2.Renderer = Renderer;
-  exports2.Row = Row;
   exports2.RowIdManager = RowIdManager;
   exports2.RowVersionManager = RowVersionManager;
-  exports2.Stack = Stack;
-  exports2.Text = Text;
   exports2.arrayToCsv = arrayToCsv;
   exports2.binarySearch = binarySearch;
   exports2.buildExcelExportModel = buildExcelExportModel;
@@ -24815,6 +24866,7 @@ ${numFmtsXml}
   exports2.getCellDisplayText = getCellDisplayText;
   exports2.getColumnField = getColumnField;
   exports2.getColumnFilterOptions = getColumnFilterOptions;
+  exports2.getDateText = getDateText;
   exports2.getDevicePixelRatio = getDevicePixelRatio;
   exports2.getFilterModeByColumnType = getFilterModeByColumnType;
   exports2.getNestedValue = getNestedValue;

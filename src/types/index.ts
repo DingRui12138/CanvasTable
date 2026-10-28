@@ -1516,21 +1516,6 @@ export interface CanvasTableAPI {
 
 export type EventCallback<T = unknown> = (data: T) => void;
 
-export interface EventEmitter {
-  on<K extends keyof TableEventHandlers>(
-    event: K,
-    callback: NonNullable<TableEventHandlers[K]>,
-  ): void;
-  off<K extends keyof TableEventHandlers>(
-    event: K,
-    callback: NonNullable<TableEventHandlers[K]>,
-  ): void;
-  emit<K extends keyof TableEventHandlers>(
-    event: K,
-    ...args: Parameters<NonNullable<TableEventHandlers[K]>>
-  ): void;
-}
-
 /**
  * 鼠标区域类型
  */

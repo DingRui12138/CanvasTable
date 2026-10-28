@@ -10126,21 +10126,40 @@ function getTextFromChildren(props) {
   if (props.text !== void 0) return props.text;
   return (props.children ?? []).map((child) => String(child.props.text ?? "")).join("");
 }
-function Box(props) {
+function formatDateValue(date, format) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return format.replace("YYYY", String(year)).replace("MM", month).replace("DD", day).replace("HH", hours).replace("mm", minutes).replace("ss", seconds);
+}
+function getDateText(props) {
+  if (props.value === void 0 || props.value === null || props.value === "") {
+    return props.placeholder ?? "";
+  }
+  const date = props.value instanceof globalThis.Date ? props.value : new globalThis.Date(props.value);
+  if (Number.isNaN(date.getTime())) {
+    return props.placeholder ?? "";
+  }
+  return formatDateValue(date, props.format ?? "YYYY-MM-DD");
+}
+function CTBox(props) {
   return {
     type: "CTBox",
     props: normalizeBoxProps(props),
     children: props.children ?? []
   };
 }
-function Row(props) {
-  return Box({ ...props, direction: "row" });
+function CTRow(props) {
+  return CTBox({ ...props, direction: "row" });
 }
-function Column(props) {
-  return Box({ ...props, direction: "column" });
+function CTColumn(props) {
+  return CTBox({ ...props, direction: "column" });
 }
-const Stack = Box;
-function Text(props) {
+const CTStack = CTBox;
+function CTText(props) {
   const { children: _children, text: _text, ...rest } = props;
   return {
     type: "CTText",
@@ -10151,7 +10170,20 @@ function Text(props) {
     children: []
   };
 }
-function Circle(props) {
+function CTDate(props) {
+  const {
+    children: _children,
+    value: _value,
+    format: _format,
+    placeholder: _placeholder,
+    ...textProps
+  } = props;
+  return CTText({
+    ...textProps,
+    text: getDateText(props)
+  });
+}
+function CTCircle(props) {
   const { children: _children, bgColor, ...rest } = props;
   return {
     type: "CTCircle",
@@ -10162,7 +10194,7 @@ function Circle(props) {
     children: []
   };
 }
-function Image$1(props) {
+function CTImage(props) {
   const { children: _children, ...rest } = props;
   return {
     type: "CTImage",
@@ -10170,12 +10202,28 @@ function Image$1(props) {
     children: []
   };
 }
-function Line(props) {
+function CTLine(props) {
   const { children: _children, ...rest } = props;
   return {
     type: "CTLine",
     props: rest,
     children: []
+  };
+}
+function CTTooltip(props) {
+  const { children, ...rest } = props;
+  return {
+    type: "CTTooltip",
+    props: rest,
+    children: children ?? []
+  };
+}
+function CTDropdown(props) {
+  const { children, ...rest } = props;
+  return {
+    type: "CTDropdown",
+    props: rest,
+    children: children ?? []
   };
 }
 const CELL_TEXT_CACHE_LIMIT = 5e3;
@@ -24763,12 +24811,20 @@ class CanvasTable {
   }
 }
 export {
-  Box,
+  CTBox,
+  CTCircle,
+  CTColumn,
+  CTDate,
+  CTDropdown,
   CTElementRenderer,
+  CTImage,
+  CTLine,
+  CTRow,
+  CTStack,
+  CTText,
+  CTTooltip,
   CanvasTable,
   CellTypes,
-  Circle,
-  Column,
   ColumnIdManager,
   DARK_THEME,
   DEFAULT_THEME,
@@ -24776,20 +24832,15 @@ export {
   EventEmitter,
   FILTER_SAMPLE_ROWS,
   FILTER_SEARCH_LIMIT,
-  Image$1 as Image,
   InteractionManager,
   LRUCache,
   LayoutEngine,
   LayoutManager,
-  Line,
   MeasurementEngine,
   RenderCache,
   Renderer,
-  Row,
   RowIdManager,
   RowVersionManager,
-  Stack,
-  Text,
   arrayToCsv,
   binarySearch,
   buildExcelExportModel,
@@ -24812,6 +24863,7 @@ export {
   getCellDisplayText,
   getColumnField,
   getColumnFilterOptions,
+  getDateText,
   getDevicePixelRatio,
   getFilterModeByColumnType,
   getNestedValue,

@@ -13,7 +13,7 @@ import {
   normalizeBoxProps,
 } from "./props";
 
-export function Box(props: BoxProps): CTElement {
+export function CTBox(props: BoxProps): CTElement {
   return {
     type: "CTBox",
     props: normalizeBoxProps(props) as Record<string, unknown>,
@@ -21,17 +21,17 @@ export function Box(props: BoxProps): CTElement {
   };
 }
 
-export function Row(props: BoxProps): CTElement {
-  return Box({ ...props, direction: "row" });
+export function CTRow(props: BoxProps): CTElement {
+  return CTBox({ ...props, direction: "row" });
 }
 
-export function Column(props: BoxProps): CTElement {
-  return Box({ ...props, direction: "column" });
+export function CTColumn(props: BoxProps): CTElement {
+  return CTBox({ ...props, direction: "column" });
 }
 
-export const Stack = Box;
+export const CTStack = CTBox;
 
-export function Text(props: TextProps): CTElement {
+export function CTText(props: TextProps): CTElement {
   const { children: _children, text: _text, ...rest } = props;
   return {
     type: "CTText",
@@ -43,7 +43,7 @@ export function Text(props: TextProps): CTElement {
   };
 }
 
-export function Date(props: DateProps): CTElement {
+export function CTDate(props: DateProps): CTElement {
   const {
     children: _children,
     value: _value,
@@ -51,13 +51,13 @@ export function Date(props: DateProps): CTElement {
     placeholder: _placeholder,
     ...textProps
   } = props;
-  return Text({
+  return CTText({
     ...textProps,
     text: getDateText(props),
   });
 }
 
-export function Circle(props: CircleProps): CTElement {
+export function CTCircle(props: CircleProps): CTElement {
   const { children: _children, bgColor, ...rest } = props;
   return {
     type: "CTCircle",
@@ -69,7 +69,7 @@ export function Circle(props: CircleProps): CTElement {
   };
 }
 
-export function Image(props: ImageProps): CTElement {
+export function CTImage(props: ImageProps): CTElement {
   const { children: _children, ...rest } = props;
   return {
     type: "CTImage",
@@ -78,7 +78,7 @@ export function Image(props: ImageProps): CTElement {
   };
 }
 
-export function Line(props: LineProps): CTElement {
+export function CTLine(props: LineProps): CTElement {
   const { children: _children, ...rest } = props;
   return {
     type: "CTLine",
@@ -87,7 +87,7 @@ export function Line(props: LineProps): CTElement {
   };
 }
 
-export function Tooltip(props: TooltipProps): CTElement {
+export function CTTooltip(props: TooltipProps): CTElement {
   const { children, ...rest } = props;
   return {
     type: "CTTooltip",
@@ -96,7 +96,7 @@ export function Tooltip(props: TooltipProps): CTElement {
   };
 }
 
-export function Dropdown(props: DropdownProps): CTElement {
+export function CTDropdown(props: DropdownProps): CTElement {
   const { children, ...rest } = props;
   return {
     type: "CTDropdown",

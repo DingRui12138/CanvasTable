@@ -526,12 +526,18 @@ interface Column {
 
 CanvasTable 提供 JSX 公共组件，可在 `jsxRender` 中使用声明式布局。`jsxRender` 从单元格左上角开始绘制，不应用内置 padding 或居中，样式完全由用户决定。根元素默认撑满单元格（`width: "100%"`、`height: "100%"`）。
 
-**可用组件：** `Box`、`Row`（= `Box { direction: "row" }`）、`Column`（= `Box { direction: "column" }`）、`Stack`（= `Box`）、`Text`、`Circle`、`Image`、`Line` + `createCTElement`
+**可用组件：** `CTBox`、`CTRow`（= `CTBox { direction: "row" }`）、`CTColumn`（= `CTBox { direction: "column" }`）、`CTStack`（= `CTBox`）、`CTText`、`CTCircle`、`CTImage`、`CTLine`、`CTDate`、`CTTooltip`、`CTDropdown` + `createCTElement`
+
+> JSX 组件同时从 `@canvas-table/core` 和 `@canvas-table/core/jsx` 导出；其属性类型（`BoxProps`、`TextProps`、`CTElement` 等）**只**从 `@canvas-table/core/jsx` 导出。`CT` 前缀可避免与表格类型（`Row` / `Column`）或 DOM 全局对象（`Date` / `Image` / `Text`）同名。
+
+```typescript
+import type { CTElement, BoxProps, TextProps } from '@canvas-table/core/jsx';
+```
 
 **示例：**
 
 ```typescript
-import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/core';
+import { createCTElement, CTBox, CTText, CTRow, CTColumn, CTCircle } from '@canvas-table/core';
 
 {
   key: 'status',
@@ -542,15 +548,15 @@ import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/c
     type: 'custom',
     jsxRender: () =>
       createCTElement(
-        Box,
+        CTBox,
         { width: "100%", height: "100%", justify: "center", align: "center", overflow: "hidden" },
         createCTElement(
-          Row,
+          CTRow,
           { gap: 8, align: "center" },
-          createCTElement(Circle, { radius: 4, bgColor: '#52c41a' }),
-          createCTElement(Column, { gap: 2 },
-            createCTElement(Text, { text: '在线', fontWeight: 'bold' }),
-            createCTElement(Text, { text: '刚刚更新', fontSize: 12, color: '#8c8c8c' }),
+          createCTElement(CTCircle, { radius: 4, bgColor: '#52c41a' }),
+          createCTElement(CTColumn, { gap: 2 },
+            createCTElement(CTText, { text: '在线', fontWeight: 'bold' }),
+            createCTElement(CTText, { text: '刚刚更新', fontSize: 12, color: '#8c8c8c' }),
           ),
         ),
       ),
@@ -558,9 +564,9 @@ import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/c
 }
 ```
 
-##### Box / Row / Column / Stack 属性
+##### CTBox / CTRow / CTColumn / CTStack 属性
 
-Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，Stack 是 Box 的别名。
+CTRow 是 `CTBox { direction: "row" }`，CTColumn 是 `CTBox { direction: "column" }`，CTStack 是 CTBox 的别名。
 
 **布局属性：**
 
@@ -615,7 +621,7 @@ Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，
 | `clip` | — | `boolean` | — | `clip: true` = `overflow: "hidden"` |
 | `boxShadow` | `shadow` | `{ offsetX, offsetY, blur, spread?, color } \| string` | — | 盒阴影，字符串格式 `"offsetX offsetY blur color"` |
 
-##### Text 属性
+##### CTText 属性
 
 | 属性 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -631,7 +637,7 @@ Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，
 | `textDecoration` | `"underline" \| "line-through" \| "none"` | `"none"` | 文字装饰线 |
 | `letterSpacing` | `number` | `0` | 字符间距 |
 
-##### Circle 属性
+##### CTCircle 属性
 
 | 属性 | 别名 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -642,7 +648,7 @@ Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，
 | `startAngle` | — | `number` | 起始角度（弧度） |
 | `endAngle` | — | `number` | 结束角度（弧度） |
 
-##### Image 属性
+##### CTImage 属性
 
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
@@ -652,7 +658,7 @@ Row 是 `Box { direction: "row" }`，Column 是 `Box { direction: "column" }`，
 | `borderRadius` | `number` | 圆角 |
 | `objectFit` | `"fill" \| "contain" \| "cover"` | 缩放模式 |
 
-##### Line 属性
+##### CTLine 属性
 
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |

@@ -48,16 +48,16 @@
       // JSX 公共组件从 UMD bundle 中获取
       const {
         createCTElement,
-        Box,
-        Text,
-        Row,
-        Column,
-        Circle,
-        Stack,
-        Image,
-        Line,
+        CTCTBox,
+        CTText,
+        CTRow,
+        CTColumn,
+        CTCircle,
+        CTStack,
+        CTImage,
+        CTLine,
       } = CanvasTable;
-      console.log(Box);
+      console.log(CTBox);
 
       const statusColors = {
         active: "#52c41a",
@@ -324,7 +324,7 @@
             }),
           },
 
-          // 列4：使用 JSX 公共组件（Row, Column, Circle, Text）
+          // 列4：使用 JSX 公共组件（CTRow, CTColumn, CTCircle, CTText）
           {
             key: "status2",
             field: "status",
@@ -334,7 +334,7 @@
               type: "custom",
               jsxRender: () =>
                 createCTElement(
-                  Box,
+                  CTCTBox,
                   {
                     width: "100%",
                     height: "100%",
@@ -343,21 +343,21 @@
                     overflow: "hidden",
                   },
                   createCTElement(
-                    Row,
+                    CTRow,
                     { gap: 8, align: "center", padding: 0 },
-                    createCTElement(Circle, {
+                    createCTElement(CTCircle, {
                       radius: 5,
                       bgColor: statusColors[value] || "#999",
                     }),
                     createCTElement(
-                      Column,
+                      CTColumn,
                       { gap: 2 },
-                      createCTElement(Text, {
+                      createCTElement(CTText, {
                         text: String(value),
                         fontWeight: "bold",
                         fontSize: 13,
                       }),
-                      createCTElement(Text, {
+                      createCTElement(CTText, {
                         text:
                           value === "active"
                             ? "在线运行"
@@ -373,7 +373,7 @@
             }),
           },
 
-          // 列5：使用 JSX 公共组件（Box）做标签 — 带 boxShadow
+          // 列5：使用 JSX 公共组件（CTBox）做标签 — 带 boxShadow
           {
             key: "tag",
             field: "tag",
@@ -389,7 +389,7 @@
                 };
                 const c = tagColors[value] || { bg: "#f0f0f0", text: "#333" };
                 return createCTElement(
-                  Box,
+                  CTCTBox,
                   {
                     width: "100%",
                     height: "100%",
@@ -397,7 +397,7 @@
                     align: "center",
                   },
                   createCTElement(
-                    Box,
+                    CTCTBox,
                     {
                       bgColor: c.bg,
                       radius: 4,
@@ -413,7 +413,7 @@
                         color: "rgba(0,0,0,0.15)",
                       },
                     },
-                    createCTElement(Text, {
+                    createCTElement(CTText, {
                       text: String(value),
                       fontSize: 11,
                       fontWeight: "bold",
@@ -435,7 +435,7 @@
               type: "custom",
               jsxRender: () =>
                 createCTElement(
-                  Box,
+                  CTCTBox,
                   {
                     width: "100%",
                     height: "100%",
@@ -449,7 +449,7 @@
                     overflow: "hidden",
                   },
                   createCTElement(
-                    Box,
+                    CTCTBox,
                     {
                       width: 110,
                       height: 28,
@@ -463,7 +463,7 @@
                       justify: "center",
                       overflow: "hidden",
                     },
-                    createCTElement(Text, {
+                    createCTElement(CTText, {
                       text: String(value),
                       fontSize: 12,
                       fontWeight: "bold",

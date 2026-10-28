@@ -526,12 +526,18 @@ When using `type: 'custom'` custom rendering, you can specify the control used f
 
 CanvasTable provides shared JSX components for declarative layout inside `jsxRender`. `jsxRender` draws from the top-left corner of the cell, without applying the built-in padding or centering; styling is entirely up to you. The root element fills the cell by default (`width: "100%"`, `height: "100%"`).
 
-**Available components:** `Box`, `Row` (= `Box { direction: "row" }`), `Column` (= `Box { direction: "column" }`), `Stack` (= `Box`), `Text`, `Circle`, `Image`, `Line`, plus `createCTElement`
+**Available components:** `CTBox`, `CTRow` (= `CTBox { direction: "row" }`), `CTColumn` (= `CTBox { direction: "column" }`), `CTStack` (= `CTBox`), `CTText`, `CTCircle`, `CTImage`, `CTLine`, `CTDate`, `CTTooltip`, `CTDropdown`, plus `createCTElement`
+
+> All JSX components are exported from both `@canvas-table/core` and `@canvas-table/core/jsx`. Their prop types (`BoxProps`, `TextProps`, `CTElement`, ...) are exported **only** from `@canvas-table/core/jsx`. The `CT` prefix keeps them from shadowing table types (`Row` / `Column`) or DOM globals (`Date` / `Image` / `Text`).
+
+```typescript
+import type { CTElement, BoxProps, TextProps } from '@canvas-table/core/jsx';
+```
 
 **Example:**
 
 ```typescript
-import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/core';
+import { createCTElement, CTBox, CTText, CTRow, CTColumn, CTCircle } from '@canvas-table/core';
 
 {
   key: 'status',
@@ -542,15 +548,15 @@ import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/c
     type: 'custom',
     jsxRender: () =>
       createCTElement(
-        Box,
+        CTBox,
         { width: "100%", height: "100%", justify: "center", align: "center", overflow: "hidden" },
         createCTElement(
-          Row,
+          CTRow,
           { gap: 8, align: "center" },
-          createCTElement(Circle, { radius: 4, bgColor: '#52c41a' }),
-          createCTElement(Column, { gap: 2 },
-            createCTElement(Text, { text: 'Online', fontWeight: 'bold' }),
-            createCTElement(Text, { text: 'Updated just now', fontSize: 12, color: '#8c8c8c' }),
+          createCTElement(CTCircle, { radius: 4, bgColor: '#52c41a' }),
+          createCTElement(CTColumn, { gap: 2 },
+            createCTElement(CTText, { text: 'Online', fontWeight: 'bold' }),
+            createCTElement(CTText, { text: 'Updated just now', fontSize: 12, color: '#8c8c8c' }),
           ),
         ),
       ),
@@ -558,9 +564,9 @@ import { createCTElement, Box, Text, Row, Column, Circle } from '@canvas-table/c
 }
 ```
 
-##### Box / Row / Column / Stack props
+##### CTBox / CTRow / CTColumn / CTStack props
 
-Row is `Box { direction: "row" }`, Column is `Box { direction: "column" }`, and Stack is an alias for Box.
+CTRow is `CTBox { direction: "row" }`, CTColumn is `CTBox { direction: "column" }`, and CTStack is an alias for CTBox.
 
 **Layout props:**
 
@@ -615,7 +621,7 @@ Row is `Box { direction: "row" }`, Column is `Box { direction: "column" }`, and 
 | `clip` | — | `boolean` | — | `clip: true` = `overflow: "hidden"` |
 | `boxShadow` | `shadow` | `{ offsetX, offsetY, blur, spread?, color } \| string` | — | Box shadow; string format `"offsetX offsetY blur color"` |
 
-##### Text props
+##### CTText props
 
 | Property | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -631,7 +637,7 @@ Row is `Box { direction: "row" }`, Column is `Box { direction: "column" }`, and 
 | `textDecoration` | `"underline" \| "line-through" \| "none"` | `"none"` | Text decoration line |
 | `letterSpacing` | `number` | `0` | Letter spacing |
 
-##### Circle props
+##### CTCircle props
 
 | Property | Alias | Type | Description |
 | --- | --- | --- | --- |
@@ -642,7 +648,7 @@ Row is `Box { direction: "row" }`, Column is `Box { direction: "column" }`, and 
 | `startAngle` | — | `number` | Start angle (radians) |
 | `endAngle` | — | `number` | End angle (radians) |
 
-##### Image props
+##### CTImage props
 
 | Property | Type | Description |
 | --- | --- | --- |
@@ -652,7 +658,7 @@ Row is `Box { direction: "row" }`, Column is `Box { direction: "column" }`, and 
 | `borderRadius` | `number` | Corner radius |
 | `objectFit` | `"fill" \| "contain" \| "cover"` | Scaling mode |
 
-##### Line props
+##### CTLine props
 
 | Property | Type | Description |
 | --- | --- | --- |
