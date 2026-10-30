@@ -13,6 +13,7 @@ coverage/
 docs/**/plans/
 docs/**/specs/
 docs/**/reports/
+examples/react-codesandbox
 .worktrees/
 .workbuddy-ai/
 

@@ -13,6 +13,9 @@ A high-performance data table component built on Canvas that renders millions of
 - npm package: [`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
 - Source and issues: [DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
 - **Live demo**: [https://dingrui12138.github.io/CanvasTable/](https://dingrui12138.github.io/CanvasTable/)
+- **React example (CodeSandbox)**: [https://codesandbox.io/p/sandbox/w9rm69](https://codesandbox.io/p/sandbox/w9rm69)
+
+![Canvas Table demo](demo.gif)
 
 ## Features
 
@@ -127,6 +130,8 @@ Use a `<script>` tag directly without a build tool:
 The UMD global is named `CanvasTable`, and all named exports are attached to it.
 
 ### Using with React
+
+A runnable React example is available on CodeSandbox: [https://codesandbox.io/p/sandbox/w9rm69](https://codesandbox.io/p/sandbox/w9rm69)
 
 ```tsx
 import { useEffect, useRef } from 'react';

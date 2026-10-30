@@ -13,6 +13,9 @@
 - npm 包：[`@canvas-table/core`](https://www.npmjs.com/package/@canvas-table/core)
 - 源码与 Issue：[DingRui12138/CanvasTable](https://github.com/DingRui12138/CanvasTable)
 - **在线 Demo**：[https://dingrui12138.github.io/CanvasTable/](https://dingrui12138.github.io/CanvasTable/)
+- **React 示例（CodeSandbox）**：[https://codesandbox.io/p/sandbox/w9rm69](https://codesandbox.io/p/sandbox/w9rm69)
+
+![Canvas Table 演示](demo.gif)
 
 ## 特性
 
@@ -127,6 +130,8 @@ const table = new CanvasTable(container, {
 UMD 的全局变量名为 `CanvasTable`，命名导出都挂在它下面。
 
 ### 在 React 中使用
+
+可直接运行的 React 示例见 CodeSandbox：[https://codesandbox.io/p/sandbox/w9rm69](https://codesandbox.io/p/sandbox/w9rm69)
 
 ```tsx
 import { useEffect, useRef } from 'react';
